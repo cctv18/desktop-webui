@@ -5,9 +5,17 @@ const path = require('path')
 
 const mode = process.argv[2] === 'production' ? 'production' : 'development'
 const projectRoot = path.resolve(__dirname, '..')
+const outDir = path.join(projectRoot, 'out')
+const buildLogPath = resolveOutputPath(
+  process.env.WEBUI_BUILD_LOG || path.join('out', 'webui-build.log')
+)
+const diagnosticsLogPath = path.join(outDir, 'webui-diagnostics.log')
+const diagnosticsJsonPath = path.join(outDir, 'webui-diagnostics.json')
 
 process.env.NODE_ENV = mode
 process.env.TS_NODE_PROJECT = path.join(projectRoot, 'script', 'tsconfig.json')
+
+initializeBuildLog()
 
 requireLocal('ts-node').register({
   project: process.env.TS_NODE_PROJECT,
@@ -20,8 +28,12 @@ const config = configModule.default || configModule
 webpack(config, (error, stats) => {
   if (error) {
     const fatalErrorText = formatFatalError(error)
-    console.error(fatalErrorText)
+    writeBuildLog(fatalErrorText)
     writeFatalDiagnosticsFile(fatalErrorText)
+    emitConsole(
+      [fatalErrorText, '', formatDiagnosticsPaths([])].join('\n'),
+      'error'
+    )
     process.exitCode = 1
     return
   }
@@ -31,16 +43,12 @@ webpack(config, (error, stats) => {
     const statsJson = stats.toJson(getJsonStatsOptions())
     const diagnostics = collectDiagnostics(statsJson)
     const diagnosticsText = formatDiagnostics(diagnostics)
+    const fullBuildLog = formatBuildLog(summary, diagnosticsText, diagnostics)
 
-    if (summary.trim().length > 0) {
-      console.log(summary)
-    }
+    writeBuildLog(fullBuildLog)
+    writeDiagnosticsFiles(diagnosticsText, statsJson, diagnostics)
 
-    if (diagnosticsText.length > 0) {
-      console.log(diagnosticsText)
-    }
-
-    writeDiagnosticsFiles(summary, diagnosticsText, statsJson, diagnostics)
+    emitConsole(formatConsoleSummary(summary, diagnostics), 'log')
 
     if (stats.hasErrors()) {
       process.exitCode = 1
@@ -109,6 +117,114 @@ function shouldUseColors() {
   }
 
   return Boolean(process.stdout.isTTY)
+}
+
+function resolveOutputPath(value) {
+  return path.isAbsolute(value) ? value : path.join(projectRoot, value)
+}
+
+function initializeBuildLog() {
+  fs.mkdirSync(path.dirname(buildLogPath), { recursive: true })
+  fs.writeFileSync(
+    buildLogPath,
+    [
+      '================ WEBUI BUILD LOG ================',
+      `Started at: ${new Date().toISOString()}`,
+      `Mode: ${mode}`,
+      `Project root: ${projectRoot}`,
+      `Working directory: ${process.cwd()}`,
+      `Node.js: ${process.version}`,
+      `Command: node ${process.argv.slice(1).join(' ')}`,
+      '',
+    ].join('\n'),
+    'utf8'
+  )
+}
+
+function writeBuildLog(text) {
+  if (text.trim().length === 0) {
+    return
+  }
+
+  fs.appendFileSync(buildLogPath, `${stripAnsi(text)}\n`, 'utf8')
+}
+
+function stripAnsi(text) {
+  return String(text).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
+function emitConsole(text, stream) {
+  if (stream === 'error') {
+    console.error(text)
+  } else {
+    console.log(text)
+  }
+}
+
+function formatBuildLog(summary, diagnosticsText, diagnostics) {
+  const lines = []
+
+  if (summary.trim().length > 0) {
+    lines.push('================ WEBPACK SUMMARY ================')
+    lines.push(summary)
+    lines.push('')
+  }
+
+  if (diagnosticsText.trim().length > 0) {
+    lines.push(diagnosticsText)
+    lines.push('')
+  }
+
+  lines.push(formatDiagnosticsPaths(diagnostics))
+  lines.push('')
+  lines.push(`Finished at: ${new Date().toISOString()}`)
+  lines.push('============== END WEBUI BUILD LOG ==============')
+
+  return lines.join('\n')
+}
+
+function formatConsoleSummary(summary, diagnostics) {
+  const errors = diagnostics.filter(x => x.type === 'error').length
+  const warnings = diagnostics.filter(x => x.type === 'warning').length
+  const lines = []
+
+  if (summary.trim().length > 0) {
+    lines.push(summary)
+    lines.push('')
+  }
+
+  lines.push('================ WEBUI BUILD DIAGNOSTICS ================')
+  lines.push(`Total errors: ${errors}`)
+  lines.push(`Total warnings: ${warnings}`)
+  lines.push('')
+  lines.push('Complete build logs were written to:')
+  lines.push(`  ${buildLogPath}`)
+  lines.push(`  ${diagnosticsLogPath}`)
+  lines.push(`  ${diagnosticsJsonPath}`)
+  lines.push('')
+  lines.push(
+    'The console intentionally prints only this summary to avoid PowerShell truncation.'
+  )
+  lines.push('============== END WEBUI BUILD DIAGNOSTICS ==============')
+
+  return lines.join('\n')
+}
+
+function formatDiagnosticsPaths(diagnostics) {
+  const errors = diagnostics.filter(x => x.type === 'error').length
+  const warnings = diagnostics.filter(x => x.type === 'warning').length
+
+  return [
+    '================ WEBUI DIAGNOSTIC FILES ================',
+    `Total errors: ${errors}`,
+    `Total warnings: ${warnings}`,
+    '',
+    'Complete build logs were written to:',
+    `  ${buildLogPath}`,
+    `  ${diagnosticsLogPath}`,
+    `  ${diagnosticsJsonPath}`,
+    '============== END WEBUI DIAGNOSTIC FILES ==============',
+  ].join('\n')
 }
 
 function collectDiagnostics(statsJson) {
@@ -233,17 +349,20 @@ function appendIndentedField(lines, label, value) {
   }
 }
 
-function writeDiagnosticsFiles(summary, diagnosticsText, statsJson, diagnostics) {
-  const outDir = path.join(projectRoot, 'out')
+function writeDiagnosticsFiles(diagnosticsText, statsJson, diagnostics) {
   fs.mkdirSync(outDir, { recursive: true })
 
-  const textPath = path.join(outDir, 'webui-diagnostics.log')
-  const jsonPath = path.join(outDir, 'webui-diagnostics.json')
-  const text = [summary, diagnosticsText].filter(x => x.trim().length > 0)
-
-  fs.writeFileSync(textPath, text.join('\n\n'), 'utf8')
   fs.writeFileSync(
-    jsonPath,
+    diagnosticsLogPath,
+    stripAnsi(
+      diagnosticsText.trim().length > 0
+        ? diagnosticsText
+        : 'No WebUI diagnostics were reported.'
+    ),
+    'utf8'
+  )
+  fs.writeFileSync(
+    diagnosticsJsonPath,
     stringify({
       generatedAt: new Date().toISOString(),
       mode,
@@ -251,15 +370,6 @@ function writeDiagnosticsFiles(summary, diagnosticsText, statsJson, diagnostics)
       stats: statsJson,
     }),
     'utf8'
-  )
-
-  console.log(
-    [
-      '',
-      'Detailed WebUI diagnostics were written to:',
-      `  ${textPath}`,
-      `  ${jsonPath}`,
-    ].join('\n')
   )
 }
 
@@ -275,15 +385,11 @@ function formatFatalError(error) {
 }
 
 function writeFatalDiagnosticsFile(fatalErrorText) {
-  const outDir = path.join(projectRoot, 'out')
   fs.mkdirSync(outDir, { recursive: true })
 
-  const textPath = path.join(outDir, 'webui-diagnostics.log')
-  const jsonPath = path.join(outDir, 'webui-diagnostics.json')
-
-  fs.writeFileSync(textPath, fatalErrorText, 'utf8')
+  fs.writeFileSync(diagnosticsLogPath, stripAnsi(fatalErrorText), 'utf8')
   fs.writeFileSync(
-    jsonPath,
+    diagnosticsJsonPath,
     stringify({
       generatedAt: new Date().toISOString(),
       mode,
@@ -302,18 +408,21 @@ function requireLocal(moduleName) {
     return require(require.resolve(moduleName, { paths: [projectRoot] }))
   } catch (error) {
     if (error && error.code === 'MODULE_NOT_FOUND') {
-      console.error(
-        [
-          `Missing local dependency '${moduleName}'.`,
-          '',
-          'Install project dependencies from the desktop-webui root first:',
-          '  yarn install --network-timeout 600000',
-          '',
-          'Or run one of the WebUI deployment helpers:',
-          '  powershell -ExecutionPolicy Bypass -File script/deploy-webui.ps1 -NoStart',
-          '  bash script/deploy-webui.sh --no-start',
-        ].join('\n')
-      )
+      const message = [
+        `Missing local dependency '${moduleName}'.`,
+        '',
+        'Install project dependencies from the desktop-webui root first:',
+        '  yarn install --network-timeout 600000',
+        '',
+        'Or run one of the WebUI deployment helpers:',
+        '  powershell -ExecutionPolicy Bypass -File script/deploy-webui.ps1 -NoStart',
+        '  bash script/deploy-webui.sh --no-start',
+        '',
+        `Build log: ${buildLogPath}`,
+      ].join('\n')
+
+      writeBuildLog(message)
+      emitConsole(message, 'error')
       process.exit(1)
     }
 
