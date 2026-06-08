@@ -8,6 +8,7 @@ ALLOWED_ROOT=""
 PRODUCTION=0
 NO_START=0
 SKIP_INSTALL=0
+FULL_NATIVE_INSTALL=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -23,6 +24,7 @@ Options:
   --production             Build production WebUI bundle
   --no-start               Install and compile only
   --skip-install           Do not run yarn install; fail if local deps are missing
+  --full-native-install    Run package install scripts for full Desktop native dependencies
   -h, --help               Show this help
 USAGE
 }
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-install)
       SKIP_INSTALL=1
+      shift
+      ;;
+    --full-native-install)
+      FULL_NATIVE_INSTALL=1
       shift
       ;;
     -h|--help)
@@ -154,7 +160,24 @@ ensure_yarn() {
 }
 
 project_dependencies_present() {
-  [[ -d "$PROJECT_ROOT/node_modules/ts-node" && -d "$PROJECT_ROOT/node_modules/webpack" ]]
+  [[
+    -d "$PROJECT_ROOT/node_modules/ts-node" &&
+    -d "$PROJECT_ROOT/node_modules/webpack" &&
+    -d "$PROJECT_ROOT/app/node_modules/react" &&
+    -d "$PROJECT_ROOT/app/node_modules/dugite"
+  ]]
+}
+
+yarn_install() {
+  local directory="$1"
+  local ignore_scripts="$2"
+  local args=(install --network-timeout 600000)
+
+  if [[ "$ignore_scripts" -eq 1 ]]; then
+    args+=(--ignore-scripts)
+  fi
+
+  (cd "$directory" && yarn "${args[@]}")
 }
 
 cd "$PROJECT_ROOT"
@@ -166,15 +189,24 @@ ensure_node
 ensure_yarn
 
 if [[ "$SKIP_INSTALL" -eq 0 ]]; then
-  step "Installing project dependencies with Yarn."
-  run yarn install --network-timeout 600000
+  if [[ "$FULL_NATIVE_INSTALL" -eq 1 ]]; then
+    step "Installing full Desktop dependencies with native install scripts."
+    echo "Warning: Full native install requires C/C++ build tools such as build-essential, python3, and make on Linux." >&2
+    yarn_install "$PROJECT_ROOT" 0
+  else
+    step "Installing root dependencies for WebUI with native scripts disabled."
+    yarn_install "$PROJECT_ROOT" 1
+
+    step "Installing app dependencies for WebUI with native scripts disabled."
+    yarn_install "$PROJECT_ROOT/app" 1
+  fi
 elif ! project_dependencies_present; then
   echo "Project dependencies are missing. Rerun without --skip-install." >&2
   exit 1
 fi
 
 if ! project_dependencies_present; then
-  echo "Project dependencies are still incomplete after install. Check Yarn output for failed native or network steps." >&2
+  echo "Project dependencies are still incomplete after install. Check Yarn output for failed network steps, or rerun without --skip-install." >&2
   exit 1
 fi
 

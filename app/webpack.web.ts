@@ -15,6 +15,21 @@ const tsRule = {
 }
 
 const webAliases = {
+  keytar: path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
+  'desktop-notifications': path.resolve(
+    __dirname,
+    'src/lib/webui-shims/desktop-notifications'
+  ),
+  'desktop-notifications/dist/notification-callback': path.resolve(
+    __dirname,
+    'src/lib/webui-shims/desktop-notifications'
+  ),
+  'desktop-trampoline': path.resolve(
+    __dirname,
+    'src/lib/webui-shims/desktop-trampoline'
+  ),
+  'fs-admin': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
+  'registry-js': path.resolve(__dirname, 'src/lib/webui-shims/registry-js'),
   electron: path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
   'electron/main': path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
   fs: path.resolve(__dirname, 'src/ui/platform/fs-web-shim'),
@@ -115,6 +130,24 @@ const webServer: webpack.Configuration = merge(
     resolve: {
       extensions: ['.js', '.ts', '.tsx'],
       alias: {
+        keytar: path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
+        'desktop-notifications': path.resolve(
+          __dirname,
+          'src/lib/webui-shims/desktop-notifications'
+        ),
+        'desktop-notifications/dist/notification-callback': path.resolve(
+          __dirname,
+          'src/lib/webui-shims/desktop-notifications'
+        ),
+        'desktop-trampoline': path.resolve(
+          __dirname,
+          'src/lib/webui-shims/desktop-trampoline'
+        ),
+        'fs-admin': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
+        'registry-js': path.resolve(
+          __dirname,
+          'src/lib/webui-shims/registry-js'
+        ),
         electron: path.resolve(__dirname, 'src/web-server/electron-shim'),
         'electron/main': path.resolve(
           __dirname,

@@ -4,7 +4,8 @@ param(
   [string]$AllowedRoot = "",
   [switch]$Production,
   [switch]$NoStart,
-  [switch]$SkipInstall
+  [switch]$SkipInstall,
+  [switch]$FullNativeInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,8 +111,28 @@ function Ensure-Yarn {
 function Test-ProjectDependencies {
   return (
     (Test-Path (Join-Path $ProjectRoot "node_modules\ts-node")) -and
-    (Test-Path (Join-Path $ProjectRoot "node_modules\webpack"))
+    (Test-Path (Join-Path $ProjectRoot "node_modules\webpack")) -and
+    (Test-Path (Join-Path $ProjectRoot "app\node_modules\react")) -and
+    (Test-Path (Join-Path $ProjectRoot "app\node_modules\dugite"))
   )
+}
+
+function Invoke-YarnInstall {
+  param(
+    [string]$Directory,
+    [bool]$IgnoreScripts
+  )
+
+  Push-Location $Directory
+  try {
+    $arguments = @("install", "--network-timeout", "600000")
+    if ($IgnoreScripts) {
+      $arguments += "--ignore-scripts"
+    }
+    Invoke-Step "yarn" $arguments
+  } finally {
+    Pop-Location
+  }
 }
 
 Write-Step "Project root: $($ProjectRoot.Path)"
@@ -121,14 +142,23 @@ Ensure-Node
 Ensure-Yarn
 
 if (-not $SkipInstall) {
-  Write-Step "Installing project dependencies with Yarn."
-  Invoke-Step "yarn" @("install", "--network-timeout", "600000")
+  if ($FullNativeInstall) {
+    Write-Step "Installing full Desktop dependencies with native install scripts."
+    Write-Warning "Full native install requires Visual Studio Build Tools with the Desktop development with C++ workload on Windows."
+    Invoke-YarnInstall $ProjectRoot.Path $false
+  } else {
+    Write-Step "Installing root dependencies for WebUI with native scripts disabled."
+    Invoke-YarnInstall $ProjectRoot.Path $true
+
+    Write-Step "Installing app dependencies for WebUI with native scripts disabled."
+    Invoke-YarnInstall (Join-Path $ProjectRoot "app") $true
+  }
 } elseif (-not (Test-ProjectDependencies)) {
   throw "Project dependencies are missing. Rerun without -SkipInstall."
 }
 
 if (-not (Test-ProjectDependencies)) {
-  throw "Project dependencies are still incomplete after install. Check Yarn output for failed native or network steps."
+  throw "Project dependencies are still incomplete after install. Check Yarn output for failed network steps, or rerun without -SkipInstall."
 }
 
 if ($Production) {
