@@ -1,45 +1,36 @@
-export const kMaxLength = Number.MAX_SAFE_INTEGER
-export const kStringMaxLength = Number.MAX_SAFE_INTEGER
-export const INSPECT_MAX_BYTES = 50
+import type { Buffer as NodeBuffer } from 'buffer'
 
-export type Buffer = Uint8Array
+type BufferConstructor = typeof import('buffer').Buffer
 
-export const Buffer = {
-  alloc(size: number) {
-    return new Uint8Array(size)
-  },
-
-  concat(chunks: ReadonlyArray<Uint8Array>) {
-    const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-    const bytes = new Uint8Array(length)
-    let offset = 0
-
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset)
-      offset += chunk.length
-    }
-
-    return bytes
-  },
-
-  from(value: string | ArrayBuffer | ArrayLike<number> | Iterable<number>) {
-    if (typeof value === 'string') {
-      return new TextEncoder().encode(value)
-    }
-
-    if (Symbol.iterator in Object(value) && !('length' in Object(value))) {
-      return new Uint8Array(Array.from(value as Iterable<number>))
-    }
-
-    return new Uint8Array(value as ArrayBuffer | ArrayLike<number>)
-  },
-
-  isBuffer(value: unknown) {
-    return value instanceof Uint8Array
-  },
+const bufferModule = require('buffer/') as {
+  readonly Buffer: BufferConstructor
+  readonly SlowBuffer?: BufferConstructor
+  readonly INSPECT_MAX_BYTES?: number
+  readonly kMaxLength?: number
+  readonly kStringMaxLength?: number
 }
 
-export const SlowBuffer = Buffer
+export type Buffer = NodeBuffer
+
+export const Buffer = bufferModule.Buffer
+export const SlowBuffer = bufferModule.SlowBuffer ?? Buffer
+export const INSPECT_MAX_BYTES = bufferModule.INSPECT_MAX_BYTES ?? 50
+export const kMaxLength =
+  bufferModule.kMaxLength ??
+  (Buffer as any).kMaxLength ??
+  Number.MAX_SAFE_INTEGER
+export const kStringMaxLength =
+  bufferModule.kStringMaxLength ??
+  (Buffer as any).kStringMaxLength ??
+  Number.MAX_SAFE_INTEGER
+
+const globalObject = globalThis as typeof globalThis & {
+  Buffer?: BufferConstructor
+}
+
+if (globalObject.Buffer === undefined) {
+  globalObject.Buffer = Buffer
+}
 
 export default {
   Buffer,

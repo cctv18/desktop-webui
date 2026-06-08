@@ -7,6 +7,7 @@ import * as common from './webpack.common'
 const outputDir = path.resolve(__dirname, '..', 'out')
 const replacements = common.replacements
 const webShimDir = path.resolve(__dirname, 'src/ui/platform')
+const bufferWebShim = path.join(webShimDir, 'buffer-web-shim.ts')
 const processWebShim = path.join(webShimDir, 'process-web-shim.ts')
 
 const tsRule = {
@@ -42,7 +43,7 @@ const webAliases = {
     'src/ui/platform/electron-web-shim'
   ),
   'assert$': path.join(webShimDir, 'assert-web-shim'),
-  'buffer$': path.join(webShimDir, 'buffer-web-shim'),
+  'buffer$': bufferWebShim,
   'child_process$': path.join(webShimDir, 'child-process-web-shim'),
   'crypto$': path.join(webShimDir, 'crypto-web-shim'),
   'fs$': path.join(webShimDir, 'fs-web-shim'),
@@ -102,7 +103,7 @@ const webRenderer: webpack.Configuration = {
     alias: webAliases,
     fallback: {
       assert: path.join(webShimDir, 'assert-web-shim'),
-      buffer: path.join(webShimDir, 'buffer-web-shim'),
+      buffer: bufferWebShim,
       crypto: path.join(webShimDir, 'crypto-web-shim'),
       fs: path.join(webShimDir, 'fs-web-shim'),
       module: path.join(webShimDir, 'module-web-shim'),
@@ -123,6 +124,7 @@ const webRenderer: webpack.Configuration = {
     }),
     createNormalizeNodeSchemePlugin(),
     new webpack.ProvidePlugin({
+      Buffer: [bufferWebShim, 'Buffer'],
       process: [processWebShim, 'default'],
     }),
     new webpack.DefinePlugin(
