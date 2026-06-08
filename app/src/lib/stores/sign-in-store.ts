@@ -145,6 +145,40 @@ interface IAuthenticationEvent {
   readonly account: Account
 }
 
+function createOAuthStateToken(): string {
+  const cryptoGlobal = globalThis.crypto
+
+  if (typeof cryptoGlobal?.randomUUID === 'function') {
+    return cryptoGlobal.randomUUID()
+  }
+
+  const bytes = new Uint8Array(16)
+  cryptoGlobal?.getRandomValues?.(bytes)
+
+  if (bytes.some(byte => byte !== 0)) {
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join(
+      ''
+    )
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function addWebUIOAuthRedirect(authorizationURL: string) {
+  if (__PROCESS_KIND__ !== 'web-server') {
+    return authorizationURL
+  }
+
+  const callbackURL = process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL
+  if (!callbackURL) {
+    return authorizationURL
+  }
+
+  const url = new URL(authorizationURL)
+  url.searchParams.set('redirect_uri', callbackURL)
+  return url.toString()
+}
+
 export type SignInResult =
   | { kind: 'success'; account: Account }
   | { kind: 'cancelled' }
@@ -281,7 +315,10 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
       }
     }
 
-    const csrfToken = crypto.randomUUID()
+    const csrfToken = createOAuthStateToken()
+    const authorizationURL = addWebUIOAuthRedirect(
+      getOAuthAuthorizationURL(currentState.endpoint, csrfToken)
+    )
 
     new Promise<Account>((resolve, reject) => {
       const { endpoint, resultCallback } = currentState
@@ -299,7 +336,7 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
           onAuthError: reject,
         },
       })
-      shell.openExternal(getOAuthAuthorizationURL(endpoint, csrfToken))
+      shell.openExternal(authorizationURL)
     })
       .then(account => {
         if (!this.state || this.state.kind !== SignInStep.Authentication) {
@@ -327,6 +364,8 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
           log.info(`[SignInStore] OAuth error but session has changed: ${e}`)
         }
       })
+
+    return authorizationURL
   }
 
   public async resolveOAuthRequest(action: IOAuthAction) {

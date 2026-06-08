@@ -4,6 +4,7 @@ import * as Path from 'path'
 import { WebRuntime } from './runtime'
 import { parseAllowedRoots, PathGuard } from './path-guard'
 import { serializeForWeb } from '../lib/webui-serialization'
+import { IOAuthAction } from '../lib/parse-app-url'
 
 type ServerEvent = {
   readonly type: string
@@ -15,6 +16,7 @@ const host = args.host ?? process.env.GITDESK_HOST ?? '127.0.0.1'
 const port = parseInt(args.port ?? process.env.GITDESK_PORT ?? '8080', 10)
 const staticRoot =
   args.staticRoot ?? process.env.GITDESK_STATIC_ROOT ?? Path.join(__dirname, 'web')
+process.env.GITDESK_WEBUI_STATIC_ROOT = staticRoot
 const allowedRoots = parseAllowedRoots(
   args.allowedRoot ?? process.env.GITDESK_ALLOWED_ROOTS,
   process.cwd()
@@ -72,6 +74,11 @@ async function route(req: Http.IncomingMessage, res: Http.ServerResponse) {
     return
   }
 
+  if (req.method === 'GET' && url.pathname === '/oauth/callback') {
+    await handleOAuthCallback(url, res)
+    return
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/rpc') {
     const body = await readJson(req)
     const method = `${body.method ?? ''}`
@@ -90,6 +97,31 @@ async function route(req: Http.IncomingMessage, res: Http.ServerResponse) {
   }
 
   serveStatic(url.pathname, res)
+}
+
+async function handleOAuthCallback(url: URL, res: Http.ServerResponse) {
+  const code = url.searchParams.get('code')
+  const state = url.searchParams.get('state')
+
+  if (!code || !state) {
+    writeHtml(
+      res,
+      400,
+      'GitDesk WebUI sign in failed',
+      'The OAuth callback is missing the required code or state.'
+    )
+    return
+  }
+
+  const action: IOAuthAction = { name: 'oauth', code, state }
+  await runtime.dispatcher.dispatchURLAction(action)
+
+  writeHtml(
+    res,
+    200,
+    'GitDesk WebUI sign in complete',
+    'Authentication has completed. You can return to GitDesk WebUI.'
+  )
 }
 
 function subscribeEvents(res: Http.ServerResponse) {
@@ -156,6 +188,43 @@ function readJson(req: Http.IncomingMessage): Promise<any> {
 function writeJson(res: Http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(value))
+}
+
+function writeHtml(
+  res: Http.ServerResponse,
+  status: number,
+  title: string,
+  message: string
+) {
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' })
+  res.end(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+  </head>
+  <body>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+  </body>
+</html>`)
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, char => {
+    switch (char) {
+      case '&':
+        return '&amp;'
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      case '"':
+        return '&quot;'
+      default:
+        return '&#39;'
+    }
+  })
 }
 
 function serializeError(error: unknown) {

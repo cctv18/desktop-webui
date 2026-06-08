@@ -1,5 +1,6 @@
 import { getPath } from '../main-process-proxy'
 import { getAppPathProxy } from '../main-process-proxy'
+import * as Path from 'path'
 
 let path: string | null = null
 let documentsPath: string | null = null
@@ -45,7 +46,10 @@ export function getName(): string {
  */
 export async function getAppPath(): Promise<string> {
   if (path === null) {
-    path = await getAppPathProxy()
+    path =
+      __PROCESS_KIND__ === 'web-server'
+        ? process.env.GITDESK_WEBUI_STATIC_ROOT ?? Path.join(__dirname, 'web')
+        : await getAppPathProxy()
   }
 
   return path

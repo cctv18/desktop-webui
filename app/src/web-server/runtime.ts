@@ -37,6 +37,10 @@ import { Account } from '../models/account'
 import { CloningRepository } from '../models/cloning-repository'
 import { Repository } from '../models/repository'
 import { PathGuard } from './path-guard'
+import {
+  getGlobalConfigValue,
+  setGlobalConfigValue,
+} from '../lib/git/config'
 
 class ServerActivityMonitor implements IUiActivityMonitor {
   public onActivity() {
@@ -168,6 +172,11 @@ export class WebRuntime {
         return this.aheadBehindStore
       case 'notificationsDebugStore':
         return this.notificationsDebugStore
+      case 'git':
+        return {
+          getGlobalConfigValue,
+          setGlobalConfigValue,
+        }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
     }

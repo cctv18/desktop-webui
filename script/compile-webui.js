@@ -63,6 +63,11 @@ webpack(config, (error, stats) => {
   writeBuildSummary(stats, diagnostics)
   emitDiagnostics(diagnostics)
   writeDiagnosticsJson(statsJson, diagnostics)
+
+  if (!stats.hasErrors()) {
+    copyWebRuntimeAssets()
+  }
+
   emitLogPaths()
 
   if (stats.hasErrors()) {
@@ -141,6 +146,55 @@ function initializeLogs() {
 
   writeUtf8BomFile(buildLogPath, `${header}\n`)
   writeUtf8BomFile(diagnosticsLogPath, `${header}\n`)
+}
+
+function copyWebRuntimeAssets() {
+  const webOutDir = path.join(outDir, 'web')
+  const staticDestination = path.join(webOutDir, 'static')
+  const commonStaticSource = path.join(projectRoot, 'app', 'static', 'common')
+  const platformStaticSource = path.join(
+    projectRoot,
+    'app',
+    'static',
+    process.platform
+  )
+  const emojiImagesSource = path.join(projectRoot, 'gemoji', 'images', 'emoji')
+  const emojiImagesDestination = path.join(webOutDir, 'emoji')
+  const emojiJsonSource = path.join(projectRoot, 'gemoji', 'db', 'emoji.json')
+  const emojiJsonDestination = path.join(webOutDir, 'emoji.json')
+
+  fs.mkdirSync(webOutDir, { recursive: true })
+
+  fs.rmSync(staticDestination, { recursive: true, force: true })
+  if (fs.existsSync(platformStaticSource)) {
+    fs.cpSync(platformStaticSource, staticDestination, {
+      recursive: true,
+      verbatimSymlinks: true,
+    })
+  }
+  fs.cpSync(commonStaticSource, staticDestination, {
+    recursive: true,
+    force: false,
+    verbatimSymlinks: true,
+  })
+
+  fs.rmSync(emojiImagesDestination, { recursive: true, force: true })
+  fs.cpSync(emojiImagesSource, emojiImagesDestination, {
+    recursive: true,
+    verbatimSymlinks: true,
+  })
+  fs.copyFileSync(emojiJsonSource, emojiJsonDestination)
+
+  const text = [
+    '================ WEBUI RUNTIME ASSETS ================',
+    `Copied static assets to: ${staticDestination}`,
+    `Copied emoji images to: ${emojiImagesDestination}`,
+    `Copied emoji metadata to: ${emojiJsonDestination}`,
+    '============== END WEBUI RUNTIME ASSETS ==============',
+    '',
+  ].join('\n')
+
+  appendBuildLog(text)
 }
 
 function writeBuildSummary(stats, diagnostics) {

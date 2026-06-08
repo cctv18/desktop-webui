@@ -2,6 +2,26 @@ import { git } from './core'
 import { Repository } from '../../models/repository'
 import { normalize } from 'path'
 
+async function invokeWebUIGit<T>(
+  method: string,
+  params: ReadonlyArray<unknown>
+): Promise<T> {
+  const response = await fetch('/api/rpc', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ method: `git.${method}`, params }),
+  })
+  const payload = await response.json()
+
+  if (!payload.ok) {
+    throw new Error(payload.error?.message ?? `Git RPC '${method}' failed`)
+  }
+
+  return payload.result as T
+}
+
 /**
  * Look up a config value by name in the repository.
  *
@@ -25,6 +45,10 @@ export function getGlobalConfigValue(
     HOME: string
   }
 ): Promise<string | null> {
+  if (__PROCESS_KIND__ === 'web' && env === undefined) {
+    return invokeWebUIGit<string | null>('getGlobalConfigValue', [name])
+  }
+
   return getConfigValueInPath(name, null, false, undefined, env)
 }
 
@@ -158,6 +182,11 @@ export async function setGlobalConfigValue(
     HOME: string
   }
 ): Promise<void> {
+  if (__PROCESS_KIND__ === 'web' && env === undefined) {
+    await invokeWebUIGit<void>('setGlobalConfigValue', [name, value])
+    return
+  }
+
   return setConfigValueInPath(name, value, null, env)
 }
 

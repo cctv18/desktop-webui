@@ -47,6 +47,17 @@ export function createRemoteDispatcher(
           return (foldout: FoldoutType) => rpc.invoke(property, [foldout])
         }
 
+        if (
+          property === 'requestBrowserAuthentication' ||
+          property === 'requestBrowserAuthenticationToDotcom' ||
+          property === 'beginBrowserBasedSignIn'
+        ) {
+          return (...params: ReadonlyArray<unknown>) => {
+            const popup = window.open('about:blank', '_blank')
+            return openReturnedURL(rpc.invoke(property, params), popup)
+          }
+        }
+
         if (localNoopMethods.has(property)) {
           return () => undefined
         }
@@ -55,6 +66,27 @@ export function createRemoteDispatcher(
       },
     }
   )
+}
+
+async function openReturnedURL(result: Promise<unknown>, popup: Window | null) {
+  try {
+    const value = await result
+
+    if (typeof value === 'string' && value.length > 0) {
+      if (popup !== null) {
+        popup.location.href = value
+      } else {
+        window.open(value, '_blank', 'noopener')
+      }
+    } else {
+      popup?.close()
+    }
+
+    return value
+  } catch (error) {
+    popup?.close()
+    throw error
+  }
 }
 
 function setAppFocusState(appStore: RemoteAppStore, appIsFocused: boolean) {

@@ -198,6 +198,10 @@ class UpdateStore {
    *                       attempt to retrieve the latest available deployment.
    */
   public async checkForUpdates(inBackground: boolean, skipGuidCheck: boolean) {
+    if (__PROCESS_KIND__ === 'web') {
+      return
+    }
+
     // An update has been downloaded and the app is waiting to be restarted.
     // Checking for updates again may result in the running app being nuked
     // when it finds a subsequent update on Windows, or the "Quit and Update"
@@ -271,6 +275,10 @@ class UpdateStore {
   }
 
   private async updatePriorityUpdateStatus() {
+    if (__PROCESS_KIND__ === 'web') {
+      return
+    }
+
     try {
       const response = await fetch(await this.getUpdatesUrl(false), {
         method: 'HEAD',
@@ -303,6 +311,10 @@ class UpdateStore {
    * was published in the last 15 days.
    */
   public async isUpdateShowcase() {
+    if (__PROCESS_KIND__ === 'web') {
+      return false
+    }
+
     if (
       (__RELEASE_CHANNEL__ === 'development' ||
         __RELEASE_CHANNEL__ === 'test') &&

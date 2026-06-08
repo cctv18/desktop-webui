@@ -7,8 +7,38 @@ import { pathToFileURL } from 'url'
  *
  * @param pathSegments array of path segments to resolve
  */
-export const encodePathAsUrl = (...pathSegments: string[]) =>
-  pathToFileURL(Path.resolve(...pathSegments)).toString()
+export const encodePathAsUrl = (...pathSegments: string[]) => {
+  const webResourceURL = getWebResourceURL(pathSegments)
+  return webResourceURL ?? pathToFileURL(Path.resolve(...pathSegments)).toString()
+}
+
+function getWebResourceURL(pathSegments: ReadonlyArray<string>) {
+  if (__PROCESS_KIND__ !== 'web' && __PROCESS_KIND__ !== 'web-server') {
+    return null
+  }
+
+  const normalizedSegments = pathSegments.flatMap(segment =>
+    segment.split(/[\\/]+/).filter(part => part.length > 0)
+  )
+
+  const staticIndex = normalizedSegments.lastIndexOf('static')
+  if (staticIndex >= 0 && staticIndex < normalizedSegments.length - 1) {
+    return `/${normalizedSegments
+      .slice(staticIndex)
+      .map(encodeURIComponent)
+      .join('/')}`
+  }
+
+  const emojiIndex = normalizedSegments.lastIndexOf('emoji')
+  if (emojiIndex >= 0 && emojiIndex < normalizedSegments.length - 1) {
+    return `/${normalizedSegments
+      .slice(emojiIndex)
+      .map(encodeURIComponent)
+      .join('/')}`
+  }
+
+  return null
+}
 
 /**
  * Resolve one or more path sequences into an absolute path underneath

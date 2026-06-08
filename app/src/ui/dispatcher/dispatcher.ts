@@ -1697,10 +1697,10 @@ export class Dispatcher {
       new URL(endpoint).hostname === 'github.com'
     ) {
       this.appStore._beginDotComSignIn(resultCallback)
-      this.requestBrowserAuthentication()
+      return this.requestBrowserAuthentication()
     } else {
       this.appStore._beginEnterpriseSignIn(resultCallback)
-      this.appStore
+      return this.appStore
         ._setSignInEndpoint(endpoint)
         .then(() => this.requestBrowserAuthentication())
         .catch(e => log.error(`Error setting sign in endpoint`, e))
@@ -1719,7 +1719,7 @@ export class Dispatcher {
    * this promise will never complete.
    */
   public requestBrowserAuthentication() {
-    this.appStore._requestBrowserAuthentication()
+    return this.appStore._requestBrowserAuthentication()
   }
 
   /**
@@ -1735,7 +1735,7 @@ export class Dispatcher {
     resultCallback?: (result: SignInResult) => void
   ) {
     this.appStore._beginDotComSignIn(resultCallback)
-    this.requestBrowserAuthentication()
+    return this.requestBrowserAuthentication()
   }
 
   /**

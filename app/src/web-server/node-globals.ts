@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import { randomUUID, webcrypto } from 'crypto'
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
@@ -169,6 +170,17 @@ if (g.localStorage === undefined) {
   g.localStorage = new MemoryStorage()
 }
 
+setIfMissing(g, 'crypto', {
+  ...webcrypto,
+  randomUUID,
+})
+setIfMissing(g.crypto, 'randomUUID', randomUUID)
+setIfMissing(
+  g.crypto,
+  'getRandomValues',
+  webcrypto.getRandomValues.bind(webcrypto)
+)
+
 g.window = g.window ?? {}
 setIfMissing(g.window, 'addEventListener', noop)
 setIfMissing(g.window, 'removeEventListener', noop)
@@ -179,6 +191,7 @@ setIfMissing(g.window, 'setInterval', setInterval)
 setIfMissing(g.window, 'clearInterval', clearInterval)
 setIfMissing(g.window, 'requestAnimationFrame', requestAnimationFrameShim)
 setIfMissing(g.window, 'cancelAnimationFrame', cancelAnimationFrameShim)
+setIfMissing(g.window, 'crypto', g.crypto)
 setIfMissing(g.window, 'location', g.location)
 setIfMissing(g.window, 'URL', URL)
 setIfMissing(g.window, 'URLSearchParams', URLSearchParams)
