@@ -3,6 +3,88 @@
   <head>
     <title>GitHub Desktop</title>
     <meta charset="UTF-8" />
+    <script>
+      ;(function () {
+        if (window.process !== undefined) {
+          return
+        }
+
+        var platform = 'linux'
+        var arch = 'x64'
+        var text = (
+          (navigator.userAgentData && navigator.userAgentData.platform) ||
+          navigator.platform ||
+          navigator.userAgent ||
+          ''
+        ).toLowerCase()
+
+        if (text.indexOf('win') >= 0) {
+          platform = 'win32'
+        } else if (text.indexOf('mac') >= 0 || text.indexOf('darwin') >= 0) {
+          platform = 'darwin'
+        }
+
+        if (
+          navigator.userAgent.toLowerCase().indexOf('aarch64') >= 0 ||
+          navigator.userAgent.toLowerCase().indexOf('arm64') >= 0
+        ) {
+          arch = 'arm64'
+        } else if (navigator.userAgent.toLowerCase().indexOf('arm') >= 0) {
+          arch = 'arm'
+        }
+
+        var listeners = {}
+        var shim = {
+          arch: arch,
+          argv: [],
+          browser: true,
+          cwd: function () {
+            return '/'
+          },
+          emit: function (event) {
+            var args = Array.prototype.slice.call(arguments, 1)
+            var eventListeners = listeners[event] || []
+            eventListeners.slice().forEach(function (listener) {
+              listener.apply(null, args)
+            })
+            return eventListeners.length > 0
+          },
+          env: { NODE_ENV: 'production' },
+          execPath: 'GitDesk WebUI',
+          nextTick: function (callback) {
+            Promise.resolve().then(callback)
+          },
+          off: function (event, listener) {
+            listeners[event] = (listeners[event] || []).filter(function (x) {
+              return x !== listener
+            })
+            return shim
+          },
+          on: function (event, listener) {
+            listeners[event] = listeners[event] || []
+            listeners[event].push(listener)
+            return shim
+          },
+          once: function (event, listener) {
+            var wrapped = function () {
+              shim.off(event, wrapped)
+              listener.apply(null, arguments)
+            }
+            return shim.on(event, wrapped)
+          },
+          platform: platform,
+          removeListener: function (event, listener) {
+            return shim.off(event, listener)
+          },
+          stderr: null,
+          stdout: null,
+          type: 'renderer',
+          versions: {},
+        }
+
+        window.process = shim
+      })()
+    </script>
   </head>
   <body>
     <div id="desktop-app-container"></div>

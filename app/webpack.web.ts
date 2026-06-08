@@ -50,6 +50,7 @@ const webAliases = {
   'net$': path.join(webShimDir, 'net-web-shim'),
   'os$': path.join(webShimDir, 'os-web-shim'),
   'path$': path.join(webShimDir, 'path-web-shim'),
+  'process$': path.join(webShimDir, 'process-web-shim'),
   'stream$': path.join(webShimDir, 'stream-web-shim'),
   'timers$': path.join(webShimDir, 'timers-web-shim'),
   'url$': path.join(webShimDir, 'url-web-shim'),
@@ -107,6 +108,7 @@ const webRenderer: webpack.Configuration = {
       net: path.join(webShimDir, 'net-web-shim'),
       os: path.join(webShimDir, 'os-web-shim'),
       path: path.join(webShimDir, 'path-web-shim'),
+      process: path.join(webShimDir, 'process-web-shim'),
       stream: path.join(webShimDir, 'stream-web-shim'),
       timers: path.join(webShimDir, 'timers-web-shim'),
       url: path.join(webShimDir, 'url-web-shim'),
@@ -119,6 +121,9 @@ const webRenderer: webpack.Configuration = {
       chunks: ['web'],
     }),
     createNormalizeNodeSchemePlugin(),
+    new webpack.ProvidePlugin({
+      process: [path.join(webShimDir, 'process-web-shim'), 'default'],
+    }),
     new webpack.DefinePlugin(
       Object.assign({}, replacements, {
         __PROCESS_KIND__: JSON.stringify('web'),
