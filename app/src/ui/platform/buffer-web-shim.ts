@@ -2,7 +2,7 @@ import type { Buffer as NodeBuffer } from 'buffer'
 
 type BufferConstructor = typeof import('buffer').Buffer
 
-const bufferModule = require('buffer/') as {
+const bufferModule = require('buffer/index.js') as {
   readonly Buffer: BufferConstructor
   readonly SlowBuffer?: BufferConstructor
   readonly INSPECT_MAX_BYTES?: number
