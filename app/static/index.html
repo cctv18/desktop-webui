@@ -33,6 +33,52 @@
           arch = 'arm'
         }
 
+        function normalizeSystemVersion(value) {
+          if (!value) {
+            return '0.0.0'
+          }
+
+          var parts = value
+            .replace(/_/g, '.')
+            .split('.')
+            .map(function (part) {
+              var match = /^\d+/.exec(part)
+              return match && match[0]
+            })
+            .filter(Boolean)
+
+          if (parts.length === 0) {
+            return '0.0.0'
+          }
+
+          while (parts.length < 3) {
+            parts.push('0')
+          }
+
+          return parts.slice(0, 3).join('.')
+        }
+
+        function detectSystemVersion() {
+          var source = text + ' ' + (navigator.userAgent || '')
+
+          if (/win/i.test(source)) {
+            var windowsMatch = /Windows NT ([\d.]+)/i.exec(source)
+            return normalizeSystemVersion(windowsMatch && windowsMatch[1])
+          }
+
+          if (/mac|darwin/i.test(source)) {
+            var macMatch = /Mac OS X ([\d_.]+)/i.exec(source)
+            return normalizeSystemVersion(macMatch && macMatch[1])
+          }
+
+          if (/android/i.test(source)) {
+            var androidMatch = /Android ([\d.]+)/i.exec(source)
+            return normalizeSystemVersion(androidMatch && androidMatch[1])
+          }
+
+          return '0.0.0'
+        }
+
         var listeners = {}
         var shim = {
           arch: arch,
@@ -51,6 +97,7 @@
           },
           env: { NODE_ENV: 'production' },
           execPath: 'GitDesk WebUI',
+          getSystemVersion: detectSystemVersion,
           nextTick: function (callback) {
             Promise.resolve().then(callback)
           },

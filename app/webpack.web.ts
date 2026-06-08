@@ -10,6 +10,21 @@ const webShimDir = path.resolve(__dirname, 'src/ui/platform')
 const bufferWebShim = path.join(webShimDir, 'buffer-web-shim.ts')
 const processWebShim = path.join(webShimDir, 'process-web-shim.ts')
 
+function getWebReplacements(processKind: 'web' | 'web-server') {
+  const webReplacements = Object.assign({}, replacements, {
+    __DARWIN__: "(globalThis.process?.platform === 'darwin')",
+    __WIN32__: "(globalThis.process?.platform === 'win32')",
+    __LINUX__: "(globalThis.process?.platform === 'linux')",
+    __PROCESS_KIND__: JSON.stringify(processKind),
+  })
+
+  // WebUI artifacts are meant to be deployable across hosts, so platform
+  // checks must use the runtime process shim instead of the build machine.
+  delete (webReplacements as Record<string, unknown>)['process.platform']
+
+  return webReplacements
+}
+
 const tsRule = {
   test: /\.tsx?$/,
   include: path.resolve(__dirname, 'src'),
@@ -127,11 +142,7 @@ const webRenderer: webpack.Configuration = {
       Buffer: [bufferWebShim, 'Buffer'],
       process: [processWebShim, 'default'],
     }),
-    new webpack.DefinePlugin(
-      Object.assign({}, replacements, {
-        __PROCESS_KIND__: JSON.stringify('web'),
-      })
-    ),
+    new webpack.DefinePlugin(getWebReplacements('web')),
   ],
 }
 
@@ -208,11 +219,7 @@ const webServer: webpack.Configuration = merge(
     },
     plugins: [
       createNormalizeNodeSchemePlugin(),
-      new webpack.DefinePlugin(
-        Object.assign({}, replacements, {
-          __PROCESS_KIND__: JSON.stringify('web-server'),
-        })
-      ),
+      new webpack.DefinePlugin(getWebReplacements('web-server')),
     ],
   }
 )

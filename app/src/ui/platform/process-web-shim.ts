@@ -50,6 +50,55 @@ function detectArch(): NodeJS.Architecture {
   return 'x64'
 }
 
+function normalizeSystemVersion(value: string | undefined): string {
+  if (value === undefined) {
+    return '0.0.0'
+  }
+
+  const parts = value
+    .replace(/_/g, '.')
+    .split('.')
+    .map(part => part.match(/^\d+/)?.[0])
+    .filter((part): part is string => part !== undefined)
+
+  if (parts.length === 0) {
+    return '0.0.0'
+  }
+
+  while (parts.length < 3) {
+    parts.push('0')
+  }
+
+  return parts.slice(0, 3).join('.')
+}
+
+function detectSystemVersion() {
+  if (typeof navigator === 'undefined') {
+    return '0.0.0'
+  }
+
+  const platform =
+    ((navigator as any).userAgentData?.platform as string | undefined) ??
+    navigator.platform ??
+    ''
+  const userAgent = navigator.userAgent ?? ''
+  const source = `${platform} ${userAgent}`
+
+  if (/win/i.test(source)) {
+    return normalizeSystemVersion(/Windows NT ([\d.]+)/i.exec(source)?.[1])
+  }
+
+  if (/mac|darwin/i.test(source)) {
+    return normalizeSystemVersion(/Mac OS X ([\d_.]+)/i.exec(source)?.[1])
+  }
+
+  if (/android/i.test(source)) {
+    return normalizeSystemVersion(/Android ([\d.]+)/i.exec(source)?.[1])
+  }
+
+  return '0.0.0'
+}
+
 function on(event: string, listener: ProcessListener) {
   let eventListeners = listeners.get(event)
   if (eventListeners === undefined) {
@@ -97,8 +146,7 @@ const processShim = {
   env: processEnv,
   execPath: 'GitDesk WebUI',
   exitCode: undefined as number | undefined,
-  getSystemVersion: () =>
-    typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  getSystemVersion: detectSystemVersion,
   nextTick: (callback: (...args: ReadonlyArray<unknown>) => void) => {
     Promise.resolve().then(callback)
   },

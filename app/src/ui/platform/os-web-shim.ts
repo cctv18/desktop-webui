@@ -13,11 +13,19 @@ export function type() {
 }
 
 export function release() {
-  return typeof navigator === 'undefined' ? '' : navigator.userAgent
+  const processShim = (globalThis as any).process
+  const systemVersion =
+    typeof processShim?.getSystemVersion === 'function'
+      ? processShim.getSystemVersion()
+      : undefined
+
+  return typeof systemVersion === 'string' && /^\d+(\.\d+)*$/.test(systemVersion)
+    ? systemVersion
+    : '0.0.0'
 }
 
 export function platform() {
-  return 'browser'
+  return (globalThis as any).process?.platform ?? 'browser'
 }
 
 export default {
