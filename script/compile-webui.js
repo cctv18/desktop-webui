@@ -9,13 +9,27 @@ const outDir = path.join(projectRoot, 'out')
 const buildLogPath = resolveOutputPath(
   process.env.WEBUI_BUILD_LOG || path.join('out', 'webui-build.log')
 )
-const diagnosticsLogPath = path.join(outDir, 'webui-diagnostics.log')
-const diagnosticsJsonPath = path.join(outDir, 'webui-diagnostics.json')
+const diagnosticsLogPath = resolveOutputPath(
+  process.env.WEBUI_DIAGNOSTICS_LOG || path.join('out', 'webui-diagnostics.log')
+)
+const diagnosticsJsonPath = resolveOutputPath(
+  process.env.WEBUI_DIAGNOSTICS_JSON ||
+    path.join('out', 'webui-diagnostics.json')
+)
+const shouldPrintDiagnosticsToConsole =
+  process.env.WEBUI_CONSOLE_DIAGNOSTICS === '1' ||
+  process.env.WEBUI_CONSOLE_DIAGNOSTICS === 'true'
+const consoleChunkSize = 1800
 
+process.env.NO_COLOR = process.env.NO_COLOR || '1'
+process.env.FORCE_COLOR = process.env.FORCE_COLOR || '0'
 process.env.NODE_ENV = mode
 process.env.TS_NODE_PROJECT = path.join(projectRoot, 'script', 'tsconfig.json')
 
-initializeBuildLog()
+process.stdout.setDefaultEncoding('utf8')
+process.stderr.setDefaultEncoding('utf8')
+
+initializeLogs()
 
 requireLocal('ts-node').register({
   project: process.env.TS_NODE_PROJECT,
@@ -28,52 +42,33 @@ const config = configModule.default || configModule
 webpack(config, (error, stats) => {
   if (error) {
     const fatalErrorText = formatFatalError(error)
-    writeBuildLog(fatalErrorText)
-    writeFatalDiagnosticsFile(fatalErrorText)
-    emitConsole(
-      [fatalErrorText, '', formatDiagnosticsPaths([])].join('\n'),
-      'error'
-    )
+    emitDiagnosticText(fatalErrorText, 'error')
+    writeFatalDiagnosticsJson(fatalErrorText)
+    emitLogPaths()
     process.exitCode = 1
     return
   }
 
-  if (stats !== undefined) {
-    const summary = stats.toString(getSummaryStatsOptions())
-    const statsJson = stats.toJson(getJsonStatsOptions())
-    const diagnostics = collectDiagnostics(statsJson)
-    const diagnosticsText = formatDiagnostics(diagnostics)
-    const fullBuildLog = formatBuildLog(summary, diagnosticsText, diagnostics)
+  if (stats === undefined) {
+    const message = 'Webpack finished without returning build stats.'
+    emitDiagnosticText(message, 'error')
+    emitLogPaths()
+    process.exitCode = 1
+    return
+  }
 
-    writeBuildLog(fullBuildLog)
-    writeDiagnosticsFiles(diagnosticsText, statsJson, diagnostics)
+  const statsJson = stats.toJson(getJsonStatsOptions())
+  const diagnostics = collectDiagnostics(statsJson)
 
-    emitConsole(formatConsoleSummary(summary, diagnostics), 'log')
+  writeBuildSummary(stats, diagnostics)
+  emitDiagnostics(diagnostics)
+  writeDiagnosticsJson(statsJson, diagnostics)
+  emitLogPaths()
 
-    if (stats.hasErrors()) {
-      process.exitCode = 1
-    }
+  if (stats.hasErrors()) {
+    process.exitCode = 1
   }
 })
-
-function getSummaryStatsOptions() {
-  return {
-    assets: true,
-    builtAt: true,
-    cachedAssets: true,
-    children: true,
-    chunks: false,
-    colors: shouldUseColors(),
-    entrypoints: false,
-    errors: false,
-    logging: 'warn',
-    modules: false,
-    performance: true,
-    timings: true,
-    version: true,
-    warnings: false,
-  }
-}
 
 function getJsonStatsOptions() {
   return {
@@ -83,6 +78,7 @@ function getJsonStatsOptions() {
     cachedAssets: true,
     children: true,
     chunks: false,
+    colors: false,
     entrypoints: true,
     errorDetails: true,
     errors: true,
@@ -104,127 +100,78 @@ function getJsonStatsOptions() {
   }
 }
 
-function shouldUseColors() {
-  const noColor = process.env.NO_COLOR
-
-  if (
-    noColor !== undefined &&
-    noColor !== '' &&
-    noColor !== '0' &&
-    noColor.toLowerCase() !== 'false'
-  ) {
-    return false
+function getSummaryStatsOptions() {
+  return {
+    assets: true,
+    builtAt: true,
+    cachedAssets: true,
+    children: false,
+    chunks: false,
+    colors: false,
+    entrypoints: false,
+    errors: false,
+    modules: false,
+    performance: true,
+    timings: true,
+    version: true,
+    warnings: false,
   }
-
-  return Boolean(process.stdout.isTTY)
 }
 
 function resolveOutputPath(value) {
   return path.isAbsolute(value) ? value : path.join(projectRoot, value)
 }
 
-function initializeBuildLog() {
+function initializeLogs() {
+  fs.mkdirSync(outDir, { recursive: true })
   fs.mkdirSync(path.dirname(buildLogPath), { recursive: true })
-  fs.writeFileSync(
-    buildLogPath,
-    [
-      '================ WEBUI BUILD LOG ================',
-      `Started at: ${new Date().toISOString()}`,
-      `Mode: ${mode}`,
-      `Project root: ${projectRoot}`,
-      `Working directory: ${process.cwd()}`,
-      `Node.js: ${process.version}`,
-      `Command: node ${process.argv.slice(1).join(' ')}`,
-      '',
-    ].join('\n'),
-    'utf8'
-  )
+  fs.mkdirSync(path.dirname(diagnosticsLogPath), { recursive: true })
+  fs.mkdirSync(path.dirname(diagnosticsJsonPath), { recursive: true })
+
+  const header = [
+    '================ WEBUI BUILD LOG ================',
+    `Started at: ${new Date().toISOString()}`,
+    `Mode: ${mode}`,
+    `Project root: ${projectRoot}`,
+    `Working directory: ${process.cwd()}`,
+    `Node.js: ${process.version}`,
+    `Command: node ${process.argv.slice(1).join(' ')}`,
+    '',
+  ].join('\n')
+
+  writeUtf8BomFile(buildLogPath, `${header}\n`)
+  writeUtf8BomFile(diagnosticsLogPath, `${header}\n`)
 }
 
-function writeBuildLog(text) {
-  if (text.trim().length === 0) {
-    return
-  }
-
-  fs.appendFileSync(buildLogPath, `${stripAnsi(text)}\n`, 'utf8')
-}
-
-function stripAnsi(text) {
-  return String(text).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
-}
-
-function emitConsole(text, stream) {
-  if (stream === 'error') {
-    console.error(text)
-  } else {
-    console.log(text)
-  }
-}
-
-function formatBuildLog(summary, diagnosticsText, diagnostics) {
-  const lines = []
-
-  if (summary.trim().length > 0) {
-    lines.push('================ WEBPACK SUMMARY ================')
-    lines.push(summary)
-    lines.push('')
-  }
-
-  if (diagnosticsText.trim().length > 0) {
-    lines.push(diagnosticsText)
-    lines.push('')
-  }
-
-  lines.push(formatDiagnosticsPaths(diagnostics))
-  lines.push('')
-  lines.push(`Finished at: ${new Date().toISOString()}`)
-  lines.push('============== END WEBUI BUILD LOG ==============')
-
-  return lines.join('\n')
-}
-
-function formatConsoleSummary(summary, diagnostics) {
+function writeBuildSummary(stats, diagnostics) {
   const errors = diagnostics.filter(x => x.type === 'error').length
   const warnings = diagnostics.filter(x => x.type === 'warning').length
-  const lines = []
-
-  if (summary.trim().length > 0) {
-    lines.push(summary)
-    lines.push('')
-  }
-
-  lines.push('================ WEBUI BUILD DIAGNOSTICS ================')
-  lines.push(`Total errors: ${errors}`)
-  lines.push(`Total warnings: ${warnings}`)
-  lines.push('')
-  lines.push('Complete build logs were written to:')
-  lines.push(`  ${buildLogPath}`)
-  lines.push(`  ${diagnosticsLogPath}`)
-  lines.push(`  ${diagnosticsJsonPath}`)
-  lines.push('')
-  lines.push(
-    'The console intentionally prints only this summary to avoid PowerShell truncation.'
-  )
-  lines.push('============== END WEBUI BUILD DIAGNOSTICS ==============')
-
-  return lines.join('\n')
-}
-
-function formatDiagnosticsPaths(diagnostics) {
-  const errors = diagnostics.filter(x => x.type === 'error').length
-  const warnings = diagnostics.filter(x => x.type === 'warning').length
-
-  return [
-    '================ WEBUI DIAGNOSTIC FILES ================',
+  const summary = stripAnsi(stats.toString(getSummaryStatsOptions()))
+  const text = [
+    '================ WEBPACK SUMMARY ================',
+    summary,
+    '',
+    '================ WEBUI DIAGNOSTIC COUNTS ================',
     `Total errors: ${errors}`,
     `Total warnings: ${warnings}`,
+    '============== END WEBUI DIAGNOSTIC COUNTS ==============',
     '',
-    'Complete build logs were written to:',
-    `  ${buildLogPath}`,
-    `  ${diagnosticsLogPath}`,
-    `  ${diagnosticsJsonPath}`,
-    '============== END WEBUI DIAGNOSTIC FILES ==============',
   ].join('\n')
+
+  appendBuildLog(text)
+  emitConsole(
+    [
+      '================ WEBUI BUILD DIAGNOSTICS ================',
+      `Total errors: ${errors}`,
+      `Total warnings: ${warnings}`,
+      '',
+      'Every diagnostic with details is written to the log files below.',
+      'Console diagnostics are disabled by default to avoid PowerShell transcript truncation.',
+      '============== END WEBUI BUILD DIAGNOSTICS ==============',
+      '',
+    ].join('\n'),
+    'log'
+  )
 }
 
 function collectDiagnostics(statsJson) {
@@ -269,45 +216,54 @@ function appendDiagnostics(diagnostics, type, compilerPath, items) {
   }
 }
 
-function formatDiagnostics(diagnostics) {
+function emitDiagnostics(diagnostics) {
   if (diagnostics.length === 0) {
-    return ''
+    emitDiagnosticText('No WebUI diagnostics were reported.', 'log')
+    return
   }
 
   const errors = diagnostics.filter(x => x.type === 'error').length
   const warnings = diagnostics.filter(x => x.type === 'warning').length
-  const lines = [
-    '',
+  const header = [
     '================ WEBUI FULL DIAGNOSTICS ================',
     `Generated at: ${new Date().toISOString()}`,
     `Mode: ${mode}`,
     `Total errors: ${errors}`,
     `Total warnings: ${warnings}`,
     '',
-  ]
+  ].join('\n')
+
+  emitDiagnosticText(header, 'log')
 
   diagnostics.forEach((entry, index) => {
-    const diagnostic = entry.diagnostic
-    const title = `${entry.type.toUpperCase()} ${index + 1}/${
-      diagnostics.length
-    }`
-
-    lines.push(`---------------- ${title} ----------------`)
-    lines.push(`Compiler: ${entry.compiler}`)
-    appendField(lines, 'File', diagnostic.file)
-    appendField(lines, 'Module', diagnostic.moduleName)
-    appendField(lines, 'Module identifier', diagnostic.moduleIdentifier)
-    appendField(lines, 'Location', diagnostic.loc)
-    appendField(lines, 'Chunk', diagnostic.chunkName)
-    appendBlock(lines, 'Message', diagnostic.message)
-    appendBlock(lines, 'Details', diagnostic.details)
-    appendBlock(lines, 'Stack', diagnostic.stack)
-    appendModuleTrace(lines, diagnostic.moduleTrace)
-    appendBlock(lines, 'Raw diagnostic object', stringify(diagnostic))
-    lines.push('')
+    emitDiagnosticText(formatDiagnostic(entry, index, diagnostics.length), 'log')
   })
 
-  lines.push('============== END WEBUI FULL DIAGNOSTICS ==============')
+  emitDiagnosticText(
+    '============== END WEBUI FULL DIAGNOSTICS ==============',
+    'log'
+  )
+}
+
+function formatDiagnostic(entry, index, total) {
+  const diagnostic = entry.diagnostic
+  const title = `${entry.type.toUpperCase()} ${index + 1}/${total}`
+  const lines = [
+    `---------------- ${title} ----------------`,
+    `Compiler: ${entry.compiler}`,
+  ]
+
+  appendField(lines, 'File', diagnostic.file)
+  appendField(lines, 'Module', diagnostic.moduleName)
+  appendField(lines, 'Module identifier', diagnostic.moduleIdentifier)
+  appendField(lines, 'Location', diagnostic.loc)
+  appendField(lines, 'Chunk', diagnostic.chunkName)
+  appendBlock(lines, 'Message', diagnostic.message)
+  appendBlock(lines, 'Details', diagnostic.details)
+  appendBlock(lines, 'Stack', diagnostic.stack)
+  appendModuleTrace(lines, diagnostic.moduleTrace)
+  appendBlock(lines, 'Raw diagnostic object', stringify(diagnostic))
+  lines.push('')
 
   return lines.join('\n')
 }
@@ -349,18 +305,60 @@ function appendIndentedField(lines, label, value) {
   }
 }
 
-function writeDiagnosticsFiles(diagnosticsText, statsJson, diagnostics) {
-  fs.mkdirSync(outDir, { recursive: true })
+function emitDiagnosticText(text, stream) {
+  const cleanText = stripAnsi(text)
 
-  fs.writeFileSync(
-    diagnosticsLogPath,
-    stripAnsi(
-      diagnosticsText.trim().length > 0
-        ? diagnosticsText
-        : 'No WebUI diagnostics were reported.'
-    ),
-    'utf8'
-  )
+  appendBuildLog(`${cleanText}\n`)
+  appendUtf8File(diagnosticsLogPath, `${cleanText}\n`)
+
+  if (shouldPrintDiagnosticsToConsole) {
+    emitConsole(cleanText, stream)
+  }
+}
+
+function appendBuildLog(text) {
+  appendUtf8File(buildLogPath, text)
+}
+
+function emitConsole(text, stream) {
+  const write = stream === 'error' ? process.stderr.write : process.stdout.write
+  const lines = String(text).split(/\r?\n/)
+
+  for (const line of lines) {
+    if (line.length === 0) {
+      write.call(stream === 'error' ? process.stderr : process.stdout, '\n')
+      continue
+    }
+
+    for (let index = 0; index < line.length; index += consoleChunkSize) {
+      write.call(
+        stream === 'error' ? process.stderr : process.stdout,
+        `${line.slice(index, index + consoleChunkSize)}\n`
+      )
+    }
+  }
+}
+
+function emitLogPaths() {
+  const text = [
+    '',
+    '================ WEBUI DIAGNOSTIC FILES ================',
+    'Complete build diagnostics were written to:',
+    `  ${buildLogPath}`,
+    `  ${diagnosticsLogPath}`,
+    `  ${diagnosticsJsonPath}`,
+    '',
+    'Set WEBUI_CONSOLE_DIAGNOSTICS=1 to also print every diagnostic to the console.',
+    '============== END WEBUI DIAGNOSTIC FILES ==============',
+    '',
+  ].join('\n')
+
+  appendBuildLog(text)
+  appendUtf8File(diagnosticsLogPath, text)
+  emitConsole(text, 'log')
+}
+
+function writeDiagnosticsJson(statsJson, diagnostics) {
   fs.writeFileSync(
     diagnosticsJsonPath,
     stringify({
@@ -384,10 +382,7 @@ function formatFatalError(error) {
   ].join('\n')
 }
 
-function writeFatalDiagnosticsFile(fatalErrorText) {
-  fs.mkdirSync(outDir, { recursive: true })
-
-  fs.writeFileSync(diagnosticsLogPath, stripAnsi(fatalErrorText), 'utf8')
+function writeFatalDiagnosticsJson(fatalErrorText) {
   fs.writeFileSync(
     diagnosticsJsonPath,
     stringify({
@@ -399,8 +394,42 @@ function writeFatalDiagnosticsFile(fatalErrorText) {
   )
 }
 
+function stripAnsi(text) {
+  return String(text).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
 function stringify(value) {
-  return JSON.stringify(value, null, 2)
+  return JSON.stringify(sanitizeForLog(value), null, 2)
+}
+
+function writeUtf8BomFile(filePath, text) {
+  fs.writeFileSync(filePath, `\uFEFF${stripAnsi(text)}`, 'utf8')
+}
+
+function appendUtf8File(filePath, text) {
+  fs.appendFileSync(filePath, stripAnsi(text), 'utf8')
+}
+
+function sanitizeForLog(value) {
+  if (typeof value === 'string') {
+    return stripAnsi(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(sanitizeForLog)
+  }
+
+  if (value !== null && typeof value === 'object') {
+    const sanitized = {}
+
+    for (const key of Object.keys(value)) {
+      sanitized[key] = sanitizeForLog(value[key])
+    }
+
+    return sanitized
+  }
+
+  return value
 }
 
 function requireLocal(moduleName) {
@@ -421,8 +450,8 @@ function requireLocal(moduleName) {
         `Build log: ${buildLogPath}`,
       ].join('\n')
 
-      writeBuildLog(message)
-      emitConsole(message, 'error')
+      emitDiagnosticText(message, 'error')
+      emitLogPaths()
       process.exit(1)
     }
 

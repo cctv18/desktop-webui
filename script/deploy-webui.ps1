@@ -19,7 +19,6 @@ if ([string]::IsNullOrWhiteSpace($AllowedRoot)) {
   $AllowedRoot = $ProjectRoot.Path
 }
 
-$script:TranscriptStarted = $false
 $script:ResolvedLogFile = $null
 
 function Write-Step {
@@ -47,16 +46,30 @@ function Start-DeployLog {
     $env:NO_COLOR = "1"
   }
 
-  Start-Transcript -Path $resolved -Force | Out-Null
-  $script:TranscriptStarted = $true
+  if ([string]::IsNullOrWhiteSpace($env:FORCE_COLOR)) {
+    $env:FORCE_COLOR = "0"
+  }
+
+  if ([string]::IsNullOrWhiteSpace($env:WEBUI_BUILD_LOG)) {
+    $env:WEBUI_BUILD_LOG = $resolved
+  }
+
+  if ([string]::IsNullOrWhiteSpace($env:WEBUI_DIAGNOSTICS_LOG)) {
+    $env:WEBUI_DIAGNOSTICS_LOG = [System.IO.Path]::ChangeExtension($resolved, ".diagnostics.log")
+  }
+
+  if ([string]::IsNullOrWhiteSpace($env:WEBUI_DIAGNOSTICS_JSON)) {
+    $env:WEBUI_DIAGNOSTICS_JSON = [System.IO.Path]::ChangeExtension($resolved, ".diagnostics.json")
+  }
+
+  if ([string]::IsNullOrWhiteSpace($env:WEBUI_CONSOLE_DIAGNOSTICS)) {
+    $env:WEBUI_CONSOLE_DIAGNOSTICS = "0"
+  }
+
   $script:ResolvedLogFile = $resolved
 }
 
 function Stop-DeployLog {
-  if ($script:TranscriptStarted) {
-    Stop-Transcript | Out-Null
-    $script:TranscriptStarted = $false
-  }
 }
 
 function Refresh-Path {
@@ -181,7 +194,9 @@ Start-DeployLog
 Write-Step "Project root: $($ProjectRoot.Path)"
 Write-Step "Allowed root: $AllowedRoot"
 if (-not [string]::IsNullOrWhiteSpace($script:ResolvedLogFile)) {
-  Write-Step "Detailed deploy log: $script:ResolvedLogFile"
+  Write-Step "Detailed WebUI build log: $script:ResolvedLogFile"
+  Write-Step "Detailed WebUI diagnostics log: $env:WEBUI_DIAGNOSTICS_LOG"
+  Write-Step "Detailed WebUI diagnostics JSON: $env:WEBUI_DIAGNOSTICS_JSON"
 }
 
 Ensure-Node
