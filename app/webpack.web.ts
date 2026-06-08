@@ -6,6 +6,7 @@ import * as common from './webpack.common'
 
 const outputDir = path.resolve(__dirname, '..', 'out')
 const replacements = common.replacements
+const webShimDir = path.resolve(__dirname, 'src/ui/platform')
 
 const tsRule = {
   test: /\.tsx?$/,
@@ -15,42 +16,54 @@ const tsRule = {
 }
 
 const webAliases = {
-  keytar: path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
-  'desktop-notifications': path.resolve(
+  'keytar$': path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
+  'desktop-notifications$': path.resolve(
     __dirname,
     'src/lib/webui-shims/desktop-notifications'
   ),
-  'desktop-notifications/dist/notification-callback': path.resolve(
+  'desktop-notifications/dist/notification-callback$': path.resolve(
     __dirname,
     'src/lib/webui-shims/desktop-notifications'
   ),
-  'desktop-trampoline': path.resolve(
+  'desktop-trampoline$': path.resolve(
     __dirname,
     'src/lib/webui-shims/desktop-trampoline'
   ),
-  'fs-admin': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
-  'registry-js': path.resolve(__dirname, 'src/lib/webui-shims/registry-js'),
-  'windows-argv-parser': path.resolve(
+  'fs-admin$': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
+  'registry-js$': path.resolve(__dirname, 'src/lib/webui-shims/registry-js'),
+  'windows-argv-parser$': path.resolve(
     __dirname,
     'src/lib/webui-shims/windows-argv-parser'
   ),
-  electron: path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
-  'electron/main': path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
-  fs: path.resolve(__dirname, 'src/ui/platform/fs-web-shim'),
-  'fs/promises': path.resolve(
+  'electron$': path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
+  'electron/main$': path.resolve(
     __dirname,
-    'src/ui/platform/fs-promises-web-shim'
+    'src/ui/platform/electron-web-shim'
   ),
-  path: path.resolve(__dirname, 'src/ui/platform/path-web-shim'),
-  child_process: path.resolve(
-    __dirname,
-    'src/ui/platform/child-process-web-shim'
-  ),
+  'assert$': path.join(webShimDir, 'assert-web-shim'),
+  'buffer$': path.join(webShimDir, 'buffer-web-shim'),
+  'child_process$': path.join(webShimDir, 'child-process-web-shim'),
+  'crypto$': path.join(webShimDir, 'crypto-web-shim'),
+  'fs$': path.join(webShimDir, 'fs-web-shim'),
+  'fs/promises$': path.join(webShimDir, 'fs-promises-web-shim'),
+  'module$': path.join(webShimDir, 'module-web-shim'),
+  'net$': path.join(webShimDir, 'net-web-shim'),
+  'os$': path.join(webShimDir, 'os-web-shim'),
+  'path$': path.join(webShimDir, 'path-web-shim'),
+  'stream$': path.join(webShimDir, 'stream-web-shim'),
+  'timers$': path.join(webShimDir, 'timers-web-shim'),
+  'url$': path.join(webShimDir, 'url-web-shim'),
+  'util$': path.join(webShimDir, 'util-web-shim'),
   [path.resolve(__dirname, 'src/main-process/menu')]: path.resolve(
     __dirname,
     'src/ui/platform/menu-web-shim'
   ),
 }
+
+const createNormalizeNodeSchemePlugin = () =>
+  new webpack.NormalModuleReplacementPlugin(/^node:/, resource => {
+    resource.request = resource.request.replace(/^node:/, '')
+  })
 
 const webRenderer: webpack.Configuration = {
   name: 'web-renderer',
@@ -86,10 +99,18 @@ const webRenderer: webpack.Configuration = {
     extensions: ['.js', '.ts', '.tsx'],
     alias: webAliases,
     fallback: {
-      buffer: false,
-      crypto: false,
-      os: false,
-      stream: false,
+      assert: path.join(webShimDir, 'assert-web-shim'),
+      buffer: path.join(webShimDir, 'buffer-web-shim'),
+      crypto: path.join(webShimDir, 'crypto-web-shim'),
+      fs: path.join(webShimDir, 'fs-web-shim'),
+      module: path.join(webShimDir, 'module-web-shim'),
+      net: path.join(webShimDir, 'net-web-shim'),
+      os: path.join(webShimDir, 'os-web-shim'),
+      path: path.join(webShimDir, 'path-web-shim'),
+      stream: path.join(webShimDir, 'stream-web-shim'),
+      timers: path.join(webShimDir, 'timers-web-shim'),
+      url: path.join(webShimDir, 'url-web-shim'),
+      util: path.join(webShimDir, 'util-web-shim'),
     },
   },
   plugins: [
@@ -97,6 +118,7 @@ const webRenderer: webpack.Configuration = {
       template: path.join(__dirname, 'static', 'index.html'),
       chunks: ['web'],
     }),
+    createNormalizeNodeSchemePlugin(),
     new webpack.DefinePlugin(
       Object.assign({}, replacements, {
         __PROCESS_KIND__: JSON.stringify('web'),
@@ -134,30 +156,30 @@ const webServer: webpack.Configuration = merge(
     resolve: {
       extensions: ['.js', '.ts', '.tsx'],
       alias: {
-        keytar: path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
-        'desktop-notifications': path.resolve(
+        'keytar$': path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
+        'desktop-notifications$': path.resolve(
           __dirname,
           'src/lib/webui-shims/desktop-notifications'
         ),
-        'desktop-notifications/dist/notification-callback': path.resolve(
+        'desktop-notifications/dist/notification-callback$': path.resolve(
           __dirname,
           'src/lib/webui-shims/desktop-notifications'
         ),
-        'desktop-trampoline': path.resolve(
+        'desktop-trampoline$': path.resolve(
           __dirname,
           'src/lib/webui-shims/desktop-trampoline'
         ),
-        'fs-admin': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
-        'registry-js': path.resolve(
+        'fs-admin$': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
+        'registry-js$': path.resolve(
           __dirname,
           'src/lib/webui-shims/registry-js'
         ),
-        'windows-argv-parser': path.resolve(
+        'windows-argv-parser$': path.resolve(
           __dirname,
           'src/lib/webui-shims/windows-argv-parser'
         ),
-        electron: path.resolve(__dirname, 'src/web-server/electron-shim'),
-        'electron/main': path.resolve(
+        'electron$': path.resolve(__dirname, 'src/web-server/electron-shim'),
+        'electron/main$': path.resolve(
           __dirname,
           'src/web-server/electron-shim'
         ),
@@ -177,6 +199,7 @@ const webServer: webpack.Configuration = merge(
       server: path.resolve(__dirname, 'src/web-server/main'),
     },
     plugins: [
+      createNormalizeNodeSchemePlugin(),
       new webpack.DefinePlugin(
         Object.assign({}, replacements, {
           __PROCESS_KIND__: JSON.stringify('web-server'),

@@ -34,6 +34,22 @@ export function resolve(...parts: ReadonlyArray<string>) {
   return normalize(join(...parts))
 }
 
+export function relative(from: string, to: string) {
+  const fromParts = normalize(from).split('/').filter(Boolean)
+  const toParts = normalize(to).split('/').filter(Boolean)
+
+  while (
+    fromParts.length > 0 &&
+    toParts.length > 0 &&
+    fromParts[0] === toParts[0]
+  ) {
+    fromParts.shift()
+    toParts.shift()
+  }
+
+  return [...fromParts.map(() => '..'), ...toParts].join('/') || '.'
+}
+
 export const posix = {
   basename,
   delimiter,
@@ -42,8 +58,11 @@ export const posix = {
   isAbsolute,
   join,
   normalize,
+  relative,
   resolve,
   sep,
 }
 
 export const win32 = posix
+
+export default posix
