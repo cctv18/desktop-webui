@@ -31,6 +31,33 @@ class MemoryStorage implements Storage {
 const noop = () => {}
 const g = globalThis as any
 
+const defaultLocationHref =
+  process.env.GITDESK_WEBUI_URL ?? 'http://127.0.0.1:8080/'
+
+function createLocationShim(href: string) {
+  const url = new URL(href)
+
+  return {
+    href: url.href,
+    protocol: url.protocol,
+    host: url.host,
+    hostname: url.hostname,
+    port: url.port,
+    pathname: url.pathname,
+    search: url.search,
+    hash: url.hash,
+    origin: url.origin,
+    assign: noop,
+    reload: noop,
+    replace: noop,
+    toString: () => url.href,
+  }
+}
+
+if (g.location === undefined) {
+  g.location = createLocationShim(defaultLocationHref)
+}
+
 if (g.localStorage === undefined) {
   g.localStorage = new MemoryStorage()
 }
@@ -43,7 +70,10 @@ if (g.window === undefined) {
     clearTimeout,
     setInterval,
     clearInterval,
+    location: g.location,
   }
+} else if (g.window.location === undefined) {
+  g.window.location = g.location
 }
 
 if (g.document === undefined) {
@@ -51,6 +81,7 @@ if (g.document === undefined) {
     cookie: '',
     addEventListener: noop,
     removeEventListener: noop,
+    location: g.location,
     body: {
       classList: {
         add: noop,
@@ -59,6 +90,8 @@ if (g.document === undefined) {
       },
     },
   }
+} else if (g.document.location === undefined) {
+  g.document.location = g.location
 }
 
 if (g.navigator === undefined) {
