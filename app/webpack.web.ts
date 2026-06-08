@@ -7,6 +7,7 @@ import * as common from './webpack.common'
 const outputDir = path.resolve(__dirname, '..', 'out')
 const replacements = common.replacements
 const webShimDir = path.resolve(__dirname, 'src/ui/platform')
+const processWebShim = path.join(webShimDir, 'process-web-shim.ts')
 
 const tsRule = {
   test: /\.tsx?$/,
@@ -50,7 +51,7 @@ const webAliases = {
   'net$': path.join(webShimDir, 'net-web-shim'),
   'os$': path.join(webShimDir, 'os-web-shim'),
   'path$': path.join(webShimDir, 'path-web-shim'),
-  'process$': path.join(webShimDir, 'process-web-shim'),
+  'process$': processWebShim,
   'stream$': path.join(webShimDir, 'stream-web-shim'),
   'timers$': path.join(webShimDir, 'timers-web-shim'),
   'url$': path.join(webShimDir, 'url-web-shim'),
@@ -108,7 +109,7 @@ const webRenderer: webpack.Configuration = {
       net: path.join(webShimDir, 'net-web-shim'),
       os: path.join(webShimDir, 'os-web-shim'),
       path: path.join(webShimDir, 'path-web-shim'),
-      process: path.join(webShimDir, 'process-web-shim'),
+      process: processWebShim,
       stream: path.join(webShimDir, 'stream-web-shim'),
       timers: path.join(webShimDir, 'timers-web-shim'),
       url: path.join(webShimDir, 'url-web-shim'),
@@ -122,7 +123,7 @@ const webRenderer: webpack.Configuration = {
     }),
     createNormalizeNodeSchemePlugin(),
     new webpack.ProvidePlugin({
-      process: [path.join(webShimDir, 'process-web-shim'), 'default'],
+      process: [processWebShim, 'default'],
     }),
     new webpack.DefinePlugin(
       Object.assign({}, replacements, {
