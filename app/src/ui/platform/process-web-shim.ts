@@ -99,6 +99,59 @@ function detectSystemVersion() {
   return '0.0.0'
 }
 
+function getSystemErrorName(code: number) {
+  switch (code) {
+    case -2:
+      return 'ENOENT'
+    case -13:
+      return 'EACCES'
+    case -17:
+      return 'EEXIST'
+    case -20:
+      return 'ENOTDIR'
+    case -21:
+      return 'EISDIR'
+    case -22:
+      return 'EINVAL'
+    case -24:
+      return 'EMFILE'
+    case -28:
+      return 'ENOSPC'
+    case -32:
+      return 'EPIPE'
+    case -98:
+      return 'EADDRINUSE'
+    case -111:
+      return 'ECONNREFUSED'
+    default:
+      if (code >= 0) {
+        throw new Error('err >= 0')
+      }
+
+      return `Unknown system error ${code}`
+  }
+}
+
+function binding(name: string) {
+  if (name === 'uv') {
+    return {
+      errname: getSystemErrorName,
+    }
+  }
+
+  if (name === 'buffer') {
+    return {
+      kStringMaxLength: Number.MAX_SAFE_INTEGER,
+    }
+  }
+
+  if (name === 'natives') {
+    return {}
+  }
+
+  throw new Error(`process.binding('${name}') is not available in GitDesk WebUI`)
+}
+
 function on(event: string, listener: ProcessListener) {
   let eventListeners = listeners.get(event)
   if (eventListeners === undefined) {
@@ -140,6 +193,7 @@ function emit(event: string, ...args: ReadonlyArray<unknown>) {
 const processShim = {
   arch: detectArch(),
   argv: [],
+  binding,
   browser: true,
   cwd: () => '/',
   emit,
@@ -158,7 +212,9 @@ const processShim = {
   stderr: null,
   stdout: null,
   type: 'renderer',
-  versions: {},
+  versions: {
+    node: '0.0.0',
+  },
 }
 
 ;(globalThis as any).process = (globalThis as any).process ?? processShim
@@ -176,6 +232,6 @@ export const stdout = processShim.stdout
 export const type = processShim.type
 export const versions = processShim.versions
 
-export { emit, off, on, once }
+export { binding, emit, off, on, once }
 
 export default processShim
