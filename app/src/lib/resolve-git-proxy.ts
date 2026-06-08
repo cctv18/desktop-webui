@@ -10,7 +10,7 @@ export async function resolveGitProxy(
   // error (if the URL we're given is null or undefined despite
   // our best type efforts for example).
   // Better safe than sorry.
-  const pacString = await resolveProxy(url).catch(err => {
+  const pacString = await resolveProxy(url).catch((err: Error) => {
     log.error(`Failed resolving proxy for '${url}'`, err)
     return 'DIRECT'
   })

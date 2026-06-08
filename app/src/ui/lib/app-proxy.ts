@@ -44,7 +44,7 @@ export function getName(): string {
  * This is preferable to using `remote` directly because we cache the result.
  */
 export async function getAppPath(): Promise<string> {
-  if (!path) {
+  if (path === null) {
     path = await getAppPathProxy()
   }
 
@@ -57,7 +57,7 @@ export async function getAppPath(): Promise<string> {
  * This is preferable to using `remote` directly because we cache the result.
  */
 export async function getDocumentsPath(): Promise<string> {
-  if (!documentsPath) {
+  if (documentsPath === null) {
     try {
       documentsPath = await getPath('documents')
     } catch (ex) {

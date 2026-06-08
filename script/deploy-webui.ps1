@@ -119,7 +119,10 @@ function Ensure-Node {
   }
 
   $nodeMajor = [int](& node -p "Number(process.versions.node.split('.')[0])")
+  $nodePlatform = (& node -p 'process.platform').Trim()
+  $nodeArch = (& node -p 'process.arch').Trim()
   Write-Step "Node.js version: $(& node -v)"
+  Write-Step "Node.js platform/arch: $nodePlatform/$nodeArch"
 
   if ($nodeMajor -lt 18) {
     throw "Node.js 18 or newer is required. Node.js 22 LTS is recommended for WebUI testing."
@@ -127,6 +130,19 @@ function Ensure-Node {
 
   if ($nodeMajor -gt 22) {
     Write-Warning "Node.js 22 LTS is recommended. Newer versions such as Node.js $nodeMajor may expose dependency compatibility issues."
+  }
+
+  switch ($nodeArch) {
+    "x64" { break }
+    "arm64" { break }
+    "arm" {
+      Write-Warning "ARMv7/armv7a WebUI deployment is experimental. Some upstream Desktop dependencies do not publish ARMv7 prebuilt packages; prefer x64 or arm64 when possible."
+      break
+    }
+    default {
+      Write-Warning "Architecture '$nodeArch' is not a primary WebUI target. x64 and arm64 are the expected deployment architectures."
+      break
+    }
   }
 }
 
@@ -203,6 +219,8 @@ Ensure-Node
 Ensure-Yarn
 
 if (-not $SkipInstall) {
+  Write-Step "Yarn optional dependency platform/CPU exclusion messages are expected; Yarn is selecting packages for the current architecture."
+
   if ($FullNativeInstall) {
     Write-Step "Installing full Desktop dependencies with native install scripts."
     Write-Warning "Full native install requires Visual Studio Build Tools with the Desktop development with C++ workload on Windows."

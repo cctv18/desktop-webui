@@ -28,13 +28,18 @@ import { pathExists } from '../lib/path-exists'
 export function invokeProxy<T extends keyof RequestResponseChannels>(
   channel: T,
   numArgs: ParameterCount<RequestResponseChannels[T]>
-) {
+): (
+  ...args: RequestResponseChannelParameters<T>
+) => ReturnType<RequestResponseChannels[T]> {
   return (...args: RequestResponseChannelParameters<T>) => {
     // This as any cast here may seem unsafe but it isn't since we're guaranteed
     // that numArgs will match the parameter count of the IPC declaration.
     args = args.length !== numArgs ? (args.slice(0, numArgs) as any) : args
     const invoke = ipcRenderer.invoke as any
-    return invoke(channel, ...(args as ReadonlyArray<unknown>))
+    return invoke(
+      channel,
+      ...(args as ReadonlyArray<unknown>)
+    ) as ReturnType<RequestResponseChannels[T]>
   }
 }
 
@@ -56,7 +61,7 @@ export function invokeProxy<T extends keyof RequestResponseChannels>(
 export function sendProxy<T extends keyof RequestChannels>(
   channel: T,
   numArgs: ParameterCount<RequestChannels[T]>
-) {
+): (...args: RequestChannelParameters<T>) => void {
   return (...args: RequestChannelParameters<T>) => {
     // This as any cast here may seem unsafe but it isn't since we're guaranteed
     // that numArgs will match the parameter count of the IPC declaration.

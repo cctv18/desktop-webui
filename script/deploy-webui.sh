@@ -131,8 +131,13 @@ ensure_node() {
   fi
 
   local node_major
+  local node_platform
+  local node_arch
   node_major="$(node -p "Number(process.versions.node.split('.')[0])")"
+  node_platform="$(node -p "process.platform")"
+  node_arch="$(node -p "process.arch")"
   step "Node.js version: $(node -v)"
+  step "Node.js platform/arch: $node_platform/$node_arch"
 
   if [[ "$node_major" -lt 18 ]]; then
     echo "Node.js 18 or newer is required. Node.js 22 LTS is recommended for WebUI testing." >&2
@@ -142,6 +147,17 @@ ensure_node() {
   if [[ "$node_major" -gt 22 ]]; then
     echo "Warning: Node.js 22 LTS is recommended. Newer versions such as Node.js $node_major may expose dependency compatibility issues." >&2
   fi
+
+  case "$node_arch" in
+    x64|arm64)
+      ;;
+    arm)
+      echo "Warning: ARMv7/armv7a WebUI deployment is experimental. Some upstream Desktop dependencies do not publish ARMv7 prebuilt packages; prefer x64 or arm64 when possible." >&2
+      ;;
+    *)
+      echo "Warning: Architecture '$node_arch' is not a primary WebUI target. x64 and arm64 are the expected deployment architectures." >&2
+      ;;
+  esac
 }
 
 ensure_yarn() {
@@ -201,19 +217,29 @@ if [[ -n "$LOG_FILE" ]]; then
   mkdir -p "$(dirname "$LOG_FILE")"
   : > "$LOG_FILE"
   export NO_COLOR="${NO_COLOR:-1}"
+  export FORCE_COLOR="${FORCE_COLOR:-0}"
+  LOG_STEM="${LOG_FILE%.*}"
+  export WEBUI_BUILD_LOG="${WEBUI_BUILD_LOG:-$LOG_FILE}"
+  export WEBUI_DIAGNOSTICS_LOG="${WEBUI_DIAGNOSTICS_LOG:-$LOG_STEM.diagnostics.log}"
+  export WEBUI_DIAGNOSTICS_JSON="${WEBUI_DIAGNOSTICS_JSON:-$LOG_STEM.diagnostics.json}"
+  export WEBUI_CONSOLE_DIAGNOSTICS="${WEBUI_CONSOLE_DIAGNOSTICS:-0}"
   exec > >(tee -a "$LOG_FILE") 2>&1
 fi
 
 step "Project root: $PROJECT_ROOT"
 step "Allowed root: $ALLOWED_ROOT"
 if [[ -n "$LOG_FILE" ]]; then
-  step "Detailed deploy log: $LOG_FILE"
+  step "Detailed WebUI build log: $WEBUI_BUILD_LOG"
+  step "Detailed WebUI diagnostics log: $WEBUI_DIAGNOSTICS_LOG"
+  step "Detailed WebUI diagnostics JSON: $WEBUI_DIAGNOSTICS_JSON"
 fi
 
 ensure_node
 ensure_yarn
 
 if [[ "$SKIP_INSTALL" -eq 0 ]]; then
+  step "Yarn optional dependency platform/CPU exclusion messages are expected; Yarn is selecting packages for the current architecture."
+
   if [[ "$FULL_NATIVE_INSTALL" -eq 1 ]]; then
     step "Installing full Desktop dependencies with native install scripts."
     echo "Warning: Full native install requires C/C++ build tools such as build-essential, python3, and make on Linux." >&2

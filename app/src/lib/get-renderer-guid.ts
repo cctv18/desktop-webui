@@ -9,7 +9,10 @@ let cachedGUID: string | null = null
  * Get the GUID for the Renderer process.
  */
 export async function getRendererGUID(): Promise<string> {
-  cachedGUID = cachedGUID ?? (await getGUID())
+  if (cachedGUID === null) {
+    cachedGUID = await getGUID()
+  }
+
   return cachedGUID
 }
 

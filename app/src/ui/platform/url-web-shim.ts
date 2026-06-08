@@ -10,7 +10,10 @@ export interface IParsedUrl {
   readonly hostname?: string | null
   readonly hash?: string | null
   readonly search?: string | null
-  readonly query?: string | Record<string, string | ReadonlyArray<string>>
+  readonly query?:
+    | string
+    | Record<string, string | ReadonlyArray<string>>
+    | null
   readonly pathname?: string | null
   readonly path?: string | null
   readonly href?: string
@@ -52,7 +55,7 @@ export function format(value: IParsedUrl) {
   const query =
     typeof value.query === 'string'
       ? value.query
-      : value.query !== undefined
+      : value.query !== undefined && value.query !== null
         ? new URLSearchParams(value.query as Record<string, string>).toString()
         : ''
   const search =
