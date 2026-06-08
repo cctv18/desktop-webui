@@ -22,7 +22,7 @@ export async function createRemoteRuntime() {
   })
 
   return {
-    dispatcher: createRemoteDispatcher(rpc),
+    dispatcher: createRemoteDispatcher(rpc, appStore),
     appStore,
     repositoryStateManager,
     issuesStore: new RemoteMethodStore(rpc, 'issuesStore'),

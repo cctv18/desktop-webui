@@ -19,6 +19,10 @@ export class RemoteAppStore {
     this.emitter.emit('did-update', state)
   }
 
+  public updateState(update: (state: IAppState) => IAppState) {
+    this.setState(update(this.state))
+  }
+
   public onDidUpdate(fn: (state: IAppState) => void): Disposable {
     return this.emitter.on('did-update', fn)
   }

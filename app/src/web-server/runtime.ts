@@ -32,6 +32,9 @@ import { NotificationsDebugStore } from '../lib/stores/notifications-debug-store
 import { Dispatcher } from '../ui/dispatcher'
 import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
 import { IAppState } from '../lib/app-state'
+import { reviveFromWeb } from '../lib/webui-serialization'
+import { Account } from '../models/account'
+import { CloningRepository } from '../models/cloning-repository'
 import { Repository } from '../models/repository'
 import { PathGuard } from './path-guard'
 
@@ -143,8 +146,9 @@ export class WebRuntime {
       throw new Error(`Unknown WebUI RPC method '${method}'`)
     }
 
+    const revivedParams = reviveFromWeb<ReadonlyArray<unknown>>(params)
     const guardedParams = await Promise.all(
-      params.map(param => this.reviveAndGuardArgument(param))
+      revivedParams.map(param => this.reviveAndGuardArgument(param))
     )
 
     return action.apply(target, guardedParams)
@@ -174,25 +178,108 @@ export class WebRuntime {
       return Promise.all(param.map(x => this.reviveAndGuardArgument(x)))
     }
 
+    if (param instanceof Date) {
+      return param
+    }
+
+    if (param instanceof Map) {
+      const entries = await Promise.all(
+        Array.from(param.entries()).map(async ([key, value]) => [
+          await this.reviveAndGuardArgument(key),
+          await this.reviveAndGuardArgument(value),
+        ])
+      )
+      return new Map(entries as Array<[unknown, unknown]>)
+    }
+
+    if (param instanceof Set) {
+      const values = await Promise.all(
+        Array.from(param.values()).map(value =>
+          this.reviveAndGuardArgument(value)
+        )
+      )
+      return new Set(values)
+    }
+
     if (param !== null && typeof param === 'object') {
       const value = param as any
+
+      if (value instanceof Repository) {
+        await this.pathGuard.assertAllowed(value.path)
+        return this.findRepository(value.id, value.path) ?? value
+      }
+
+      if (value instanceof CloningRepository) {
+        await this.pathGuard.assertAllowed(value.path)
+        return value
+      }
+
+      if (value instanceof Account) {
+        return this.findAccount(value) ?? value
+      }
 
       if (typeof value.path === 'string' && typeof value.id === 'number') {
         await this.pathGuard.assertAllowed(value.path)
         return this.findRepository(value.id, value.path) ?? value
       }
 
-      return param
+      const guardedValue = Object.create(Object.getPrototypeOf(value))
+
+      for (const key of Object.keys(value)) {
+        const fieldValue = value[key]
+
+        if (
+          typeof fieldValue === 'string' &&
+          this.shouldGuardPath(key, fieldValue)
+        ) {
+          await this.pathGuard.assertAllowed(fieldValue)
+          guardedValue[key] = fieldValue
+        } else {
+          guardedValue[key] = await this.reviveAndGuardArgument(fieldValue)
+        }
+      }
+
+      return guardedValue
     }
 
     return param
+  }
+
+  private shouldGuardPath(key: string, value: string): boolean {
+    if (!Path.isAbsolute(value)) {
+      return false
+    }
+
+    return (
+      key === 'path' ||
+      key === 'repositoryPath' ||
+      key === 'worktreePath' ||
+      key === 'targetPath' ||
+      key === 'fullPath' ||
+      key === 'destinationPath'
+    )
   }
 
   private findRepository(id: number, path: string): Repository | null {
     return (
       this.appStore
         .getState()
-        .repositories.find(x => x.id === id || x.path === path) ?? null
+        .repositories.find(
+          (x): x is Repository =>
+            x instanceof Repository && (x.id === id || x.path === path)
+        ) ?? null
+    )
+  }
+
+  private findAccount(account: Account): Account | null {
+    return (
+      this.appStore
+        .getState()
+        .accounts.find(
+          candidate =>
+            candidate.id === account.id &&
+            candidate.endpoint === account.endpoint
+        ) ?? null
     )
   }
 }

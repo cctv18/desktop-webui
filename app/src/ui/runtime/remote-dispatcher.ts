@@ -1,13 +1,14 @@
+import { Foldout, FoldoutType } from '../../lib/app-state'
+import { AppMenu } from '../../models/app-menu'
+import { RemoteAppStore } from './remote-app-store'
 import { RemoteRPCClient } from './remote-rpc'
 
-const localNoopMethods = new Set([
-  'initializeAppFocusState',
-  'setAppFocusState',
-  'setAccessKeyHighlightState',
-  'appFocusedElementChanged',
-])
+const localNoopMethods = new Set(['appFocusedElementChanged'])
 
-export function createRemoteDispatcher(rpc: RemoteRPCClient) {
+export function createRemoteDispatcher(
+  rpc: RemoteRPCClient,
+  appStore: RemoteAppStore
+) {
   return new Proxy(
     {},
     {
@@ -20,6 +21,32 @@ export function createRemoteDispatcher(rpc: RemoteRPCClient) {
           return undefined
         }
 
+        if (property === 'initializeAppFocusState') {
+          return () => setAppFocusState(appStore, document.hasFocus())
+        }
+
+        if (property === 'setAppFocusState') {
+          return (isFocused: boolean) => setAppFocusState(appStore, isFocused)
+        }
+
+        if (property === 'setAccessKeyHighlightState') {
+          return (highlight: boolean) =>
+            setAccessKeyHighlightState(appStore, highlight)
+        }
+
+        if (property === 'setAppMenuState') {
+          return (update: (appMenu: AppMenu) => AppMenu) =>
+            setAppMenuState(appStore, update)
+        }
+
+        if (property === 'showFoldout') {
+          return (foldout: Foldout) => rpc.invoke(property, [foldout])
+        }
+
+        if (property === 'closeFoldout') {
+          return (foldout: FoldoutType) => rpc.invoke(property, [foldout])
+        }
+
         if (localNoopMethods.has(property)) {
           return () => undefined
         }
@@ -28,4 +55,41 @@ export function createRemoteDispatcher(rpc: RemoteRPCClient) {
       },
     }
   )
+}
+
+function setAppFocusState(appStore: RemoteAppStore, appIsFocused: boolean) {
+  appStore.updateState(state =>
+    state.appIsFocused === appIsFocused ? state : { ...state, appIsFocused }
+  )
+  return Promise.resolve()
+}
+
+function setAccessKeyHighlightState(
+  appStore: RemoteAppStore,
+  highlightAccessKeys: boolean
+) {
+  appStore.updateState(state =>
+    state.highlightAccessKeys === highlightAccessKeys
+      ? state
+      : { ...state, highlightAccessKeys }
+  )
+  return Promise.resolve()
+}
+
+function setAppMenuState(
+  appStore: RemoteAppStore,
+  update: (appMenu: AppMenu) => AppMenu
+) {
+  appStore.updateState(state => {
+    if (state.appMenuState.length === 0 || typeof update !== 'function') {
+      return state
+    }
+
+    const appMenu = AppMenu.fromMenu(state.appMenuState[0])
+    ;(appMenu as any).openMenus = state.appMenuState
+
+    return { ...state, appMenuState: update(appMenu).openMenus }
+  })
+
+  return Promise.resolve()
 }

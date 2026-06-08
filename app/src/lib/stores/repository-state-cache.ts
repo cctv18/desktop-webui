@@ -335,7 +335,7 @@ export class RepositoryStateCache {
   }
 }
 
-function getInitialRepositoryState(): IRepositoryState {
+export function getInitialRepositoryState(): IRepositoryState {
   return {
     commitSelection: {
       shas: [],

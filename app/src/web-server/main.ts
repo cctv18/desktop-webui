@@ -3,6 +3,7 @@ import * as Http from 'http'
 import * as Path from 'path'
 import { WebRuntime } from './runtime'
 import { parseAllowedRoots, PathGuard } from './path-guard'
+import { serializeForWeb } from '../lib/webui-serialization'
 
 type ServerEvent = {
   readonly type: string
@@ -24,7 +25,7 @@ const runtime = new WebRuntime(pathGuard)
 const eventClients = new Set<Http.ServerResponse>()
 
 runtime.onDidUpdate(state => {
-  broadcast({ type: 'state', payload: state })
+  broadcast({ type: 'state', payload: serializeForWeb(state) })
 })
 
 runtime.dispatcher.loadInitialState().catch(error => {
@@ -62,7 +63,7 @@ async function route(req: Http.IncomingMessage, res: Http.ServerResponse) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/state') {
-    writeJson(res, 200, runtime.getState())
+    writeJson(res, 200, serializeForWeb(runtime.getState()))
     return
   }
 
@@ -78,7 +79,7 @@ async function route(req: Http.IncomingMessage, res: Http.ServerResponse) {
 
     try {
       const result = await runtime.invoke(method, params)
-      writeJson(res, 200, { ok: true, result })
+      writeJson(res, 200, { ok: true, result: serializeForWeb(result) })
     } catch (error) {
       writeJson(res, 200, {
         ok: false,
@@ -98,7 +99,12 @@ function subscribeEvents(res: Http.ServerResponse) {
     Connection: 'keep-alive',
   })
   eventClients.add(res)
-  res.write(`data: ${JSON.stringify({ type: 'state', payload: runtime.getState() })}\n\n`)
+  res.write(
+    `data: ${JSON.stringify({
+      type: 'state',
+      payload: serializeForWeb(runtime.getState()),
+    })}\n\n`
+  )
   res.on('close', () => eventClients.delete(res))
 }
 

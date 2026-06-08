@@ -1,3 +1,5 @@
+import { reviveFromWeb, serializeForWeb } from '../../lib/webui-serialization'
+
 export type RemoteEventHandler = (event: {
   readonly type: string
   readonly payload: unknown
@@ -12,10 +14,10 @@ export class RemoteRPCClient {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ method, params }),
+      body: JSON.stringify({ method, params: serializeForWeb(params) }),
     })
 
-    const payload = await response.json()
+    const payload = reviveFromWeb<any>(await response.json())
 
     if (!payload.ok) {
       const message = payload.error?.message ?? `Remote call '${method}' failed`
@@ -27,14 +29,18 @@ export class RemoteRPCClient {
 
   public async getState<T>(): Promise<T> {
     const response = await fetch(`${this.baseURL}/api/state`)
-    return response.json()
+    return reviveFromWeb<T>(await response.json())
   }
 
   public subscribe(handler: RemoteEventHandler) {
     const events = new EventSource(`${this.baseURL}/api/events`)
 
     events.onmessage = message => {
-      handler(JSON.parse(message.data))
+      handler(
+        reviveFromWeb<Parameters<RemoteEventHandler>[0]>(
+          JSON.parse(message.data)
+        )
+      )
     }
 
     events.onerror = () => {
