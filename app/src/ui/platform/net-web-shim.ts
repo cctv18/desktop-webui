@@ -9,6 +9,10 @@ export interface AddressInfo {
 }
 
 export class Socket {
+  public pipe<T>(destination: T) {
+    return destination
+  }
+
   public write() {
     unavailable()
   }
@@ -24,6 +28,18 @@ export class Socket {
   }
 
   public once() {
+    return this
+  }
+
+  public removeAllListeners() {
+    return this
+  }
+
+  public ref() {
+    return this
+  }
+
+  public unref() {
     return this
   }
 }
@@ -47,6 +63,18 @@ export class Server {
   }
 
   public once() {
+    return this
+  }
+
+  public removeAllListeners() {
+    return this
+  }
+
+  public ref() {
+    return this
+  }
+
+  public unref() {
     return this
   }
 }
