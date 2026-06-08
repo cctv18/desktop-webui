@@ -89,6 +89,9 @@ export type RequestChannels = {
   'uninstall-windows-cli': () => void
 }
 
+export type RequestChannelParameters<T extends keyof RequestChannels> =
+  RequestChannels[T] extends (...args: infer Args) => unknown ? Args : never
+
 /**
  * Defines the duplex IPC channel names we use from the renderer
  * process along with their signatures. This type is used from both
@@ -136,3 +139,9 @@ export type RequestResponseChannels = {
   'get-notifications-permission': () => Promise<DesktopNotificationPermission>
   'request-notifications-permission': () => Promise<boolean>
 }
+
+export type RequestResponseChannelParameters<
+  T extends keyof RequestResponseChannels
+> = RequestResponseChannels[T] extends (...args: infer Args) => unknown
+  ? Args
+  : never

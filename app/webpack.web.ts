@@ -30,6 +30,10 @@ const webAliases = {
   ),
   'fs-admin': path.resolve(__dirname, 'src/lib/webui-shims/fs-admin'),
   'registry-js': path.resolve(__dirname, 'src/lib/webui-shims/registry-js'),
+  'windows-argv-parser': path.resolve(
+    __dirname,
+    'src/lib/webui-shims/windows-argv-parser'
+  ),
   electron: path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
   'electron/main': path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
   fs: path.resolve(__dirname, 'src/ui/platform/fs-web-shim'),
@@ -147,6 +151,10 @@ const webServer: webpack.Configuration = merge(
         'registry-js': path.resolve(
           __dirname,
           'src/lib/webui-shims/registry-js'
+        ),
+        'windows-argv-parser': path.resolve(
+          __dirname,
+          'src/lib/webui-shims/windows-argv-parser'
         ),
         electron: path.resolve(__dirname, 'src/web-server/electron-shim'),
         'electron/main': path.resolve(

@@ -1,5 +1,10 @@
 import { ExecutableMenuItem } from '../models/app-menu'
-import { RequestResponseChannels, RequestChannels } from '../lib/ipc-shared'
+import {
+  RequestResponseChannels,
+  RequestChannels,
+  RequestChannelParameters,
+  RequestResponseChannelParameters,
+} from '../lib/ipc-shared'
 import * as ipcRenderer from '../lib/ipc-renderer'
 import { stat } from 'fs/promises'
 import { isApplicationBundle } from '../lib/is-application-bundle'
@@ -24,11 +29,11 @@ export function invokeProxy<T extends keyof RequestResponseChannels>(
   channel: T,
   numArgs: ParameterCount<RequestResponseChannels[T]>
 ) {
-  return (...args: Parameters<RequestResponseChannels[T]>) => {
+  return (...args: RequestResponseChannelParameters<T>) => {
     // This as any cast here may seem unsafe but it isn't since we're guaranteed
     // that numArgs will match the parameter count of the IPC declaration.
     args = args.length !== numArgs ? (args.slice(0, numArgs) as any) : args
-    return ipcRenderer.invoke(channel, ...args)
+    return ipcRenderer.invoke(channel, ...(args as ReadonlyArray<unknown>))
   }
 }
 
@@ -51,11 +56,11 @@ export function sendProxy<T extends keyof RequestChannels>(
   channel: T,
   numArgs: ParameterCount<RequestChannels[T]>
 ) {
-  return (...args: Parameters<RequestChannels[T]>) => {
+  return (...args: RequestChannelParameters<T>) => {
     // This as any cast here may seem unsafe but it isn't since we're guaranteed
     // that numArgs will match the parameter count of the IPC declaration.
     args = args.length !== numArgs ? (args.slice(0, numArgs) as any) : args
-    ipcRenderer.send(channel, ...args)
+    ipcRenderer.send(channel, ...(args as ReadonlyArray<unknown>))
   }
 }
 

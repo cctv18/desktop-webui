@@ -4,7 +4,6 @@ import * as Path from 'path'
 import { Disposable } from 'event-kit'
 import {
   AccountsStore,
-  ApiRepositoriesStore,
   AppStore,
   CloningRepositoriesStore,
   CopilotStore,
@@ -16,6 +15,7 @@ import {
   PullRequestStore,
   PullRequestCoordinator,
 } from '../lib/stores'
+import { ApiRepositoriesStore } from '../lib/stores/api-repositories-store'
 import {
   GitHubUserDatabase,
   IssuesDatabase,

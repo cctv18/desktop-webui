@@ -1,4 +1,9 @@
-import { RequestChannels, RequestResponseChannels } from '../lib/ipc-shared'
+import {
+  RequestChannels,
+  RequestResponseChannels,
+  RequestChannelParameters,
+  RequestResponseChannelParameters,
+} from '../lib/ipc-shared'
 // eslint-disable-next-line no-restricted-imports
 import { ipcMain } from 'electron'
 import { IpcMainEvent, IpcMainInvokeEvent } from 'electron/main'
@@ -6,12 +11,12 @@ import { isTrustedIPCSender } from './trusted-ipc-sender'
 
 type RequestChannelListener<T extends keyof RequestChannels> = (
   event: IpcMainEvent,
-  ...args: Parameters<RequestChannels[T]>
+  ...args: RequestChannelParameters<T>
 ) => void
 
 type RequestResponseChannelListener<T extends keyof RequestResponseChannels> = (
   event: IpcMainInvokeEvent,
-  ...args: Parameters<RequestResponseChannels[T]>
+  ...args: RequestResponseChannelParameters<T>
 ) => ReturnType<RequestResponseChannels[T]>
 
 /**

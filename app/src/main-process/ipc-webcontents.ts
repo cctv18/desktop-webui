@@ -1,7 +1,10 @@
 /* eslint-disable no-loosely-typed-webcontents-ipc */
 
 import { WebContents } from 'electron'
-import { RequestChannels } from '../lib/ipc-shared'
+import {
+  RequestChannels,
+  RequestChannelParameters,
+} from '../lib/ipc-shared'
 
 /**
  * Send a message to a renderer process via its webContents asynchronously. This
@@ -10,7 +13,7 @@ import { RequestChannels } from '../lib/ipc-shared'
 export function send<T extends keyof RequestChannels>(
   webContents: WebContents,
   channel: T,
-  ...args: Parameters<RequestChannels[T]>
+  ...args: RequestChannelParameters<T>
 ): void {
   if (webContents.isDestroyed()) {
     const msg = `failed to send on ${channel}, webContents was destroyed`
@@ -19,6 +22,6 @@ export function send<T extends keyof RequestChannels>(
     }
     log.error(msg)
   } else {
-    webContents.send(channel, ...args)
+    webContents.send(channel, ...(args as ReadonlyArray<unknown>))
   }
 }
