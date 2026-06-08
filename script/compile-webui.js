@@ -24,20 +24,52 @@ webpack(config, (error, stats) => {
   }
 
   if (stats !== undefined) {
-    console.log(
-      stats.toString({
-        colors: true,
-        chunks: false,
-        modules: false,
-        children: true,
-      })
-    )
+    console.log(stats.toString(getStatsOptions()))
 
     if (stats.hasErrors()) {
       process.exitCode = 1
     }
   }
 })
+
+function getStatsOptions() {
+  return {
+    assets: true,
+    builtAt: true,
+    cachedAssets: true,
+    children: true,
+    chunks: false,
+    colors: shouldUseColors(),
+    entrypoints: false,
+    errorDetails: true,
+    errors: true,
+    errorsSpace: Number.MAX_SAFE_INTEGER,
+    logging: 'warn',
+    moduleTrace: true,
+    modules: false,
+    performance: true,
+    reasons: true,
+    timings: true,
+    version: true,
+    warnings: true,
+    warningsSpace: Number.MAX_SAFE_INTEGER,
+  }
+}
+
+function shouldUseColors() {
+  const noColor = process.env.NO_COLOR
+
+  if (
+    noColor !== undefined &&
+    noColor !== '' &&
+    noColor !== '0' &&
+    noColor.toLowerCase() !== 'false'
+  ) {
+    return false
+  }
+
+  return Boolean(process.stdout.isTTY)
+}
 
 function requireLocal(moduleName) {
   try {

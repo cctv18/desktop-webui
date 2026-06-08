@@ -9,6 +9,7 @@ PRODUCTION=0
 NO_START=0
 SKIP_INSTALL=0
 FULL_NATIVE_INSTALL=0
+LOG_FILE="out/webui-deploy.log"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -25,6 +26,8 @@ Options:
   --no-start               Install and compile only
   --skip-install           Do not run yarn install; fail if local deps are missing
   --full-native-install    Run package install scripts for full Desktop native dependencies
+  --log-file <path>        Write full deploy output to a log file. Default: out/webui-deploy.log
+  --no-log-file            Do not write a deploy log file
   -h, --help               Show this help
 USAGE
 }
@@ -57,6 +60,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-native-install)
       FULL_NATIVE_INSTALL=1
+      shift
+      ;;
+    --log-file)
+      LOG_FILE="$2"
+      shift 2
+      ;;
+    --no-log-file)
+      LOG_FILE=""
       shift
       ;;
     -h|--help)
@@ -182,8 +193,22 @@ yarn_install() {
 
 cd "$PROJECT_ROOT"
 
+if [[ -n "$LOG_FILE" ]]; then
+  if [[ "$LOG_FILE" != /* ]]; then
+    LOG_FILE="$PROJECT_ROOT/$LOG_FILE"
+  fi
+
+  mkdir -p "$(dirname "$LOG_FILE")"
+  : > "$LOG_FILE"
+  export NO_COLOR="${NO_COLOR:-1}"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+
 step "Project root: $PROJECT_ROOT"
 step "Allowed root: $ALLOWED_ROOT"
+if [[ -n "$LOG_FILE" ]]; then
+  step "Detailed deploy log: $LOG_FILE"
+fi
 
 ensure_node
 ensure_yarn

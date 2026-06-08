@@ -5,7 +5,8 @@ param(
   [switch]$Production,
   [switch]$NoStart,
   [switch]$SkipInstall,
-  [switch]$FullNativeInstall
+  [switch]$FullNativeInstall,
+  [string]$LogFile = "out\webui-deploy.log"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,9 +19,44 @@ if ([string]::IsNullOrWhiteSpace($AllowedRoot)) {
   $AllowedRoot = $ProjectRoot.Path
 }
 
+$script:TranscriptStarted = $false
+$script:ResolvedLogFile = $null
+
 function Write-Step {
   param([string]$Message)
   Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Start-DeployLog {
+  if ([string]::IsNullOrWhiteSpace($LogFile)) {
+    return
+  }
+
+  $resolved = $LogFile
+  if (-not [System.IO.Path]::IsPathRooted($resolved)) {
+    $resolved = Join-Path $ProjectRoot $resolved
+  }
+
+  $resolved = [System.IO.Path]::GetFullPath($resolved)
+  $directory = Split-Path -Parent $resolved
+  if (-not [string]::IsNullOrWhiteSpace($directory)) {
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+  }
+
+  if ([string]::IsNullOrWhiteSpace($env:NO_COLOR)) {
+    $env:NO_COLOR = "1"
+  }
+
+  Start-Transcript -Path $resolved -Force | Out-Null
+  $script:TranscriptStarted = $true
+  $script:ResolvedLogFile = $resolved
+}
+
+function Stop-DeployLog {
+  if ($script:TranscriptStarted) {
+    Stop-Transcript | Out-Null
+    $script:TranscriptStarted = $false
+  }
 }
 
 function Refresh-Path {
@@ -135,8 +171,18 @@ function Invoke-YarnInstall {
   }
 }
 
+trap {
+  Stop-DeployLog
+  break
+}
+
+Start-DeployLog
+
 Write-Step "Project root: $($ProjectRoot.Path)"
 Write-Step "Allowed root: $AllowedRoot"
+if (-not [string]::IsNullOrWhiteSpace($script:ResolvedLogFile)) {
+  Write-Step "Detailed deploy log: $script:ResolvedLogFile"
+}
 
 Ensure-Node
 Ensure-Yarn
@@ -176,6 +222,7 @@ if (-not (Test-Path $serverBundle)) {
 
 if ($NoStart) {
   Write-Step "Build completed. Skipping server start because -NoStart was set."
+  Stop-DeployLog
   exit 0
 }
 
@@ -189,3 +236,5 @@ Invoke-Step "node" @(
   "--allowedRoot",
   $AllowedRoot
 )
+
+Stop-DeployLog
