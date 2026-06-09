@@ -197,39 +197,50 @@ export class ApiRepositoriesStore extends BaseStore {
 
     const api = API.fromAccount(resolveAccount(account, this.accountState))
 
-    // The vast majority of users have few repositories and no org affiliations.
-    // We'll start by making one request to load all repositories available to
-    // the user regardless of affiliation and only if that request isn't enough
-    // to load all repositories will we divvy up the requests and load
-    // repositories by owner and collaborator+org affiliation separately. This
-    // way we can avoid making unnecessary requests to the API for the majority
-    // of users while still improving the user experience for those users who
-    // have access to a lot of repositories and orgs.
-    await api.streamUserRepositories(addPage, undefined, {
-      async continue() {
-        // If the continue callback is called we know that the first request
-        // wasn't enough to load all repositories.
-        //
-        // For these users (with access to more than 100 repositories) we'll
-        // stream each of the three different affiliation types concurrently to
-        // minimize the time it takes to load all repositories.
-        await Promise.all([
-          api.streamUserRepositories(addPage, 'owner'),
-          api.streamUserRepositories(addPage, 'collaborator'),
-          api.streamUserRepositories(addPage, 'organization_member'),
-        ])
+    try {
+      // The vast majority of users have few repositories and no org affiliations.
+      // We'll start by making one request to load all repositories available to
+      // the user regardless of affiliation and only if that request isn't enough
+      // to load all repositories will we divvy up the requests and load
+      // repositories by owner and collaborator+org affiliation separately. This
+      // way we can avoid making unnecessary requests to the API for the majority
+      // of users while still improving the user experience for those users who
+      // have access to a lot of repositories and orgs.
+      await api.streamUserRepositories(addPage, undefined, {
+        async continue() {
+          // If the continue callback is called we know that the first request
+          // wasn't enough to load all repositories.
+          //
+          // For these users (with access to more than 100 repositories) we'll
+          // stream each of the three different affiliation types concurrently to
+          // minimize the time it takes to load all repositories.
+          await Promise.all([
+            api.streamUserRepositories(addPage, 'owner'),
+            api.streamUserRepositories(addPage, 'collaborator'),
+            api.streamUserRepositories(addPage, 'organization_member'),
+          ])
 
-        // Don't load more than one page in the initial stream request.
-        return false
-      },
-    })
+          // Don't load more than one page in the initial stream request.
+          return false
+        },
+      })
 
-    if (missing.size) {
-      missing.forEach((_, clone_url) => repositories.delete(clone_url))
-      this.updateAccount(account, { repositories: [...repositories.values()] })
+      if (missing.size) {
+        missing.forEach((_, clone_url) => repositories.delete(clone_url))
+        this.updateAccount(account, {
+          repositories: [...repositories.values()],
+        })
+      }
+    } catch (error) {
+      const loadError =
+        error instanceof Error
+          ? error
+          : new Error(`Failed loading repositories for ${account.login}`)
+      log.error(`Failed loading repositories for ${account.login}`, loadError)
+      this.emitError(loadError)
+    } finally {
+      this.updateAccount(account, { loading: false })
     }
-
-    this.updateAccount(account, { loading: false })
   }
 
   public getState(): ReadonlyMap<Account, IAccountRepositories> {

@@ -35,6 +35,14 @@ export function getConfigValue(
   name: string,
   onlyLocal: boolean = false
 ): Promise<string | null> {
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIGit<string | null>('getConfigValue', [
+      repository,
+      name,
+      onlyLocal,
+    ])
+  }
+
   return getConfigValueInPath(name, repository.path, onlyLocal)
 }
 
@@ -67,6 +75,14 @@ export async function getBooleanConfigValue(
     HOME: string
   }
 ): Promise<boolean | null> {
+  if (__PROCESS_KIND__ === 'web' && env === undefined) {
+    return invokeWebUIGit<boolean | null>('getBooleanConfigValue', [
+      repository,
+      name,
+      onlyLocal,
+    ])
+  }
+
   const value = await getConfigValueInPath(
     name,
     repository.path,
@@ -90,6 +106,10 @@ export async function getGlobalBooleanConfigValue(
     HOME: string
   }
 ): Promise<boolean | null> {
+  if (__PROCESS_KIND__ === 'web' && env === undefined) {
+    return invokeWebUIGit<boolean | null>('getGlobalBooleanConfigValue', [name])
+  }
+
   const value = await getConfigValueInPath(name, null, false, 'bool', env)
   return value === null ? null : value !== 'false'
 }
@@ -171,6 +191,11 @@ export async function setConfigValue(
     HOME: string
   }
 ): Promise<void> {
+  if (__PROCESS_KIND__ === 'web' && env === undefined) {
+    await invokeWebUIGit<void>('setConfigValue', [repository, name, value])
+    return
+  }
+
   return setConfigValueInPath(name, value, repository.path, env)
 }
 

@@ -86,9 +86,33 @@ class PersistentStorage extends MemoryStorage {
 const noop = () => {}
 const g = globalThis as any
 
+installArrayPolyfills()
+
 function setIfMissing(target: any, key: string, value: unknown) {
   if (target[key] === undefined) {
     target[key] = value
+  }
+}
+
+function installArrayPolyfills() {
+  const arrayPrototype = Array.prototype as any
+
+  if (typeof arrayPrototype.toSorted !== 'function') {
+    Object.defineProperty(arrayPrototype, 'toSorted', {
+      configurable: true,
+      value<T>(this: ReadonlyArray<T>, compareFn?: (a: T, b: T) => number) {
+        return [...this].sort(compareFn)
+      },
+    })
+  }
+
+  if (typeof arrayPrototype.toReversed !== 'function') {
+    Object.defineProperty(arrayPrototype, 'toReversed', {
+      configurable: true,
+      value<T>(this: ReadonlyArray<T>) {
+        return [...this].reverse()
+      },
+    })
   }
 }
 

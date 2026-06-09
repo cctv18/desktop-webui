@@ -1128,6 +1128,7 @@ export class API {
       const path = affiliation ? `${base}?affiliation=${affiliation}` : base
 
       await this.fetchAll<IAPIRepository>(path, {
+        suppressErrors: false,
         ...options,
         // "But wait, repositories can't have a null owner" you say.
         // Ordinarily you'd be correct but turns out there's super
@@ -1147,6 +1148,7 @@ export class API {
         `streamUserRepositories: failed with endpoint ${this.endpoint}`,
         error
       )
+      throw error
     }
   }
 

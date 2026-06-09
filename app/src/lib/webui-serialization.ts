@@ -22,6 +22,10 @@ type SerializedObject = {
   readonly [key: string]: unknown
 }
 
+type ReviveContext = {
+  readonly accounts: Map<string, Account>
+}
+
 /**
  * Convert Desktop runtime values into JSON-safe payloads while preserving the
  * model identity needed by the existing React UI after transport.
@@ -35,7 +39,7 @@ export function serializeForWeb<T>(value: T): unknown {
  * instances and native containers.
  */
 export function reviveFromWeb<T = unknown>(value: unknown): T {
-  return reviveValue(value) as T
+  return reviveValue(value, { accounts: new Map() }) as T
 }
 
 function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
@@ -275,13 +279,13 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
   return result
 }
 
-function reviveValue(value: unknown): unknown {
+function reviveValue(value: unknown, context: ReviveContext): unknown {
   if (value === null || typeof value !== 'object') {
     return value
   }
 
   if (Array.isArray(value)) {
-    return value.map(reviveValue)
+    return value.map(item => reviveValue(item, context))
   }
 
   if (isTagged(value)) {
@@ -297,36 +301,29 @@ function reviveValue(value: unknown): unknown {
       case 'Map':
         return new Map(
           ((value.entries as ReadonlyArray<ReadonlyArray<unknown>>) ?? []).map(
-            ([key, entryValue]) => [reviveValue(key), reviveValue(entryValue)]
+            ([key, entryValue]) => [
+              reviveValue(key, context),
+              reviveValue(entryValue, context),
+            ]
           )
         )
       case 'Set':
         return new Set(
-          ((value.values as ReadonlyArray<unknown>) ?? []).map(reviveValue)
+          ((value.values as ReadonlyArray<unknown>) ?? []).map(item =>
+            reviveValue(item, context)
+          )
         )
       case 'ArrayBuffer':
         return arrayBufferFromBase64((value.data as string) ?? '')
       case 'TypedArray':
         return bytesFromBase64((value.data as string) ?? '')
       case 'Account':
-        return new Account(
-          reviveString(value.login),
-          reviveString(value.endpoint),
-          '',
-          reviveValue(value.emails) as any,
-          reviveString(value.avatarURL),
-          reviveNumber(value.id),
-          reviveString(value.name),
-          value.plan as any,
-          value.copilotEndpoint as any,
-          value.isCopilotDesktopEnabled as any,
-          reviveValue(value.features) as any
-        )
+        return reviveAccount(value, context)
       case 'Branch':
         return new Branch(
           reviveString(value.name),
           reviveNullableString(value.upstream),
-          reviveValue(value.tip) as any,
+          reviveValue(value.tip, context) as any,
           reviveNumber(value.type),
           reviveString(value.ref)
         )
@@ -344,23 +341,23 @@ function reviveValue(value: unknown): unknown {
           reviveString(value.shortSha),
           reviveString(value.summary),
           reviveString(value.body),
-          reviveValue(value.author) as CommitIdentity,
-          reviveValue(value.committer) as CommitIdentity,
-          reviveValue(value.parentSHAs) as ReadonlyArray<string>,
-          reviveValue(value.trailers) as any,
-          reviveValue(value.tags) as ReadonlyArray<string>
+          reviveValue(value.author, context) as CommitIdentity,
+          reviveValue(value.committer, context) as CommitIdentity,
+          reviveValue(value.parentSHAs, context) as ReadonlyArray<string>,
+          reviveValue(value.trailers, context) as any,
+          reviveValue(value.tags, context) as ReadonlyArray<string>
         )
       case 'CommitIdentity':
         return new CommitIdentity(
           reviveString(value.name),
           reviveString(value.email),
-          reviveValue(value.date) as Date,
+          reviveValue(value.date, context) as Date,
           reviveNumber(value.tzOffset)
         )
       case 'CommittedFileChange':
         return new CommittedFileChange(
           reviveString(value.path),
-          reviveValue(value.status) as any,
+          reviveValue(value.status, context) as any,
           reviveString(value.commitish),
           reviveString(value.parentCommitish)
         )
@@ -375,7 +372,7 @@ function reviveValue(value: unknown): unknown {
       case 'GitHubRepository':
         return new GitHubRepository(
           reviveString(value.name),
-          reviveValue(value.owner) as Owner,
+          reviveValue(value.owner, context) as Owner,
           reviveNumber(value.dbID),
           value.isPrivate as any,
           value.htmlURL as any,
@@ -383,11 +380,11 @@ function reviveValue(value: unknown): unknown {
           value.issuesEnabled as any,
           value.isArchived as any,
           value.permissions as any,
-          reviveValue(value.parent) as GitHubRepository | null
+          reviveValue(value.parent, context) as GitHubRepository | null
         )
       case 'Image':
         return new DesktopImage(
-          (reviveValue(value.rawContents) as ArrayBufferLike) ??
+          (reviveValue(value.rawContents, context) as ArrayBufferLike) ??
             new ArrayBuffer(0),
           reviveString(value.contents),
           reviveString(value.mediaType),
@@ -402,11 +399,11 @@ function reviveValue(value: unknown): unknown {
         )
       case 'PullRequest':
         return new PullRequest(
-          reviveValue(value.created) as Date,
+          reviveValue(value.created, context) as Date,
           reviveString(value.title),
           reviveNumber(value.pullRequestNumber),
-          reviveValue(value.head) as PullRequestRef,
-          reviveValue(value.base) as PullRequestRef,
+          reviveValue(value.head, context) as PullRequestRef,
+          reviveValue(value.base, context) as PullRequestRef,
           reviveString(value.author),
           Boolean(value.draft),
           reviveString(value.body)
@@ -415,16 +412,16 @@ function reviveValue(value: unknown): unknown {
         return new PullRequestRef(
           reviveString(value.ref),
           reviveString(value.sha),
-          reviveValue(value.gitHubRepository) as GitHubRepository
+          reviveValue(value.gitHubRepository, context) as GitHubRepository
         )
       case 'Repository':
         return new Repository(
           reviveString(value.path),
           reviveNumber(value.id),
-          reviveValue(value.gitHubRepository) as GitHubRepository | null,
+          reviveValue(value.gitHubRepository, context) as GitHubRepository | null,
           Boolean(value.missing),
           value.alias === null ? null : reviveString(value.alias),
-          reviveValue(value.workflowPreferences) as any,
+          reviveValue(value.workflowPreferences, context) as any,
           Boolean(value.isTutorialRepository),
           value.gitDir === undefined
             ? undefined
@@ -433,12 +430,12 @@ function reviveValue(value: unknown): unknown {
       case 'WorkingDirectoryFileChange':
         return new WorkingDirectoryFileChange(
           reviveString(value.path),
-          reviveValue(value.status) as any,
-          reviveValue(value.selection) as DiffSelection
+          reviveValue(value.status, context) as any,
+          reviveValue(value.selection, context) as DiffSelection
         )
       case 'WorkingDirectoryStatus':
         return new (WorkingDirectoryStatus as any)(
-          reviveValue(value.files) as ReadonlyArray<WorkingDirectoryFileChange>,
+          reviveValue(value.files, context) as ReadonlyArray<WorkingDirectoryFileChange>,
           value.includeAll as boolean | null
         )
     }
@@ -447,10 +444,39 @@ function reviveValue(value: unknown): unknown {
   const result: Record<string, unknown> = {}
 
   for (const key of Object.keys(value)) {
-    result[key] = reviveValue((value as any)[key])
+    result[key] = reviveValue((value as any)[key], context)
   }
 
   return result
+}
+
+function reviveAccount(value: SerializedObject, context: ReviveContext) {
+  const login = reviveString(value.login)
+  const endpoint = reviveString(value.endpoint)
+  const id = reviveNumber(value.id)
+  const key = `${endpoint}\0${id}\0${login}`
+  const existing = context.accounts.get(key)
+
+  if (existing !== undefined) {
+    return existing
+  }
+
+  const account = new Account(
+    login,
+    endpoint,
+    '',
+    reviveValue(value.emails, context) as any,
+    reviveString(value.avatarURL),
+    id,
+    reviveString(value.name),
+    value.plan as any,
+    value.copilotEndpoint as any,
+    value.isCopilotDesktopEnabled as any,
+    reviveValue(value.features, context) as any
+  )
+
+  context.accounts.set(key, account)
+  return account
 }
 
 function serializeAccount(account: Account) {

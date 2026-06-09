@@ -40,7 +40,11 @@ import { Repository } from '../models/repository'
 import { PathGuard } from './path-guard'
 import { API, IAPIRepositoryCloneInfo } from '../lib/api'
 import {
+  getBooleanConfigValue,
+  getConfigValue,
+  getGlobalBooleanConfigValue,
   getGlobalConfigValue,
+  setConfigValue,
   setGlobalConfigValue,
 } from '../lib/git/config'
 import { configureGitEnvironment } from './git-environment'
@@ -202,7 +206,11 @@ export class WebRuntime {
         return this.notificationsDebugStore
       case 'git':
         return {
+          getBooleanConfigValue,
+          getConfigValue,
+          getGlobalBooleanConfigValue,
           getGlobalConfigValue,
+          setConfigValue,
           setGlobalConfigValue,
         }
       case 'filesystem':
