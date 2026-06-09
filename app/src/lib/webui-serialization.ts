@@ -15,6 +15,13 @@ import { Owner } from '../models/owner'
 import { PullRequest, PullRequestRef } from '../models/pull-request'
 import { Repository } from '../models/repository'
 import {
+  RepoRuleEnforced,
+  RepoRulesInfo,
+  RepoRulesMetadataFailure,
+  RepoRulesMetadataFailures,
+  RepoRulesMetadataRules,
+} from '../models/repo-rules'
+import {
   CommittedFileChange,
   WorkingDirectoryFileChange,
   WorkingDirectoryStatus,
@@ -265,6 +272,42 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
     })
   }
 
+  if (value instanceof RepoRulesInfo) {
+    return tag('RepoRulesInfo', {
+      basicCommitWarning: value.basicCommitWarning,
+      creationRestricted: value.creationRestricted,
+      signedCommitsRequired: value.signedCommitsRequired,
+      pullRequestRequired: value.pullRequestRequired,
+      commitMessagePatterns: serializeValue(value.commitMessagePatterns, seen),
+      commitAuthorEmailPatterns: serializeValue(
+        value.commitAuthorEmailPatterns,
+        seen
+      ),
+      committerEmailPatterns: serializeValue(
+        value.committerEmailPatterns,
+        seen
+      ),
+      branchNamePatterns: serializeValue(value.branchNamePatterns, seen),
+    })
+  }
+
+  if (value instanceof RepoRulesMetadataRules) {
+    return tag('RepoRulesMetadataRules', {
+      rules: value.getRules().map(rule => ({
+        enforced: rule.enforced,
+        humanDescription: rule.humanDescription,
+        rulesetId: rule.rulesetId,
+      })),
+    })
+  }
+
+  if (value instanceof RepoRulesMetadataFailures) {
+    return tag('RepoRulesMetadataFailures', {
+      failed: serializeValue(value.failed, seen),
+      bypassed: serializeValue(value.bypassed, seen),
+    })
+  }
+
   if (value instanceof WorkingDirectoryFileChange) {
     return tag('WorkingDirectoryFileChange', {
       path: value.path,
@@ -350,8 +393,15 @@ function reviveValue(value: unknown, context: ReviveContext): unknown {
         )
       case 'ArrayBuffer':
         return arrayBufferFromBase64((value.data as string) ?? '')
-      case 'TypedArray':
-        return bytesFromBase64((value.data as string) ?? '')
+      case 'TypedArray': {
+        const bytes = bytesFromBase64((value.data as string) ?? '')
+        if (value.name === 'Buffer') {
+          const bufferCtor = (globalThis as any).Buffer
+          return bufferCtor ? bufferCtor.from(bytes) : bytes
+        }
+
+        return bytes
+      }
       case 'Account':
         return reviveAccount(value, context)
       case 'Branch':
@@ -486,6 +536,12 @@ function reviveValue(value: unknown, context: ReviveContext): unknown {
             ? undefined
             : reviveString(value.gitDir)
         )
+      case 'RepoRulesInfo':
+        return reviveRepoRulesInfo(value, context)
+      case 'RepoRulesMetadataRules':
+        return reviveRepoRulesMetadataRules(value, context)
+      case 'RepoRulesMetadataFailures':
+        return reviveRepoRulesMetadataFailures(value, context)
       case 'WorkingDirectoryFileChange':
         return new WorkingDirectoryFileChange(
           reviveString(value.path),
@@ -566,6 +622,105 @@ function reviveDiffSelection(value: SerializedObject): DiffSelection {
       : null,
   })
   return selection
+}
+
+function reviveRepoRulesInfo(
+  value: SerializedObject,
+  context: ReviveContext
+): RepoRulesInfo {
+  const info = new RepoRulesInfo()
+  info.basicCommitWarning = reviveRepoRuleEnforced(value.basicCommitWarning)
+  info.creationRestricted = reviveRepoRuleEnforced(value.creationRestricted)
+  info.signedCommitsRequired = reviveRepoRuleEnforced(
+    value.signedCommitsRequired
+  )
+  info.pullRequestRequired = reviveRepoRuleEnforced(value.pullRequestRequired)
+  info.commitMessagePatterns = reviveRepoRulesMetadataRulesField(
+    value.commitMessagePatterns,
+    context
+  )
+  info.commitAuthorEmailPatterns = reviveRepoRulesMetadataRulesField(
+    value.commitAuthorEmailPatterns,
+    context
+  )
+  info.committerEmailPatterns = reviveRepoRulesMetadataRulesField(
+    value.committerEmailPatterns,
+    context
+  )
+  info.branchNamePatterns = reviveRepoRulesMetadataRulesField(
+    value.branchNamePatterns,
+    context
+  )
+  return info
+}
+
+function reviveRepoRulesMetadataRulesField(
+  value: unknown,
+  context: ReviveContext
+): RepoRulesMetadataRules {
+  const revived = reviveValue(value, context)
+  return revived instanceof RepoRulesMetadataRules
+    ? revived
+    : new RepoRulesMetadataRules()
+}
+
+function reviveRepoRulesMetadataRules(
+  value: SerializedObject,
+  context: ReviveContext
+): RepoRulesMetadataRules {
+  const metadataRules = new RepoRulesMetadataRules()
+  const rules = reviveValue(value.rules, context)
+
+  if (Array.isArray(rules)) {
+    for (const rule of rules) {
+      if (rule !== null && typeof rule === 'object') {
+        const revivedRule = rule as Record<string, unknown>
+        metadataRules.push({
+          enforced: reviveRepoRuleEnforced(revivedRule.enforced),
+          humanDescription: reviveString(revivedRule.humanDescription),
+          matcher: () => true,
+          rulesetId: reviveNumber(revivedRule.rulesetId),
+        })
+      }
+    }
+  }
+
+  return metadataRules
+}
+
+function reviveRepoRulesMetadataFailures(
+  value: SerializedObject,
+  context: ReviveContext
+): RepoRulesMetadataFailures {
+  const failures = new RepoRulesMetadataFailures()
+  failures.failed = reviveRepoRulesMetadataFailureList(
+    reviveValue(value.failed, context)
+  )
+  failures.bypassed = reviveRepoRulesMetadataFailureList(
+    reviveValue(value.bypassed, context)
+  )
+  return failures
+}
+
+function reviveRepoRulesMetadataFailureList(
+  value: unknown
+): RepoRulesMetadataFailure[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => {
+      return item !== null && typeof item === 'object'
+    })
+    .map(item => ({
+      description: reviveString(item.description),
+      rulesetId: reviveNumber(item.rulesetId),
+    }))
+}
+
+function reviveRepoRuleEnforced(value: unknown): RepoRuleEnforced {
+  return value === 'bypass' ? 'bypass' : value === true
 }
 
 function tag(type: string, value: Record<string, unknown> = {}) {

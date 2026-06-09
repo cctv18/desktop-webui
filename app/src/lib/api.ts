@@ -1125,7 +1125,9 @@ export class API {
   ) {
     try {
       const base = 'user/repos'
-      const path = affiliation ? `${base}?affiliation=${affiliation}` : base
+      const path = affiliation
+        ? `${base}?visibility=all&affiliation=${affiliation}`
+        : `${base}?visibility=all&affiliation=owner,collaborator,organization_member`
 
       await this.fetchAll<IAPIRepository>(path, {
         suppressErrors: false,

@@ -47,6 +47,9 @@ import {
   setConfigValue,
   setGlobalConfigValue,
 } from '../lib/git/config'
+import { getAuthors } from '../lib/git/log'
+import { getPartialBlobContents } from '../lib/git/show'
+import { readPartialFile } from '../lib/file-system'
 import { configureGitEnvironment } from './git-environment'
 import {
   IRepositoryIdentifier,
@@ -206,15 +209,19 @@ export class WebRuntime {
         return this.notificationsDebugStore
       case 'git':
         return {
+          getAuthors,
           getBooleanConfigValue,
           getConfigValue,
           getGlobalBooleanConfigValue,
           getGlobalConfigValue,
+          getPartialBlobContents,
           setConfigValue,
           setGlobalConfigValue,
         }
       case 'filesystem':
         return {
+          readPartialFile: (path: string, start: number, end: number) =>
+            this.readAllowedPartialFile(path, start, end),
           validateCloneDestinationPath: (path: string) =>
             this.validateCloneDestinationPath(path),
         }
@@ -314,6 +321,11 @@ export class WebRuntime {
           'Unable to read path on disk. Please check the path and try again.',
       }
     }
+  }
+
+  private async readAllowedPartialFile(path: string, start: number, end: number) {
+    await this.pathGuard.assertAllowed(path)
+    return readPartialFile(path, start, end)
   }
 
   private async reviveAndGuardArgument(param: unknown): Promise<unknown> {

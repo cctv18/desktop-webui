@@ -5,6 +5,7 @@ import { createReadStream } from 'fs'
 import { randomBytes } from 'crypto'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { invokeWebUIRPC } from './webui-rpc'
 
 /**
  * Get a path to a temp file using the given name. Note that the file itself
@@ -63,6 +64,14 @@ export async function readPartialFile(
   start: number,
   end: number
 ): Promise<Buffer> {
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIRPC<Buffer>('filesystem.readPartialFile', [
+      path,
+      start,
+      end,
+    ])
+  }
+
   return await new Promise<Buffer>((resolve, reject) => {
     const chunks = new Array<Buffer>()
     let total = 0

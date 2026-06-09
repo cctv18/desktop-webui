@@ -181,6 +181,7 @@ export class ApiRepositoriesStore extends BaseStore {
     // deleted on the host.
     const missing = new Map<string, IAPIRepository>()
     const repositories = new Map<string, IAPIRepository>()
+    let receivedRepositoryPage = false
 
     currentState?.repositories.forEach(r => {
       missing.set(r.clone_url, r)
@@ -188,6 +189,7 @@ export class ApiRepositoriesStore extends BaseStore {
     })
 
     const addPage = (page: ReadonlyArray<IAPIRepository>) => {
+      receivedRepositoryPage = true
       page.forEach(r => {
         repositories.set(r.clone_url, r)
         missing.delete(r.clone_url)
@@ -198,6 +200,40 @@ export class ApiRepositoriesStore extends BaseStore {
     const api = API.fromAccount(resolveAccount(account, this.accountState))
 
     try {
+      const loadByAffiliation = async () => {
+        const affiliations = [
+          'owner',
+          'collaborator',
+          'organization_member',
+        ] as const
+
+        let loadedAny = false
+
+        for (const affiliation of affiliations) {
+          const countBefore = repositories.size
+
+          try {
+            await api.streamUserRepositories(addPage, affiliation)
+            loadedAny = loadedAny || repositories.size > countBefore
+          } catch (error) {
+            const loadError =
+              error instanceof Error
+                ? error
+                : new Error(
+                    `Failed loading ${affiliation} repositories for ${account.login}`
+                  )
+            log.warn(
+              `Failed loading ${affiliation} repositories for ${account.login}`,
+              loadError
+            )
+          }
+        }
+
+        return loadedAny
+      }
+
+      let primaryError: Error | null = null
+
       // The vast majority of users have few repositories and no org affiliations.
       // We'll start by making one request to load all repositories available to
       // the user regardless of affiliation and only if that request isn't enough
@@ -206,26 +242,40 @@ export class ApiRepositoriesStore extends BaseStore {
       // way we can avoid making unnecessary requests to the API for the majority
       // of users while still improving the user experience for those users who
       // have access to a lot of repositories and orgs.
-      await api.streamUserRepositories(addPage, undefined, {
-        async continue() {
-          // If the continue callback is called we know that the first request
-          // wasn't enough to load all repositories.
-          //
-          // For these users (with access to more than 100 repositories) we'll
-          // stream each of the three different affiliation types concurrently to
-          // minimize the time it takes to load all repositories.
-          await Promise.all([
-            api.streamUserRepositories(addPage, 'owner'),
-            api.streamUserRepositories(addPage, 'collaborator'),
-            api.streamUserRepositories(addPage, 'organization_member'),
-          ])
+      try {
+        await api.streamUserRepositories(addPage, undefined, {
+          async continue() {
+            // If the continue callback is called we know that the first request
+            // wasn't enough to load all repositories.
+            await loadByAffiliation()
 
-          // Don't load more than one page in the initial stream request.
-          return false
-        },
-      })
+            // Don't load more than one page in the initial stream request.
+            return false
+          },
+        })
+      } catch (error) {
+        primaryError =
+          error instanceof Error
+            ? error
+            : new Error(`Failed loading repositories for ${account.login}`)
 
-      if (missing.size) {
+        log.warn(
+          `Primary repository listing failed for ${account.login}; trying affiliation fallback`,
+          primaryError
+        )
+
+        await loadByAffiliation()
+      }
+
+      if (primaryError === null && repositories.size === 0) {
+        await loadByAffiliation()
+      }
+
+      if (primaryError !== null && !receivedRepositoryPage) {
+        throw primaryError
+      }
+
+      if (receivedRepositoryPage && missing.size) {
         missing.forEach((_, clone_url) => repositories.delete(clone_url))
         this.updateAccount(account, {
           repositories: [...repositories.values()],

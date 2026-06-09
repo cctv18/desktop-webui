@@ -15,6 +15,7 @@ import { parseRawUnfoldedTrailers } from './interpret-trailers'
 import { createLogParser } from './git-delimiter-parser'
 import { forceUnwrap } from '../fatal-error'
 import assert from 'assert'
+import { invokeWebUIRPC } from '../webui-rpc'
 
 // File mode 160000 is used by git specifically for submodules:
 // https://github.com/git/git/blob/v2.37.3/cache.h#L62-L69
@@ -350,6 +351,13 @@ export async function getCommit(
 export async function getAuthors(repository: Repository, shas: string[]) {
   if (shas.length === 0) {
     return []
+  }
+
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIRPC<ReadonlyArray<CommitIdentity>>('git.getAuthors', [
+      repository,
+      shas,
+    ])
   }
 
   const { stdout } = await git(

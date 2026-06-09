@@ -1,9 +1,29 @@
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
+import './platform/buffer-web-shim'
 import { App } from './app'
 import { createRemoteRuntime } from './runtime/remote-runtime'
 
 require('../../styles/desktop.scss')
+
+const g = globalThis as any
+
+if (typeof g.setImmediate !== 'function') {
+  g.setImmediate = (handler: (...args: ReadonlyArray<any>) => void) =>
+    window.setTimeout(handler, 0)
+}
+
+if (typeof g.clearImmediate !== 'function') {
+  g.clearImmediate = (handle: number) => window.clearTimeout(handle)
+}
+
+if (typeof window.setImmediate !== 'function') {
+  ;(window as any).setImmediate = g.setImmediate
+}
+
+if (typeof window.clearImmediate !== 'function') {
+  ;(window as any).clearImmediate = g.clearImmediate
+}
 
 ;(globalThis as any).log = (globalThis as any).log ?? {
   error: (message: string, error?: Error) => console.error(message, error),

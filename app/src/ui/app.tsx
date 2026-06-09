@@ -1382,8 +1382,9 @@ export class App extends React.Component<IAppProps, IAppState> {
    * on Windows.
    */
   private renderAppMenuBar() {
-    // We only render the app menu bar on Windows
-    if (!__WIN32__) {
+    // Desktop only renders the custom menu bar on Windows, but WebUI needs it
+    // on every browser platform because there is no native Electron menu.
+    if (!__WIN32__ && __PROCESS_KIND__ !== 'web') {
       return null
     }
 

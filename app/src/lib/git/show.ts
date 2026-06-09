@@ -3,6 +3,7 @@ import { git, isMaxBufferExceededError } from './core'
 import { Repository } from '../../models/repository'
 import { GitError } from 'dugite'
 import { coerceToBuffer } from './coerce-to-buffer'
+import { invokeWebUIRPC } from '../webui-rpc'
 
 /**
  * Retrieve the binary contents of a blob from the repository at a given
@@ -58,6 +59,15 @@ export async function getPartialBlobContents(
   path: string,
   length: number
 ): Promise<Buffer | null> {
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIRPC<Buffer | null>('git.getPartialBlobContents', [
+      repository,
+      commitish,
+      path,
+      length,
+    ])
+  }
+
   return getPartialBlobContentsCatchPathNotInRef(
     repository,
     commitish,
