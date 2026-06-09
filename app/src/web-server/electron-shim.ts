@@ -1,4 +1,3 @@
-import type { IMenu } from '../models/app-menu'
 import type { IMenuItemState } from '../lib/menu-update'
 import type { MenuLabelsEvent } from '../models/menu-labels'
 import {
@@ -124,10 +123,6 @@ export default {
   nativeTheme,
   shell,
   webUtils,
-}
-
-function getDefaultAppMenu(): IMenu {
-  return currentAppMenu
 }
 
 function updateWebMenuState(items: unknown) {
