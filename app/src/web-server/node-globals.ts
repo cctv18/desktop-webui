@@ -1,4 +1,6 @@
 import 'fake-indexeddb/auto'
+import * as Fs from 'fs'
+import * as Path from 'path'
 import { randomUUID, webcrypto } from 'crypto'
 
 class MemoryStorage implements Storage {
@@ -29,6 +31,58 @@ class MemoryStorage implements Storage {
   }
 }
 
+class PersistentStorage extends MemoryStorage {
+  public constructor(private readonly filePath: string) {
+    super()
+    this.load()
+  }
+
+  public clear() {
+    super.clear()
+    this.save()
+  }
+
+  public removeItem(key: string) {
+    super.removeItem(key)
+    this.save()
+  }
+
+  public setItem(key: string, value: string) {
+    super.setItem(key, value)
+    this.save()
+  }
+
+  private load() {
+    try {
+      const raw = Fs.readFileSync(this.filePath, 'utf8')
+      const parsed = JSON.parse(raw)
+
+      if (parsed !== null && typeof parsed === 'object') {
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof value === 'string') {
+            super.setItem(key, value)
+          }
+        }
+      }
+    } catch {
+      // Missing or unreadable storage should behave like an empty profile.
+    }
+  }
+
+  private save() {
+    const data: Record<string, string> = {}
+
+    for (let i = 0; i < this.length; i++) {
+      const key = this.key(i)
+      if (key !== null) {
+        data[key] = this.getItem(key) ?? ''
+      }
+    }
+
+    writePrivateJsonFile(this.filePath, data)
+  }
+}
+
 const noop = () => {}
 const g = globalThis as any
 
@@ -38,8 +92,44 @@ function setIfMissing(target: any, key: string, value: unknown) {
   }
 }
 
+function getWebUIDataDirectory() {
+  const fromEnv = process.env.GITDESK_WEBUI_DATA_DIR
+  const fromArgs = getArgValue('--data-dir')
+  const raw =
+    fromEnv && fromEnv.trim().length > 0
+      ? fromEnv
+      : fromArgs && fromArgs.trim().length > 0
+      ? fromArgs
+      : Path.join(process.cwd(), '.gitdesk-webui')
+
+  const resolved = Path.resolve(raw)
+  Fs.mkdirSync(resolved, { recursive: true, mode: 0o700 })
+  return resolved
+}
+
+function getArgValue(name: string) {
+  const index = process.argv.indexOf(name)
+
+  if (index < 0) {
+    return undefined
+  }
+
+  const value = process.argv[index + 1]
+  return value && !value.startsWith('--') ? value : undefined
+}
+
+function writePrivateJsonFile(filePath: string, data: unknown) {
+  const directory = Path.dirname(filePath)
+  Fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  Fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  })
+}
+
 const defaultLocationHref =
   process.env.GITDESK_WEBUI_URL ?? 'http://127.0.0.1:8080/'
+const dataDirectory = getWebUIDataDirectory()
 
 const requestAnimationFrameShim = (callback: FrameRequestCallback) =>
   setTimeout(() => callback(Date.now()), 16)
@@ -167,7 +257,9 @@ if (g.location === undefined) {
 }
 
 if (g.localStorage === undefined) {
-  g.localStorage = new MemoryStorage()
+  g.localStorage = new PersistentStorage(
+    Path.join(dataDirectory, 'local-storage.json')
+  )
 }
 
 setIfMissing(g, 'crypto', {

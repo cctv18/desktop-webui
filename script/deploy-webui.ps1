@@ -8,6 +8,9 @@ param(
   [switch]$FullNativeInstall,
   [string]$GitPath = "",
   [string]$GitDirectory = "",
+  [string]$GitExecPath = "",
+  [string]$GitConfigGlobal = "",
+  [string]$DataDir = "",
   [string]$LogFile = "out\webui-deploy.log"
 )
 
@@ -278,6 +281,18 @@ if (-not [string]::IsNullOrWhiteSpace($GitPath)) {
 
 if (-not [string]::IsNullOrWhiteSpace($GitDirectory)) {
   $nodeArguments += @("--git-directory", $GitDirectory)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($GitExecPath)) {
+  $nodeArguments += @("--git-exec-path", $GitExecPath)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($GitConfigGlobal)) {
+  $nodeArguments += @("--git-config-global", $GitConfigGlobal)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($DataDir)) {
+  $nodeArguments += @("--data-dir", $DataDir)
 }
 
 Invoke-Step "node" $nodeArguments

@@ -1,17 +1,22 @@
 import * as Fs from 'fs'
 import * as Path from 'path'
+import { execFileSync } from 'child_process'
 
 type Logger = Pick<IDesktopLogger, 'info'>
 
 interface IGitEnvironmentOptions {
   readonly bundledGitDirectory: string
+  readonly configuredDataDirectory?: string
+  readonly configuredGitConfigGlobal?: string
   readonly configuredGitDirectory?: string
+  readonly configuredGitExecPath?: string
   readonly configuredGitPath?: string
   readonly logger?: Logger
 }
 
 interface IGitEnvironmentResult {
   readonly gitDirectory: string
+  readonly gitExecPath: string | null
   readonly gitBinary: string
   readonly source: 'configured-directory' | 'configured-path' | 'bundled' | 'path'
 }
@@ -26,6 +31,9 @@ export function configureGitEnvironment(
   if (configuredDirectory !== null) {
     return applyGitDirectory(
       configuredDirectory,
+      options.configuredDataDirectory,
+      options.configuredGitConfigGlobal,
+      options.configuredGitExecPath,
       'configured-directory',
       options.logger
     )
@@ -41,11 +49,25 @@ export function configureGitEnvironment(
       )
     }
 
-    return applyGitDirectory(gitDirectory, 'configured-path', options.logger)
+    return applyGitDirectory(
+      gitDirectory,
+      options.configuredDataDirectory,
+      options.configuredGitConfigGlobal,
+      options.configuredGitExecPath,
+      'configured-path',
+      options.logger
+    )
   }
 
   if (isUsableGitDirectory(options.bundledGitDirectory)) {
-    return applyGitDirectory(options.bundledGitDirectory, 'bundled', options.logger)
+    return applyGitDirectory(
+      options.bundledGitDirectory,
+      options.configuredDataDirectory,
+      options.configuredGitConfigGlobal,
+      options.configuredGitExecPath,
+      'bundled',
+      options.logger
+    )
   }
 
   const gitFromPath = findGitOnPath()
@@ -53,7 +75,14 @@ export function configureGitEnvironment(
     const gitDirectory = inferGitDirectoryFromBinary(gitFromPath)
 
     if (gitDirectory !== null) {
-      return applyGitDirectory(gitDirectory, 'path', options.logger)
+      return applyGitDirectory(
+        gitDirectory,
+        options.configuredDataDirectory,
+        options.configuredGitConfigGlobal,
+        options.configuredGitExecPath,
+        'path',
+        options.logger
+      )
     }
   }
 
@@ -64,6 +93,9 @@ export function configureGitEnvironment(
 
 function applyGitDirectory(
   gitDirectory: string,
+  configuredDataDirectory: string | undefined,
+  configuredGitConfigGlobal: string | undefined,
+  configuredGitExecPath: string | undefined,
   source: IGitEnvironmentResult['source'],
   logger?: Logger
 ): IGitEnvironmentResult {
@@ -76,14 +108,31 @@ function applyGitDirectory(
     )
   }
 
+  const gitExecPath =
+    normalizeOptionalPath(configuredGitExecPath) ??
+    detectGitExecPath(gitBinary, resolvedDirectory)
+  const gitConfigGlobal = resolveGitConfigGlobal(
+    configuredGitConfigGlobal,
+    configuredDataDirectory
+  )
+
   process.env.LOCAL_GIT_DIRECTORY = resolvedDirectory
-  delete process.env.GIT_EXEC_PATH
+  if (gitExecPath !== null) {
+    process.env.GIT_EXEC_PATH = gitExecPath
+  } else {
+    delete process.env.GIT_EXEC_PATH
+  }
+  process.env.GIT_CONFIG_GLOBAL = gitConfigGlobal
 
   logger?.info(
     `GitDesk WebUI using Git from ${gitBinary} (${describeSource(source)})`
   )
+  if (gitExecPath !== null) {
+    logger?.info(`GitDesk WebUI using Git exec path ${gitExecPath}`)
+  }
+  logger?.info(`GitDesk WebUI using isolated Git config ${gitConfigGlobal}`)
 
-  return { gitDirectory: resolvedDirectory, gitBinary, source }
+  return { gitDirectory: resolvedDirectory, gitExecPath, gitBinary, source }
 }
 
 function describeSource(source: IGitEnvironmentResult['source']) {
@@ -106,6 +155,42 @@ function normalizeOptionalPath(value: string | undefined) {
 
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+function resolveGitConfigGlobal(
+  configuredGitConfigGlobal: string | undefined,
+  configuredDataDirectory: string | undefined
+) {
+  const configured = normalizeOptionalPath(configuredGitConfigGlobal)
+  const path =
+    configured ??
+    Path.join(resolveDataDirectory(configuredDataDirectory), 'gitconfig')
+  const resolved = Path.resolve(path)
+  Fs.mkdirSync(Path.dirname(resolved), { recursive: true, mode: 0o700 })
+  return resolved
+}
+
+function resolveDataDirectory(configuredDataDirectory: string | undefined) {
+  const configured =
+    normalizeOptionalPath(configuredDataDirectory) ??
+    normalizeOptionalPath(process.env.GITDESK_WEBUI_DATA_DIR) ??
+    normalizeOptionalPath(getArgValue('--data-dir')) ??
+    Path.join(process.cwd(), '.gitdesk-webui')
+
+  const resolved = Path.resolve(configured)
+  Fs.mkdirSync(resolved, { recursive: true, mode: 0o700 })
+  return resolved
+}
+
+function getArgValue(name: string) {
+  const index = process.argv.indexOf(name)
+
+  if (index < 0) {
+    return undefined
+  }
+
+  const value = process.argv[index + 1]
+  return value && !value.startsWith('--') ? value : undefined
 }
 
 function isUsableGitDirectory(directory: string) {
@@ -155,6 +240,30 @@ function inferWindowsGitDirectory(gitPath: string) {
   return candidates.find(isUsableGitDirectory) ?? null
 }
 
+function detectGitExecPath(gitBinary: string, gitDirectory: string) {
+  try {
+    const output = execFileSync(gitBinary, ['--exec-path'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    }).trim()
+
+    if (output.length > 0 && isDirectory(output)) {
+      return Path.resolve(output)
+    }
+  } catch {
+    // Fall back to the common layouts below.
+  }
+
+  const candidates = [
+    Path.join(gitDirectory, 'libexec', 'git-core'),
+    Path.join(gitDirectory, 'lib', 'git-core'),
+    Path.join(gitDirectory, 'mingw64', 'libexec', 'git-core'),
+    Path.join(gitDirectory, 'mingw32', 'libexec', 'git-core'),
+  ]
+
+  return candidates.find(isDirectory) ?? null
+}
+
 function findGitOnPath(): string | null {
   const pathValue = process.env.PATH ?? process.env.Path ?? ''
   if (pathValue.length === 0) {
@@ -188,6 +297,14 @@ function findGitOnPath(): string | null {
 function isExecutableFile(path: string) {
   try {
     return Fs.statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+function isDirectory(path: string) {
+  try {
+    return Fs.statSync(path).isDirectory()
   } catch {
     return false
   }

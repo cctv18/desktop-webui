@@ -12,6 +12,9 @@ FULL_NATIVE_INSTALL=0
 LOG_FILE="out/webui-deploy.log"
 GIT_PATH=""
 GIT_DIRECTORY=""
+GIT_EXEC_PATH_ARG=""
+GIT_CONFIG_GLOBAL=""
+DATA_DIR=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -30,6 +33,10 @@ Options:
   --full-native-install    Run package install scripts for full Desktop native dependencies
   --git-path <path>        Exact Git executable path for the WebUI server
   --git-directory <path>   Git installation root for the WebUI server
+  --git-exec-path <path>   Git helper directory, e.g. /usr/lib/git-core
+  --git-config-global <path>
+                           Independent WebUI global gitconfig path
+  --data-dir <path>        Independent WebUI account/token data directory
   --log-file <path>        Write full deploy output to a log file. Default: out/webui-deploy.log
   --no-log-file            Do not write a deploy log file
   -h, --help               Show this help
@@ -72,6 +79,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --git-directory)
       GIT_DIRECTORY="$2"
+      shift 2
+      ;;
+    --git-exec-path)
+      GIT_EXEC_PATH_ARG="$2"
+      shift 2
+      ;;
+    --git-config-global)
+      GIT_CONFIG_GLOBAL="$2"
+      shift 2
+      ;;
+    --data-dir)
+      DATA_DIR="$2"
       shift 2
       ;;
     --log-file)
@@ -305,6 +324,18 @@ fi
 
 if [[ -n "$GIT_DIRECTORY" ]]; then
   node_args+=(--git-directory "$GIT_DIRECTORY")
+fi
+
+if [[ -n "$GIT_EXEC_PATH_ARG" ]]; then
+  node_args+=(--git-exec-path "$GIT_EXEC_PATH_ARG")
+fi
+
+if [[ -n "$GIT_CONFIG_GLOBAL" ]]; then
+  node_args+=(--git-config-global "$GIT_CONFIG_GLOBAL")
+fi
+
+if [[ -n "$DATA_DIR" ]]; then
+  node_args+=(--data-dir "$DATA_DIR")
 fi
 
 run node "${node_args[@]}"

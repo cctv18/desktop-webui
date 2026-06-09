@@ -15,6 +15,10 @@ export async function resolveGitProxy(
     return 'DIRECT'
   })
 
+  if (typeof pacString !== 'string' || pacString.trim().length === 0) {
+    return undefined
+  }
+
   const proxies = parsePACString(pacString)
 
   if (proxies === null) {

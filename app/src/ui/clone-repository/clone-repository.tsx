@@ -768,6 +768,10 @@ export class CloneRepository extends React.Component<
   private async resolveCloneInfo(): Promise<IAPIRepositoryCloneInfo | null> {
     const { url, lastParsedIdentifier } = this.getSelectedTabState()
 
+    if (__PROCESS_KIND__ === 'web') {
+      return this.resolveCloneInfoOnWebServer(url)
+    }
+
     if (url.endsWith('.wiki.git')) {
       return { url }
     }
@@ -786,6 +790,43 @@ export class CloneRepository extends React.Component<
     }
 
     return { url }
+  }
+
+  private async resolveCloneInfoOnWebServer(
+    url: string
+  ): Promise<IAPIRepositoryCloneInfo | null> {
+    try {
+      const response = await fetch('/api/rpc', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          method: 'clone.resolveCloneInfo',
+          params: [url],
+        }),
+      })
+      const payload = await response.json()
+
+      if (!payload.ok) {
+        log.error(
+          `Failed to look up repository clone info for '${url}'`,
+          new Error(
+            payload.error?.message ??
+              `Remote clone info lookup failed for '${url}'`
+          )
+        )
+        return { url }
+      }
+
+      return payload.result as IAPIRepositoryCloneInfo | null
+    } catch (error) {
+      log.error(
+        `Failed to look up repository clone info for '${url}'`,
+        error as Error
+      )
+      return { url }
+    }
   }
 
   private onItemClicked = (repository: IAPIRepository, source: ClickSource) => {

@@ -38,11 +38,22 @@ import { Account } from '../models/account'
 import { CloningRepository } from '../models/cloning-repository'
 import { Repository } from '../models/repository'
 import { PathGuard } from './path-guard'
+import { API, IAPIRepositoryCloneInfo } from '../lib/api'
 import {
   getGlobalConfigValue,
   setGlobalConfigValue,
 } from '../lib/git/config'
 import { configureGitEnvironment } from './git-environment'
+import {
+  IRepositoryIdentifier,
+  parseRepositoryIdentifier,
+  parseRemote,
+} from '../lib/remote-parsing'
+import { findAccountForRemoteURL } from '../lib/find-account'
+import { trampolineServer } from '../lib/trampoline/trampoline-server'
+import { TrampolineCommandIdentifier } from '../lib/trampoline/trampoline-command'
+import { createAskpassTrampolineHandler } from '../lib/trampoline/trampoline-askpass-handler'
+import { createCredentialHelperTrampolineHandler } from '../lib/trampoline/trampoline-credential-helper'
 
 class ServerActivityMonitor implements IUiActivityMonitor {
   public onActivity() {
@@ -62,7 +73,10 @@ export class WebRuntime {
   public constructor(private readonly pathGuard: PathGuard) {
     configureGitEnvironment({
       bundledGitDirectory: Path.resolve(__dirname, 'git'),
+      configuredDataDirectory: process.env.GITDESK_WEBUI_DATA_DIR,
+      configuredGitConfigGlobal: process.env.GITDESK_WEBUI_GIT_CONFIG_GLOBAL,
       configuredGitDirectory: process.env.GITDESK_WEBUI_GIT_DIRECTORY,
+      configuredGitExecPath: process.env.GITDESK_WEBUI_GIT_EXEC_PATH,
       configuredGitPath: process.env.GITDESK_WEBUI_GIT_PATH,
       logger: log,
     })
@@ -79,6 +93,14 @@ export class WebRuntime {
       new ServerActivityMonitor()
     )
     const accountsStore = new AccountsStore(localStorage, TokenStore)
+    trampolineServer.registerCommandHandler(
+      TrampolineCommandIdentifier.AskPass,
+      createAskpassTrampolineHandler(accountsStore)
+    )
+    trampolineServer.registerCommandHandler(
+      TrampolineCommandIdentifier.CredentialHelper,
+      createCredentialHelperTrampolineHandler(accountsStore)
+    )
     const signInStore = new SignInStore(accountsStore)
     const repositoriesStore = new RepositoriesStore(
       new RepositoriesDatabase('GitDeskWebUI.RepositoriesDatabase')
@@ -188,9 +210,48 @@ export class WebRuntime {
           validateCloneDestinationPath: (path: string) =>
             this.validateCloneDestinationPath(path),
         }
+      case 'clone':
+        return {
+          resolveCloneInfo: (url: string) => this.resolveCloneInfo(url),
+        }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
     }
+  }
+
+  private async resolveCloneInfo(
+    url: string
+  ): Promise<IAPIRepositoryCloneInfo | null> {
+    if (url.endsWith('.wiki.git')) {
+      return { url }
+    }
+
+    const parsed = parseRepositoryIdentifier(url)
+    const account = await findAccountForRemoteURL(
+      url,
+      this.appStore.getState().accounts
+    )
+
+    if (parsed !== null && account !== null) {
+      return this.fetchRepositoryCloneInfo(url, parsed, account)
+    }
+
+    return { url }
+  }
+
+  private async fetchRepositoryCloneInfo(
+    url: string,
+    identifier: IRepositoryIdentifier,
+    account: Account
+  ): Promise<IAPIRepositoryCloneInfo | null> {
+    const api = API.fromAccount(account)
+    const { owner, name } = identifier
+    const protocol = parseRemote(url)?.protocol
+
+    return api.fetchRepositoryCloneInfo(owner, name, protocol).catch(error => {
+      log.error(`Failed to look up repository clone info for '${url}'`, error)
+      return { url }
+    })
   }
 
   private async validateCloneDestinationPath(path: string) {
