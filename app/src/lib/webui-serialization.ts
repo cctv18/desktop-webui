@@ -3,7 +3,12 @@ import { Branch } from '../models/branch'
 import { CloningRepository } from '../models/cloning-repository'
 import { Commit } from '../models/commit'
 import { CommitIdentity } from '../models/commit-identity'
-import { DiffSelection } from '../models/diff'
+import {
+  DiffHunk,
+  DiffHunkHeader,
+  DiffLine,
+  DiffSelection,
+} from '../models/diff'
 import { GitHubRepository } from '../models/github-repository'
 import { Image as DesktopImage } from '../models/diff/image'
 import { Owner } from '../models/owner'
@@ -169,6 +174,36 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
         raw.selectableLines instanceof Set
           ? Array.from(raw.selectableLines.values())
           : null,
+    })
+  }
+
+  if (value instanceof DiffLine) {
+    return tag('DiffLine', {
+      text: value.text,
+      type: value.type,
+      originalLineNumber: value.originalLineNumber,
+      oldLineNumber: value.oldLineNumber,
+      newLineNumber: value.newLineNumber,
+      noTrailingNewLine: value.noTrailingNewLine,
+    })
+  }
+
+  if (value instanceof DiffHunk) {
+    return tag('DiffHunk', {
+      header: serializeValue(value.header, seen),
+      lines: serializeValue(value.lines, seen),
+      unifiedDiffStart: value.unifiedDiffStart,
+      unifiedDiffEnd: value.unifiedDiffEnd,
+      expansionType: value.expansionType,
+    })
+  }
+
+  if (value instanceof DiffHunkHeader) {
+    return tag('DiffHunkHeader', {
+      oldStartLine: value.oldStartLine,
+      oldLineCount: value.oldLineCount,
+      newStartLine: value.newStartLine,
+      newLineCount: value.newLineCount,
     })
   }
 
@@ -363,6 +398,30 @@ function reviveValue(value: unknown, context: ReviveContext): unknown {
         )
       case 'DiffSelection':
         return reviveDiffSelection(value)
+      case 'DiffLine':
+        return new DiffLine(
+          reviveString(value.text),
+          reviveNumber(value.type),
+          reviveNullableNumber(value.originalLineNumber),
+          reviveNullableNumber(value.oldLineNumber),
+          reviveNullableNumber(value.newLineNumber),
+          Boolean(value.noTrailingNewLine)
+        )
+      case 'DiffHunk':
+        return new DiffHunk(
+          reviveValue(value.header, context) as DiffHunkHeader,
+          reviveValue(value.lines, context) as ReadonlyArray<DiffLine>,
+          reviveNumber(value.unifiedDiffStart),
+          reviveNumber(value.unifiedDiffEnd),
+          value.expansionType as any
+        )
+      case 'DiffHunkHeader':
+        return new DiffHunkHeader(
+          reviveNumber(value.oldStartLine),
+          reviveNumber(value.oldLineCount),
+          reviveNumber(value.newStartLine),
+          reviveNumber(value.newLineCount)
+        )
       case 'Error': {
         const error = new Error(reviveString(value.message))
         error.name = reviveString(value.name) || 'Error'
@@ -530,6 +589,10 @@ function reviveNullableString(value: unknown): string | null {
 
 function reviveNumber(value: unknown): number {
   return typeof value === 'number' ? value : 0
+}
+
+function reviveNullableNumber(value: unknown): number | null {
+  return value === null ? null : reviveNumber(value)
 }
 
 function isArrayBufferLike(value: object): boolean {

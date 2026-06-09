@@ -4,6 +4,7 @@ import { Dispatcher } from '../dispatcher'
 import { getDefaultDir, setDefaultDir } from '../lib/default-dir'
 import {
   Account,
+  accountEquals,
   isDotComAccount,
   isEnterpriseAccount,
 } from '../../models/account'
@@ -103,6 +104,25 @@ interface ICloneRepositoryState {
    * The persisted state of the CloneGenericRepository component.
    */
   readonly urlTabState: IUrlTabState
+}
+
+function getAccountRepositories(
+  apiRepositories: ReadonlyMap<Account, IAccountRepositories>,
+  account: Account
+): IAccountRepositories | undefined {
+  const exact = apiRepositories.get(account)
+
+  if (exact !== undefined) {
+    return exact
+  }
+
+  for (const [key, value] of apiRepositories) {
+    if (accountEquals(key, account)) {
+      return value
+    }
+  }
+
+  return undefined
 }
 
 /**
@@ -363,7 +383,10 @@ export class CloneRepository extends React.Component<
         if (!selectedAccount) {
           return <DialogContent>{this.renderSignIn(tab)}</DialogContent>
         } else {
-          const accountState = this.props.apiRepositories.get(selectedAccount)
+          const accountState = getAccountRepositories(
+            this.props.apiRepositories,
+            selectedAccount
+          )
           const repositories =
             accountState === undefined ? null : accountState.repositories
           const loading =

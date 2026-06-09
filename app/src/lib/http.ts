@@ -149,13 +149,42 @@ export function request(
     options.cache = 'reload' as RequestCache
   }
 
-  return fetch(url, options)
+  const timeoutMS = getWebUIRequestTimeoutMS()
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+
+  if (timeoutMS !== null && typeof AbortController !== 'undefined') {
+    const controller = new AbortController()
+    options.signal = controller.signal
+    timeoutHandle = setTimeout(() => controller.abort(), timeoutMS)
+  }
+
+  const result = fetch(url, options)
+
+  if (timeoutHandle === undefined) {
+    return result
+  }
+
+  return result.finally(() => clearTimeout(timeoutHandle))
 }
 
 /** Get the user agent to use for all requests. */
 export function getUserAgent() {
   const platform = __DARWIN__ ? 'Macintosh' : 'Windows'
   return `GitHubDesktop/${appProxy.getVersion()} (${platform})`
+}
+
+function getWebUIRequestTimeoutMS(): number | null {
+  if (__PROCESS_KIND__ !== 'web-server') {
+    return null
+  }
+
+  const raw =
+    typeof process === 'undefined'
+      ? undefined
+      : process.env.GITDESK_WEBUI_FETCH_TIMEOUT_MS
+  const parsed = raw === undefined ? 30000 : parseInt(raw, 10)
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000
 }
 
 /**

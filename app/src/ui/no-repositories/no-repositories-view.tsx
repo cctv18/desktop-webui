@@ -69,6 +69,25 @@ interface INoRepositoriesState {
   readonly filterText: string
 }
 
+function getAccountRepositories(
+  apiRepositories: ReadonlyMap<Account, IAccountRepositories>,
+  account: Account
+): IAccountRepositories | undefined {
+  const exact = apiRepositories.get(account)
+
+  if (exact !== undefined) {
+    return exact
+  }
+
+  for (const [key, value] of apiRepositories) {
+    if (accountEquals(key, account)) {
+      return value
+    }
+  }
+
+  return undefined
+}
+
 /**
  * The "No Repositories" view. This is shown when the user hasn't added any
  * repositories to the app.
@@ -141,14 +160,17 @@ export class NoRepositoriesView extends React.Component<
 
       if (currentlySelectedAccount !== newSelectedAccount) {
         this.setState({ selectedAccount: newSelectedAccount })
-        this.ensureRepositoriesForAccount(this.state.selectedAccount)
+        this.ensureRepositoriesForAccount(newSelectedAccount)
       }
     }
   }
 
   private ensureRepositoriesForAccount(account: Account | undefined) {
     if (account) {
-      const accountState = this.props.apiRepositories.get(account)
+      const accountState = getAccountRepositories(
+        this.props.apiRepositories,
+        account
+      )
 
       if (accountState === undefined) {
         this.props.onRefreshRepositories(account)
@@ -168,7 +190,10 @@ export class NoRepositoriesView extends React.Component<
       return null
     }
 
-    const accountState = this.props.apiRepositories.get(account)
+    const accountState = getAccountRepositories(
+      this.props.apiRepositories,
+      account
+    )
 
     return (
       <div className="content-pane repository-list">
