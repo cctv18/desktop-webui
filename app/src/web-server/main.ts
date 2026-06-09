@@ -17,6 +17,15 @@ const port = parseInt(args.port ?? process.env.GITDESK_PORT ?? '8080', 10)
 const staticRoot =
   args.staticRoot ?? process.env.GITDESK_STATIC_ROOT ?? Path.join(__dirname, 'web')
 process.env.GITDESK_WEBUI_STATIC_ROOT = staticRoot
+const publicBaseURL = resolvePublicBaseURL(
+  args.publicUrl ?? args['public-url'] ?? process.env.GITDESK_WEBUI_URL,
+  host,
+  port
+)
+process.env.GITDESK_WEBUI_URL = publicBaseURL
+process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL =
+  process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL ||
+  new URL('/oauth/callback', publicBaseURL).toString()
 const allowedRoots = parseAllowedRoots(
   args.allowedRoot ?? process.env.GITDESK_ALLOWED_ROOTS,
   process.cwd()
@@ -49,6 +58,9 @@ server.listen(port, host, () => {
     `GitDesk WebUI listening on http://${host}:${port}; allowed roots: ${allowedRoots.join(
       ', '
     )}`
+  )
+  log.info(
+    `GitDesk WebUI public URL: ${publicBaseURL}; OAuth callback: ${process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL}`
   )
 })
 
@@ -257,6 +269,34 @@ function contentType(file: string) {
     default:
       return 'application/octet-stream'
   }
+}
+
+function resolvePublicBaseURL(
+  configuredURL: string | undefined,
+  host: string,
+  port: number
+) {
+  const rawURL =
+    configuredURL && configuredURL.trim().length > 0
+      ? configuredURL.trim()
+      : `http://${formatHostForURL(host)}:${port}`
+
+  const url = new URL(rawURL)
+  url.hash = ''
+  url.search = ''
+  return url.toString()
+}
+
+function formatHostForURL(host: string) {
+  if (host === '0.0.0.0' || host === '::' || host === '[::]') {
+    return '127.0.0.1'
+  }
+
+  if (host.includes(':') && !host.startsWith('[')) {
+    return `[${host}]`
+  }
+
+  return host
 }
 
 function parseArgs(values: ReadonlyArray<string>) {

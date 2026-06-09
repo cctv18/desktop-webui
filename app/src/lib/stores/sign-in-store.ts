@@ -125,6 +125,7 @@ export interface IAuthenticationState extends ISignInState {
   readonly oauthState?: {
     state: string
     endpoint: string
+    redirectURI?: string
     onAuthCompleted: (account: Account) => void
     onAuthError: (error: Error) => void
   }
@@ -164,19 +165,22 @@ function createOAuthStateToken(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-function addWebUIOAuthRedirect(authorizationURL: string) {
+function getWebUIOAuthRedirectURI(): string | undefined {
   if (__PROCESS_KIND__ !== 'web-server') {
-    return authorizationURL
+    return undefined
   }
 
   const callbackURL = process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL
   if (!callbackURL) {
-    return authorizationURL
+    return undefined
   }
 
-  const url = new URL(authorizationURL)
-  url.searchParams.set('redirect_uri', callbackURL)
-  return url.toString()
+  try {
+    return new URL(callbackURL).toString()
+  } catch (error) {
+    log.warn('[SignInStore] ignoring invalid WebUI OAuth callback URL', error)
+    return undefined
+  }
 }
 
 export type SignInResult =
@@ -316,13 +320,19 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
     }
 
     const csrfToken = createOAuthStateToken()
-    const authorizationURL = addWebUIOAuthRedirect(
-      getOAuthAuthorizationURL(currentState.endpoint, csrfToken)
+    const redirectURI = getWebUIOAuthRedirectURI()
+    const authorizationURL = getOAuthAuthorizationURL(
+      currentState.endpoint,
+      csrfToken,
+      redirectURI
     )
 
     new Promise<Account>((resolve, reject) => {
       const { endpoint, resultCallback } = currentState
       log.info('[SignInStore] initializing OAuth flow')
+      if (redirectURI) {
+        log.info(`[SignInStore] WebUI OAuth callback URL: ${redirectURI}`)
+      }
       this.setState({
         kind: SignInStep.Authentication,
         endpoint,
@@ -332,6 +342,7 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
         oauthState: {
           state: csrfToken,
           endpoint,
+          redirectURI,
           onAuthCompleted: resolve,
           onAuthError: reject,
         },
@@ -384,16 +395,18 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
       return
     }
 
-    const { endpoint } = this.state
-    const token = await requestOAuthToken(endpoint, action.code)
+    const { endpoint, oauthState } = this.state
+    const token = await requestOAuthToken(
+      endpoint,
+      action.code,
+      oauthState.redirectURI
+    )
 
     if (token) {
       const account = await fetchUser(endpoint, token)
-      this.state.oauthState.onAuthCompleted(account)
+      oauthState.onAuthCompleted(account)
     } else {
-      this.state.oauthState.onAuthError(
-        new Error('Failed retrieving authenticated user')
-      )
+      oauthState.onAuthError(new Error('Failed retrieving authenticated user'))
     }
   }
 

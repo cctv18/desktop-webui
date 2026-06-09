@@ -2342,33 +2342,46 @@ export function getAccountForEndpoint(
 
 export function getOAuthAuthorizationURL(
   endpoint: string,
-  state: string
+  state: string,
+  redirectURI?: string
 ): string {
   const urlBase = getHTMLURL(endpoint)
   const scope = encodeURIComponent(oauthScopes.join(' '))
-
-  return new window.URL(
+  const url = new window.URL(
     `/login/oauth/authorize?client_id=${ClientID}&scope=${scope}&state=${state}`,
     urlBase
-  ).toString()
+  )
+
+  if (redirectURI) {
+    url.searchParams.set('redirect_uri', redirectURI)
+  }
+
+  return url.toString()
 }
 
 export async function requestOAuthToken(
   endpoint: string,
-  code: string
+  code: string,
+  redirectURI?: string
 ): Promise<string | null> {
   try {
     const urlBase = getHTMLURL(endpoint)
+    const body: Record<string, string> = {
+      client_id: ClientID,
+      client_secret: ClientSecret,
+      code,
+    }
+
+    if (redirectURI) {
+      body.redirect_uri = redirectURI
+    }
+
     const response = await request(
       urlBase,
       null,
       'POST',
       'login/oauth/access_token',
-      {
-        client_id: ClientID,
-        client_secret: ClientSecret,
-        code: code,
-      }
+      body
     )
     tryUpdateEndpointVersionFromResponse(endpoint, response)
 
