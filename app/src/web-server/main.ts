@@ -17,14 +17,26 @@ const port = parseInt(args.port ?? process.env.GITDESK_PORT ?? '8080', 10)
 const staticRoot =
   args.staticRoot ?? process.env.GITDESK_STATIC_ROOT ?? Path.join(__dirname, 'web')
 process.env.GITDESK_WEBUI_STATIC_ROOT = staticRoot
+setEnvIfValue(
+  'GITDESK_WEBUI_OAUTH_CLIENT_ID',
+  args.oauthClientId ?? args['oauth-client-id']
+)
+setEnvIfValue(
+  'GITDESK_WEBUI_OAUTH_CLIENT_SECRET',
+  args.oauthClientSecret ?? args['oauth-client-secret']
+)
 const publicBaseURL = resolvePublicBaseURL(
   args.publicUrl ?? args['public-url'] ?? process.env.GITDESK_WEBUI_URL,
   host,
   port
 )
 process.env.GITDESK_WEBUI_URL = publicBaseURL
+const configuredOAuthCallbackURL =
+  args.oauthCallbackUrl ??
+  args['oauth-callback-url'] ??
+  process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL
 process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL =
-  process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL ||
+  configuredOAuthCallbackURL ||
   new URL('/oauth/callback', publicBaseURL).toString()
 const allowedRoots = parseAllowedRoots(
   args.allowedRoot ?? process.env.GITDESK_ALLOWED_ROOTS,
@@ -61,6 +73,11 @@ server.listen(port, host, () => {
   )
   log.info(
     `GitDesk WebUI public URL: ${publicBaseURL}; OAuth callback: ${process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL}`
+  )
+  log.info(
+    `GitDesk WebUI OAuth client: ${
+      process.env.GITDESK_WEBUI_OAUTH_CLIENT_ID ? 'configured' : 'not configured'
+    }`
   )
 })
 
@@ -297,6 +314,12 @@ function formatHostForURL(host: string) {
   }
 
   return host
+}
+
+function setEnvIfValue(key: string, value: string | undefined) {
+  if (value !== undefined && value.length > 0) {
+    process.env[key] = value
+  }
 }
 
 function parseArgs(values: ReadonlyArray<string>) {

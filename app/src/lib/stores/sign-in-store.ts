@@ -13,6 +13,7 @@ import {
   getEnterpriseAPIURL,
   requestOAuthToken,
   getOAuthAuthorizationURL,
+  getWebUIOAuthConfigurationError,
 } from '../../lib/api'
 
 import { TypedBaseStore } from './base-store'
@@ -310,6 +311,20 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
 
     this.setState({ ...currentState, loading: true })
 
+    const csrfToken = createOAuthStateToken()
+    const redirectURI = getWebUIOAuthRedirectURI()
+    const oauthConfigurationError = getWebUIOAuthConfigurationError(redirectURI)
+
+    if (oauthConfigurationError !== null) {
+      log.warn('[SignInStore] WebUI OAuth is not configured')
+      this.setState({
+        ...currentState,
+        error: oauthConfigurationError,
+        loading: false,
+      })
+      return ''
+    }
+
     if (currentState.kind === SignInStep.ExistingAccountWarning) {
       const { existingAccount } = currentState
       // Try to avoid emitting an error out of AccountsStore if the account
@@ -319,8 +334,6 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
       }
     }
 
-    const csrfToken = createOAuthStateToken()
-    const redirectURI = getWebUIOAuthRedirectURI()
     const authorizationURL = getOAuthAuthorizationURL(
       currentState.endpoint,
       csrfToken,

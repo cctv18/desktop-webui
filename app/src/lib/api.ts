@@ -130,9 +130,66 @@ interface IFetchAllOptions<T> {
 const ClientID = process.env.TEST_ENV ? '' : __OAUTH_CLIENT_ID__
 const ClientSecret = process.env.TEST_ENV ? '' : __OAUTH_SECRET__
 
-if (!ClientID || !ClientID.length || !ClientSecret || !ClientSecret.length) {
+function getWebUIOAuthClientID(): string | undefined {
+  return process.env.GITDESK_WEBUI_OAUTH_CLIENT_ID
+}
+
+function getWebUIOAuthClientSecret(): string | undefined {
+  return process.env.GITDESK_WEBUI_OAUTH_CLIENT_SECRET
+}
+
+export function getOAuthClientID(): string | undefined {
+  if (process.env.TEST_ENV) {
+    return ''
+  }
+
+  if (__PROCESS_KIND__ === 'web-server') {
+    return getWebUIOAuthClientID() || ClientID
+  }
+
+  return ClientID
+}
+
+export function getOAuthClientSecret(): string | undefined {
+  if (process.env.TEST_ENV) {
+    return ''
+  }
+
+  if (__PROCESS_KIND__ === 'web-server') {
+    return getWebUIOAuthClientSecret() || ClientSecret
+  }
+
+  return ClientSecret
+}
+
+export function getWebUIOAuthConfigurationError(
+  redirectURI: string | undefined
+): Error | null {
+  if (__PROCESS_KIND__ !== 'web-server' || !redirectURI) {
+    return null
+  }
+
+  if (getWebUIOAuthClientID() && getWebUIOAuthClientSecret()) {
+    return null
+  }
+
+  return new Error(
+    `GitDesk WebUI OAuth is not configured. Create a GitHub OAuth App with Authorization callback URL '${redirectURI}', then start the WebUI server with --oauth-client-id and --oauth-client-secret or set GITDESK_WEBUI_OAUTH_CLIENT_ID and GITDESK_WEBUI_OAUTH_CLIENT_SECRET. The bundled GitHub Desktop OAuth app cannot use HTTP callback URLs.`
+  )
+}
+
+const configuredOAuthClientID = getOAuthClientID()
+const configuredOAuthClientSecret = getOAuthClientSecret()
+
+if (
+  __PROCESS_KIND__ !== 'web-server' &&
+  (!configuredOAuthClientID ||
+    !configuredOAuthClientID.length ||
+    !configuredOAuthClientSecret ||
+    !configuredOAuthClientSecret.length)
+) {
   log.warn(
-    `DESKTOP_OAUTH_CLIENT_ID and/or DESKTOP_OAUTH_CLIENT_SECRET is undefined. You won't be able to authenticate new users.`
+    `OAuth client id and/or client secret is undefined. Desktop builds use DESKTOP_OAUTH_CLIENT_ID/DESKTOP_OAUTH_CLIENT_SECRET; WebUI server builds use GITDESK_WEBUI_OAUTH_CLIENT_ID/GITDESK_WEBUI_OAUTH_CLIENT_SECRET. You won't be able to authenticate new users.`
   )
 }
 
@@ -2200,12 +2257,14 @@ export class API {
 
 export async function deleteToken(account: Account) {
   try {
-    const creds = Buffer.from(`${ClientID}:${ClientSecret}`).toString('base64')
+    const clientID = getOAuthClientID()
+    const clientSecret = getOAuthClientSecret()
+    const creds = Buffer.from(`${clientID}:${clientSecret}`).toString('base64')
     const response = await request(
       account.endpoint,
       null,
       'DELETE',
-      `applications/${ClientID}/token`,
+      `applications/${clientID}/token`,
       { access_token: account.token },
       { Authorization: `Basic ${creds}` }
     )
@@ -2347,8 +2406,9 @@ export function getOAuthAuthorizationURL(
 ): string {
   const urlBase = getHTMLURL(endpoint)
   const scope = encodeURIComponent(oauthScopes.join(' '))
+  const clientID = getOAuthClientID()
   const url = new window.URL(
-    `/login/oauth/authorize?client_id=${ClientID}&scope=${scope}&state=${state}`,
+    `/login/oauth/authorize?client_id=${clientID}&scope=${scope}&state=${state}`,
     urlBase
   )
 
@@ -2366,14 +2426,16 @@ export async function requestOAuthToken(
 ): Promise<string | null> {
   try {
     const urlBase = getHTMLURL(endpoint)
+    const clientID = getOAuthClientID()
+    const clientSecret = getOAuthClientSecret()
     const body: {
       client_id: string | undefined
       client_secret: string | undefined
       code: string
       redirect_uri?: string
     } = {
-      client_id: ClientID,
-      client_secret: ClientSecret,
+      client_id: clientID,
+      client_secret: clientSecret,
       code,
     }
 
