@@ -1437,7 +1437,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
     // As Linux still uses the classic Electron menu, we are opting out of the
     // custom menu that is shown as part of the title bar below
-    if (__LINUX__) {
+    if (__LINUX__ && __PROCESS_KIND__ !== 'web') {
       return null
     }
 
@@ -1450,7 +1450,8 @@ export class App extends React.Component<IAppProps, IAppState> {
       }
     }
 
-    const showAppIcon = __WIN32__ && !this.state.showWelcomeFlow
+    const showAppIcon =
+      (__WIN32__ || __PROCESS_KIND__ === 'web') && !this.state.showWelcomeFlow
     const inWelcomeFlow = this.state.showWelcomeFlow
     const inNoRepositoriesView = this.inNoRepositoriesViewState()
 

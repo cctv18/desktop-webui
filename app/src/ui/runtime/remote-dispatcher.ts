@@ -40,11 +40,17 @@ export function createRemoteDispatcher(
         }
 
         if (property === 'showFoldout') {
-          return (foldout: Foldout) => rpc.invoke(property, [foldout])
+          return (foldout: Foldout) =>
+            foldout.type === FoldoutType.AppMenu
+              ? setCurrentFoldout(appStore, foldout)
+              : rpc.invoke(property, [foldout])
         }
 
         if (property === 'closeFoldout') {
-          return (foldout: FoldoutType) => rpc.invoke(property, [foldout])
+          return (foldout: FoldoutType) =>
+            foldout === FoldoutType.AppMenu
+              ? closeCurrentFoldout(appStore, foldout)
+              : rpc.invoke(property, [foldout])
         }
 
         if (
@@ -122,6 +128,27 @@ function setAppMenuState(
 
     return { ...state, appMenuState: update(appMenu).openMenus }
   })
+
+  return Promise.resolve()
+}
+
+function setCurrentFoldout(appStore: RemoteAppStore, foldout: Foldout) {
+  appStore.updateState(state =>
+    state.currentFoldout === foldout ? state : { ...state, currentFoldout: foldout }
+  )
+
+  return Promise.resolve()
+}
+
+function closeCurrentFoldout(
+  appStore: RemoteAppStore,
+  foldoutType: FoldoutType
+) {
+  appStore.updateState(state =>
+    state.currentFoldout?.type === foldoutType
+      ? { ...state, currentFoldout: null }
+      : state
+  )
 
   return Promise.resolve()
 }

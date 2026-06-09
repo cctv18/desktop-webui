@@ -1,7 +1,8 @@
-import { IAppState } from '../../lib/app-state'
+import { FoldoutType, IAppState } from '../../lib/app-state'
 import { RemoteAppStore } from './remote-app-store'
 import { createRemoteDispatcher } from './remote-dispatcher'
 import { RemoteRPCClient } from './remote-rpc'
+import { getDefaultAppMenu } from '../platform/electron-web-shim'
 import {
   RemoteMethodStore,
   RemoteRepositoryStateCache,
@@ -10,14 +11,16 @@ import {
 export async function createRemoteRuntime() {
   const rpc = new RemoteRPCClient()
   const initialState = await rpc.getState<IAppState>()
-  const appStore = new RemoteAppStore(initialState, rpc)
+  const initialStateWithMenu = withWebMenuState(initialState)
+  const appStore = new RemoteAppStore(initialStateWithMenu, rpc)
   const repositoryStateManager = new RemoteRepositoryStateCache(() =>
     appStore.getState()
   )
 
   rpc.subscribe(event => {
     if (event.type === 'state') {
-      appStore.setState(event.payload as IAppState)
+      const state = event.payload as IAppState
+      appStore.setState(withWebMenuState(state, appStore.getState()))
     }
   })
 
@@ -33,4 +36,23 @@ export async function createRemoteRuntime() {
       'notificationsDebugStore'
     ),
   }
+}
+
+function withWebMenuState(state: IAppState, currentState?: IAppState) {
+  const fallbackMenuState =
+    state.appMenuState.length === 0
+      ? [getDefaultAppMenu()]
+      : state.appMenuState
+
+  if (currentState?.currentFoldout?.type === FoldoutType.AppMenu) {
+    return {
+      ...state,
+      currentFoldout: currentState.currentFoldout,
+      appMenuState: currentState.appMenuState,
+    }
+  }
+
+  return state.appMenuState === fallbackMenuState
+    ? state
+    : { ...state, appMenuState: fallbackMenuState }
 }

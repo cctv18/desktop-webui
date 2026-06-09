@@ -244,7 +244,7 @@ async function showNotification(title: string, body: string) {
   return notification.tag || null
 }
 
-function getDefaultAppMenu(): IMenu {
+export function getDefaultAppMenu(): IMenu {
   return {
     type: 'menu',
     items: [

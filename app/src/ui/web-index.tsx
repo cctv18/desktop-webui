@@ -9,8 +9,10 @@ require('../../styles/desktop.scss')
 const g = globalThis as any
 
 if (typeof g.setImmediate !== 'function') {
-  g.setImmediate = (handler: (...args: ReadonlyArray<any>) => void) =>
-    window.setTimeout(handler, 0)
+  g.setImmediate = (
+    handler: (...args: ReadonlyArray<any>) => void,
+    ...args: ReadonlyArray<any>
+  ) => window.setTimeout(() => handler(...args), 0)
 }
 
 if (typeof g.clearImmediate !== 'function') {
