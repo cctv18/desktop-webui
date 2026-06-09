@@ -2366,7 +2366,12 @@ export async function requestOAuthToken(
 ): Promise<string | null> {
   try {
     const urlBase = getHTMLURL(endpoint)
-    const body: Record<string, string> = {
+    const body: {
+      client_id: string | undefined
+      client_secret: string | undefined
+      code: string
+      redirect_uri?: string
+    } = {
       client_id: ClientID,
       client_secret: ClientSecret,
       code,
