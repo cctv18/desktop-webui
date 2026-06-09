@@ -15,6 +15,7 @@ import { Dialog, DialogError, DialogContent, DialogFooter } from '../dialog'
 import { OkCancelButtonGroup } from '../dialog/ok-cancel-button-group'
 import { Ref } from '../lib/ref'
 import { getHTMLURL } from '../../lib/api'
+import { LinkButton } from '../lib/link-button'
 
 interface ISignInProps {
   readonly dispatcher: Dispatcher
@@ -188,11 +189,27 @@ export class SignIn extends React.Component<ISignInProps, ISignInState> {
           <Ref>{this.props.credentialHelperUrl}</Ref>.
         </p>
       ) : undefined
+    const deviceFlow = state.oauthState?.deviceFlow
 
     return (
       <DialogContent>
         {credentialHelperInfo}
-        {browserSignInInfoContent}
+        {deviceFlow ? (
+          <div className="device-flow-login">
+            <p>Enter this code at GitHub to finish signing in:</p>
+            <div className="device-flow-code">{deviceFlow.userCode}</div>
+            <LinkButton
+              uri={
+                deviceFlow.verificationURIComplete ??
+                deviceFlow.verificationURI
+              }
+            >
+              Open GitHub device login
+            </LinkButton>
+          </div>
+        ) : (
+          browserSignInInfoContent
+        )}
       </DialogContent>
     )
   }

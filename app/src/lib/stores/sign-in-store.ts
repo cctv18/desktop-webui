@@ -14,6 +14,8 @@ import {
   requestOAuthToken,
   getOAuthAuthorizationURL,
   getWebUIOAuthConfigurationError,
+  requestOAuthDeviceCode,
+  requestOAuthDeviceToken,
 } from '../../lib/api'
 
 import { TypedBaseStore } from './base-store'
@@ -127,9 +129,18 @@ export interface IAuthenticationState extends ISignInState {
     state: string
     endpoint: string
     redirectURI?: string
+    deviceFlow?: IOAuthDeviceFlowState
     onAuthCompleted: (account: Account) => void
     onAuthError: (error: Error) => void
   }
+}
+
+export interface IOAuthDeviceFlowState {
+  readonly userCode: string
+  readonly verificationURI: string
+  readonly verificationURIComplete?: string
+  readonly expiresAt: number
+  readonly interval: number
 }
 
 /**
@@ -197,6 +208,17 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
 
   private accounts: ReadonlyArray<Account> = []
 
+  private deviceFlowPollTimeout: ReturnType<typeof setTimeout> | null = null
+
+  private deviceFlowSession:
+    | {
+        readonly state: string
+        readonly endpoint: string
+        readonly deviceCode: string
+        interval: number
+      }
+    | null = null
+
   public constructor(private readonly accountStore: AccountsStore) {
     super()
 
@@ -250,6 +272,7 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
    */
   public reset() {
     const currentState = this.state
+    this.clearDeviceFlowPolling()
     this.state?.resultCallback({ kind: 'cancelled' })
     this.setState(null)
 
@@ -311,12 +334,20 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
 
     this.setState({ ...currentState, loading: true })
 
-    const csrfToken = createOAuthStateToken()
-    const redirectURI = getWebUIOAuthRedirectURI()
-    const oauthConfigurationError = getWebUIOAuthConfigurationError(redirectURI)
+    if (__PROCESS_KIND__ === 'web-server') {
+      return this.authenticateWithDeviceFlow(currentState)
+    }
+
+    return this.authenticateWithOAuthRedirect(currentState)
+  }
+
+  private async authenticateWithDeviceFlow(
+    currentState: IAuthenticationState | IExistingAccountWarning
+  ) {
+    const oauthConfigurationError = getWebUIOAuthConfigurationError()
 
     if (oauthConfigurationError !== null) {
-      log.warn('[SignInStore] WebUI OAuth is not configured')
+      log.warn('[SignInStore] WebUI OAuth device flow is not configured')
       this.setState({
         ...currentState,
         error: oauthConfigurationError,
@@ -325,14 +356,94 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
       return ''
     }
 
-    if (currentState.kind === SignInStep.ExistingAccountWarning) {
-      const { existingAccount } = currentState
-      // Try to avoid emitting an error out of AccountsStore if the account
-      // is already gone.
-      if (this.accounts.find(x => x.endpoint === existingAccount.endpoint)) {
-        await this.accountStore.removeAccount(existingAccount)
-      }
+    const csrfToken = createOAuthStateToken()
+    const deviceCode = await requestOAuthDeviceCode(currentState.endpoint)
+
+    if (deviceCode === null) {
+      this.setState({
+        ...currentState,
+        error: new Error('Failed to start GitHub device login.'),
+        loading: false,
+      })
+      return ''
     }
+
+    await this.removeExistingAccountIfNeeded(currentState)
+
+    new Promise<Account>((resolve, reject) => {
+      const { endpoint, resultCallback } = currentState
+      log.info('[SignInStore] initializing OAuth device flow')
+      this.deviceFlowSession = {
+        state: csrfToken,
+        endpoint,
+        deviceCode: deviceCode.deviceCode,
+        interval: deviceCode.interval,
+      }
+      this.setState({
+        kind: SignInStep.Authentication,
+        endpoint,
+        resultCallback,
+        error: null,
+        loading: true,
+        oauthState: {
+          state: csrfToken,
+          endpoint,
+          deviceFlow: {
+            userCode: deviceCode.userCode,
+            verificationURI: deviceCode.verificationURI,
+            verificationURIComplete: deviceCode.verificationURIComplete,
+            expiresAt: Date.now() + deviceCode.expiresIn * 1000,
+            interval: deviceCode.interval,
+          },
+          onAuthCompleted: resolve,
+          onAuthError: reject,
+        },
+      })
+      this.scheduleDeviceFlowPoll(csrfToken, deviceCode.interval)
+      shell.openExternal(
+        deviceCode.verificationURIComplete ?? deviceCode.verificationURI
+      )
+    })
+      .then(account => {
+        this.clearDeviceFlowPolling()
+
+        if (!this.state || this.state.kind !== SignInStep.Authentication) {
+          log.warn('[SignInStore] account resolved but session has changed')
+          return
+        }
+
+        log.info('[SignInStore] account resolved')
+        this.emitAuthenticate(account)
+        this.setState({
+          kind: SignInStep.Success,
+          resultCallback: this.state.resultCallback,
+        })
+      })
+      .catch(e => {
+        this.clearDeviceFlowPolling()
+
+        if (
+          this.state?.kind === SignInStep.Authentication &&
+          this.state.oauthState?.state === csrfToken
+        ) {
+          log.info('[SignInStore] error with OAuth device flow', e)
+          this.setState({ ...this.state, error: e, loading: false })
+        } else {
+          log.info(
+            `[SignInStore] OAuth device flow error but session has changed: ${e}`
+          )
+        }
+      })
+
+    return deviceCode.verificationURIComplete ?? deviceCode.verificationURI
+  }
+
+  private async authenticateWithOAuthRedirect(
+    currentState: IAuthenticationState | IExistingAccountWarning
+  ) {
+    const csrfToken = createOAuthStateToken()
+    const redirectURI = getWebUIOAuthRedirectURI()
+    await this.removeExistingAccountIfNeeded(currentState)
 
     const authorizationURL = getOAuthAuthorizationURL(
       currentState.endpoint,
@@ -390,6 +501,103 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
       })
 
     return authorizationURL
+  }
+
+  private async removeExistingAccountIfNeeded(
+    currentState: IAuthenticationState | IExistingAccountWarning
+  ) {
+    if (currentState.kind !== SignInStep.ExistingAccountWarning) {
+      return
+    }
+
+    const { existingAccount } = currentState
+    // Try to avoid emitting an error out of AccountsStore if the account
+    // is already gone.
+    if (this.accounts.find(x => x.endpoint === existingAccount.endpoint)) {
+      await this.accountStore.removeAccount(existingAccount)
+    }
+  }
+
+  private clearDeviceFlowPolling() {
+    if (this.deviceFlowPollTimeout !== null) {
+      clearTimeout(this.deviceFlowPollTimeout)
+      this.deviceFlowPollTimeout = null
+    }
+
+    this.deviceFlowSession = null
+  }
+
+  private scheduleDeviceFlowPoll(state: string, interval: number) {
+    if (this.deviceFlowPollTimeout !== null) {
+      clearTimeout(this.deviceFlowPollTimeout)
+    }
+
+    this.deviceFlowPollTimeout = setTimeout(
+      () => this.pollDeviceFlow(state),
+      interval * 1000
+    )
+  }
+
+  private async pollDeviceFlow(state: string) {
+    const currentState = this.state
+    const session = this.deviceFlowSession
+    const oauthState =
+      currentState?.kind === SignInStep.Authentication
+        ? currentState.oauthState
+        : undefined
+
+    if (
+      currentState?.kind !== SignInStep.Authentication ||
+      oauthState === undefined ||
+      oauthState.state !== state ||
+      session === null ||
+      session.state !== state
+    ) {
+      return
+    }
+
+    const deviceFlow = oauthState.deviceFlow
+
+    if (deviceFlow === undefined) {
+      return
+    }
+
+    if (Date.now() >= deviceFlow.expiresAt) {
+      oauthState.onAuthError(
+        new Error('The GitHub device login code has expired.')
+      )
+      return
+    }
+
+    const result = await requestOAuthDeviceToken(
+      session.endpoint,
+      session.deviceCode
+    )
+
+    switch (result.kind) {
+      case 'success':
+        this.clearDeviceFlowPolling()
+        try {
+          oauthState.onAuthCompleted(
+            await fetchUser(session.endpoint, result.token)
+          )
+        } catch (error) {
+          oauthState.onAuthError(
+            error instanceof Error ? error : new Error(`${error}`)
+          )
+        }
+        return
+      case 'pending':
+        this.scheduleDeviceFlowPoll(state, session.interval)
+        return
+      case 'slowDown':
+        session.interval += 5
+        this.scheduleDeviceFlowPoll(state, session.interval)
+        return
+      case 'failed':
+        oauthState.onAuthError(result.error)
+        return
+    }
   }
 
   public async resolveOAuthRequest(action: IOAuthAction) {

@@ -193,6 +193,29 @@
       margin-left: 0;
     }
   }
+
+  .device-flow-login {
+    margin-top: var(--spacing-double);
+
+    .device-flow-code {
+      display: inline-block;
+      margin: var(--spacing) 0;
+      padding: var(--spacing-half) var(--spacing);
+      border: var(--base-border);
+      border-radius: var(--border-radius);
+      background: var(--box-alt-background-color);
+      font-family: var(--font-family-monospace);
+      font-size: var(--welcome-font-size-xxl);
+      font-weight: var(--font-weight-semibold);
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+  }
+
+  .welcome-auth-error {
+    margin: var(--spacing-double) 0 0;
+    color: var(--error-color);
+  }
 }
 
 .welcome-title,
@@ -213,6 +236,24 @@
 
 .welcome-text {
   margin: var(--spacing) 0;
+}
+
+.device-flow-login {
+  margin-top: var(--spacing-double);
+
+  .device-flow-code {
+    display: inline-block;
+    margin: var(--spacing) 0;
+    padding: var(--spacing-half) var(--spacing);
+    border: var(--base-border);
+    border-radius: var(--border-radius);
+    background: var(--box-alt-background-color);
+    font-family: var(--font-family-monospace);
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
 }
 
 .sign-in-field {

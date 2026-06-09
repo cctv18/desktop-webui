@@ -162,19 +162,17 @@ export function getOAuthClientSecret(): string | undefined {
   return ClientSecret
 }
 
-export function getWebUIOAuthConfigurationError(
-  redirectURI: string | undefined
-): Error | null {
-  if (__PROCESS_KIND__ !== 'web-server' || !redirectURI) {
+export function getWebUIOAuthConfigurationError(): Error | null {
+  if (__PROCESS_KIND__ !== 'web-server') {
     return null
   }
 
-  if (getWebUIOAuthClientID() && getWebUIOAuthClientSecret()) {
+  if (getWebUIOAuthClientID()) {
     return null
   }
 
   return new Error(
-    `GitDesk WebUI OAuth is not configured. Create a GitHub OAuth App with Authorization callback URL '${redirectURI}', then start the WebUI server with --oauth-client-id and --oauth-client-secret or set GITDESK_WEBUI_OAUTH_CLIENT_ID and GITDESK_WEBUI_OAUTH_CLIENT_SECRET. The bundled GitHub Desktop OAuth app cannot use HTTP callback URLs.`
+    `GitDesk WebUI OAuth device flow is not configured. Create a GitHub OAuth App with Device Flow enabled, then start the WebUI server with --oauth-client-id or set GITDESK_WEBUI_OAUTH_CLIENT_ID. The bundled GitHub Desktop OAuth app should not be used for WebUI device login.`
   )
 }
 
@@ -731,6 +729,38 @@ interface IAPIAccessToken {
   readonly scope: string
   readonly token_type: string
 }
+
+interface IAPIOAuthDeviceCode {
+  readonly device_code: string
+  readonly user_code: string
+  readonly verification_uri: string
+  readonly verification_uri_complete?: string
+  readonly expires_in: number
+  readonly interval?: number
+}
+
+interface IAPIOAuthDeviceToken {
+  readonly access_token?: string
+  readonly scope?: string
+  readonly token_type?: string
+  readonly error?: string
+  readonly error_description?: string
+}
+
+export interface IOAuthDeviceCode {
+  readonly deviceCode: string
+  readonly userCode: string
+  readonly verificationURI: string
+  readonly verificationURIComplete?: string
+  readonly expiresIn: number
+  readonly interval: number
+}
+
+export type OAuthDeviceTokenResult =
+  | { readonly kind: 'success'; readonly token: string }
+  | { readonly kind: 'pending' }
+  | { readonly kind: 'slowDown' }
+  | { readonly kind: 'failed'; readonly error: Error }
 
 /** The response we receive from fetching mentionables. */
 interface IAPIMentionablesResponse {
@@ -2417,6 +2447,111 @@ export function getOAuthAuthorizationURL(
   }
 
   return url.toString()
+}
+
+export async function requestOAuthDeviceCode(
+  endpoint: string
+): Promise<IOAuthDeviceCode | null> {
+  try {
+    const clientID = getOAuthClientID()
+
+    if (!clientID) {
+      log.warn('requestOAuthDeviceCode: OAuth client id is undefined')
+      return null
+    }
+
+    const urlBase = getHTMLURL(endpoint)
+    const response = await request(
+      urlBase,
+      null,
+      'POST',
+      'login/device/code',
+      {
+        client_id: clientID,
+        scope: oauthScopes.join(' '),
+      }
+    )
+    const result = await parsedResponse<IAPIOAuthDeviceCode>(response)
+
+    return {
+      deviceCode: result.device_code,
+      userCode: result.user_code,
+      verificationURI: result.verification_uri,
+      verificationURIComplete: result.verification_uri_complete,
+      expiresIn: result.expires_in,
+      interval: result.interval ?? 5,
+    }
+  } catch (e) {
+    log.warn(`requestOAuthDeviceCode: failed with endpoint ${endpoint}`, e)
+    return null
+  }
+}
+
+export async function requestOAuthDeviceToken(
+  endpoint: string,
+  deviceCode: string
+): Promise<OAuthDeviceTokenResult> {
+  try {
+    const clientID = getOAuthClientID()
+
+    if (!clientID) {
+      return {
+        kind: 'failed',
+        error: new Error('OAuth client id is undefined'),
+      }
+    }
+
+    const urlBase = getHTMLURL(endpoint)
+    const response = await request(
+      urlBase,
+      null,
+      'POST',
+      'login/oauth/access_token',
+      {
+        client_id: clientID,
+        device_code: deviceCode,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      }
+    )
+    const result = await parsedResponse<IAPIOAuthDeviceToken>(response)
+
+    if (result.access_token) {
+      return { kind: 'success', token: result.access_token }
+    }
+
+    switch (result.error) {
+      case 'authorization_pending':
+        return { kind: 'pending' }
+      case 'slow_down':
+        return { kind: 'slowDown' }
+      case 'expired_token':
+      case 'token_expired':
+        return {
+          kind: 'failed',
+          error: new Error('The GitHub device login code has expired.'),
+        }
+      case 'access_denied':
+        return {
+          kind: 'failed',
+          error: new Error('GitHub device login was cancelled.'),
+        }
+      default:
+        return {
+          kind: 'failed',
+          error: new Error(
+            result.error_description ??
+              result.error ??
+              'Failed retrieving OAuth device token'
+          ),
+        }
+    }
+  } catch (e) {
+    log.warn(`requestOAuthDeviceToken: failed with endpoint ${endpoint}`, e)
+    return {
+      kind: 'failed',
+      error: e instanceof Error ? e : new Error(`${e}`),
+    }
+  }
 }
 
 export async function requestOAuthToken(

@@ -8,6 +8,7 @@ import { Button } from '../lib/button'
 import { Loading } from '../lib/loading'
 import { BrowserRedirectMessage } from '../lib/authentication-form'
 import { SamplesURL } from '../../lib/stats'
+import { SignInState, SignInStep } from '../../lib/stores'
 
 /**
  * The URL to the sign-up page on GitHub.com. Used in conjunction
@@ -20,11 +21,19 @@ interface IStartProps {
   readonly advance: (step: WelcomeStep) => void
   readonly dispatcher: Dispatcher
   readonly loadingBrowserAuth: boolean
+  readonly signInState: SignInState | null
 }
 
 /** The first step of the Welcome flow. */
 export class Start extends React.Component<IStartProps, {}> {
   public render() {
+    const authenticationState =
+      this.props.signInState?.kind === SignInStep.Authentication
+        ? this.props.signInState
+        : null
+    const deviceFlow = authenticationState?.oauthState?.deviceFlow
+    const authError = authenticationState?.error
+
     return (
       <section
         id="start"
@@ -44,7 +53,28 @@ export class Start extends React.Component<IStartProps, {}> {
               </p>
             </>
           ) : (
-            <p>{BrowserRedirectMessage}</p>
+            this.renderAuthenticationStatus()
+          )}
+
+          {authError && (
+            <p className="welcome-auth-error">{authError.message}</p>
+          )}
+
+          {deviceFlow && (
+            <div className="device-flow-login">
+              <p className="welcome-text">
+                Enter this code at GitHub to finish signing in:
+              </p>
+              <div className="device-flow-code">{deviceFlow.userCode}</div>
+              <LinkButton
+                uri={
+                  deviceFlow.verificationURIComplete ??
+                  deviceFlow.verificationURI
+                }
+              >
+                Open GitHub device login
+              </LinkButton>
+            </div>
           )}
 
           <div className="welcome-main-buttons">
@@ -107,6 +137,27 @@ export class Start extends React.Component<IStartProps, {}> {
     )
   }
 
+  private renderAuthenticationStatus() {
+    const state = this.props.signInState
+
+    if (
+      state?.kind === SignInStep.Authentication &&
+      state.oauthState?.deviceFlow !== undefined
+    ) {
+      return (
+        <p className="welcome-text">
+          Waiting for GitHub to confirm device authorization.
+        </p>
+      )
+    }
+
+    if (__PROCESS_KIND__ === 'web') {
+      return <p className="welcome-text">Preparing GitHub device login...</p>
+    }
+
+    return <p>{BrowserRedirectMessage}</p>
+  }
+
   private signInWithBrowser = (event?: React.MouseEvent<HTMLButtonElement>) => {
     if (event) {
       event.preventDefault()
@@ -117,6 +168,7 @@ export class Start extends React.Component<IStartProps, {}> {
   }
 
   private cancelBrowserAuth = () => {
+    this.props.dispatcher.resetSignInState()
     this.props.advance(WelcomeStep.Start)
   }
 

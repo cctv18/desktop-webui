@@ -169,6 +169,7 @@ export class Welcome extends React.Component<IWelcomeProps, IWelcomeState> {
             advance={this.advanceToStep}
             dispatcher={this.props.dispatcher}
             loadingBrowserAuth={loadingBrowserAuth}
+            signInState={signInState}
           />
         )
 
