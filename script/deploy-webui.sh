@@ -10,6 +10,8 @@ NO_START=0
 SKIP_INSTALL=0
 FULL_NATIVE_INSTALL=0
 LOG_FILE="out/webui-deploy.log"
+GIT_PATH=""
+GIT_DIRECTORY=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -26,6 +28,8 @@ Options:
   --no-start               Install and compile only
   --skip-install           Do not run yarn install; fail if local deps are missing
   --full-native-install    Run package install scripts for full Desktop native dependencies
+  --git-path <path>        Exact Git executable path for the WebUI server
+  --git-directory <path>   Git installation root for the WebUI server
   --log-file <path>        Write full deploy output to a log file. Default: out/webui-deploy.log
   --no-log-file            Do not write a deploy log file
   -h, --help               Show this help
@@ -61,6 +65,14 @@ while [[ $# -gt 0 ]]; do
     --full-native-install)
       FULL_NATIVE_INSTALL=1
       shift
+      ;;
+    --git-path)
+      GIT_PATH="$2"
+      shift 2
+      ;;
+    --git-directory)
+      GIT_DIRECTORY="$2"
+      shift 2
       ;;
     --log-file)
       LOG_FILE="$2"
@@ -280,4 +292,19 @@ if [[ "$NO_START" -eq 1 ]]; then
 fi
 
 step "Starting GitDesk WebUI on http://$HOST_ADDRESS:$PORT"
-run node out/web-server.js --host "$HOST_ADDRESS" --port "$PORT" --allowedRoot "$ALLOWED_ROOT"
+node_args=(
+  out/web-server.js
+  --host "$HOST_ADDRESS"
+  --port "$PORT"
+  --allowedRoot "$ALLOWED_ROOT"
+)
+
+if [[ -n "$GIT_PATH" ]]; then
+  node_args+=(--git-path "$GIT_PATH")
+fi
+
+if [[ -n "$GIT_DIRECTORY" ]]; then
+  node_args+=(--git-directory "$GIT_DIRECTORY")
+fi
+
+run node "${node_args[@]}"

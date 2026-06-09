@@ -51,8 +51,10 @@ export function parseAllowedRoots(raw: string | undefined, cwd: string) {
     return [cwd]
   }
 
-  return raw
+  const roots = raw
     .split(Path.delimiter)
     .map(x => x.trim())
     .filter(x => x.length > 0)
+
+  return roots.length > 0 ? roots : [cwd]
 }

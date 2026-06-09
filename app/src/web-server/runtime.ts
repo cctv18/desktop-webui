@@ -1,6 +1,7 @@
 import './node-globals'
 
 import * as Path from 'path'
+import { readdir } from 'fs/promises'
 import { Disposable } from 'event-kit'
 import {
   AccountsStore,
@@ -41,6 +42,7 @@ import {
   getGlobalConfigValue,
   setGlobalConfigValue,
 } from '../lib/git/config'
+import { configureGitEnvironment } from './git-environment'
 
 class ServerActivityMonitor implements IUiActivityMonitor {
   public onActivity() {
@@ -58,8 +60,12 @@ export class WebRuntime {
   public readonly notificationsDebugStore: NotificationsDebugStore
 
   public constructor(private readonly pathGuard: PathGuard) {
-    process.env.LOCAL_GIT_DIRECTORY = Path.resolve(__dirname, 'git')
-    delete process.env.GIT_EXEC_PATH
+    configureGitEnvironment({
+      bundledGitDirectory: Path.resolve(__dirname, 'git'),
+      configuredGitDirectory: process.env.GITDESK_WEBUI_GIT_DIRECTORY,
+      configuredGitPath: process.env.GITDESK_WEBUI_GIT_PATH,
+      logger: log,
+    })
 
     const gitHubUserStore = new GitHubUserStore(
       new GitHubUserDatabase('GitDeskWebUI.GitHubUserDatabase')
@@ -177,8 +183,67 @@ export class WebRuntime {
           getGlobalConfigValue,
           setGlobalConfigValue,
         }
+      case 'filesystem':
+        return {
+          validateCloneDestinationPath: (path: string) =>
+            this.validateCloneDestinationPath(path),
+        }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
+    }
+  }
+
+  private async validateCloneDestinationPath(path: string) {
+    if (typeof path !== 'string' || path.length === 0) {
+      return {
+        message:
+          'Unable to read path on disk. Please check the path and try again.',
+      }
+    }
+
+    try {
+      await this.pathGuard.assertAllowed(path)
+    } catch (error) {
+      return {
+        message: `${getErrorMessage(error)}. Allowed roots: ${this.pathGuard.allowedRoots.join(
+          ', '
+        )}`,
+      }
+    }
+
+    try {
+      const directoryFiles = await readdir(path)
+
+      if (directoryFiles.length === 0) {
+        return { message: null }
+      }
+
+      return {
+        message:
+          'This folder contains files. Git can only clone to empty folders.',
+      }
+    } catch (error) {
+      const code = getErrorCode(error)
+
+      if (code === 'ENOTDIR') {
+        return {
+          message:
+            'There is already a file with this name. Git can only clone to a folder.',
+        }
+      }
+
+      if (code === 'ENOENT') {
+        return { message: null }
+      }
+
+      log.error(
+        `CloneRepository: server path validation failed for ${path}`,
+        error as Error
+      )
+      return {
+        message:
+          'Unable to read path on disk. Please check the path and try again.',
+      }
     }
   }
 
@@ -291,4 +356,14 @@ export class WebRuntime {
         ) ?? null
     )
   }
+}
+
+function getErrorCode(error: unknown) {
+  return typeof (error as NodeJS.ErrnoException | null)?.code === 'string'
+    ? (error as NodeJS.ErrnoException).code
+    : null
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : `${error}`
 }

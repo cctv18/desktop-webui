@@ -25,6 +25,14 @@ setEnvIfValue(
   'GITDESK_WEBUI_OAUTH_CLIENT_SECRET',
   args.oauthClientSecret ?? args['oauth-client-secret']
 )
+setEnvIfValue(
+  'GITDESK_WEBUI_GIT_PATH',
+  args.gitPath ?? args['git-path']
+)
+setEnvIfValue(
+  'GITDESK_WEBUI_GIT_DIRECTORY',
+  args.gitDirectory ?? args['git-directory']
+)
 const publicBaseURL = resolvePublicBaseURL(
   args.publicUrl ?? args['public-url'] ?? process.env.GITDESK_WEBUI_URL,
   host,
@@ -39,9 +47,10 @@ process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL =
   configuredOAuthCallbackURL ||
   new URL('/oauth/callback', publicBaseURL).toString()
 const allowedRoots = parseAllowedRoots(
-  args.allowedRoot ?? process.env.GITDESK_ALLOWED_ROOTS,
+  args.allowedRoot ?? args['allowed-root'] ?? process.env.GITDESK_ALLOWED_ROOTS,
   process.cwd()
 )
+process.env.GITDESK_WEBUI_DEFAULT_ROOT = allowedRoots[0]
 
 const pathGuard = new PathGuard(allowedRoots)
 const runtime = new WebRuntime(pathGuard)

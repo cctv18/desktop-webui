@@ -688,6 +688,10 @@ export class CloneRepository extends React.Component<
       )
     }
 
+    if (__PROCESS_KIND__ === 'web') {
+      return this.validateEmptyFolderOnWebServer(path)
+    }
+
     try {
       const directoryFiles = await readdir(path)
 
@@ -713,6 +717,42 @@ export class CloneRepository extends React.Component<
 
       log.error(
         'CloneRepository: Path validation failed. Error: ' + error.message
+      )
+      return new Error(
+        'Unable to read path on disk. Please check the path and try again.'
+      )
+    }
+  }
+
+  private async validateEmptyFolderOnWebServer(
+    path: string
+  ): Promise<null | Error> {
+    try {
+      const response = await fetch('/api/rpc', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          method: 'filesystem.validateCloneDestinationPath',
+          params: [path],
+        }),
+      })
+      const payload = await response.json()
+
+      if (!payload.ok) {
+        return new Error(
+          payload.error?.message ??
+            'Unable to read path on disk. Please check the path and try again.'
+        )
+      }
+
+      const message = payload.result?.message
+      return typeof message === 'string' ? new Error(message) : null
+    } catch (error) {
+      log.error(
+        'CloneRepository: server path validation request failed',
+        error as Error
       )
       return new Error(
         'Unable to read path on disk. Please check the path and try again.'
@@ -794,7 +834,7 @@ export class CloneRepository extends React.Component<
     this.props.dispatcher.clone(url, path, { defaultBranch })
     this.props.onDismissed()
 
-    setDefaultDir(Path.resolve(path, '..'))
+    setDefaultDir(Path.dirname(path))
   }
 
   private onWindowFocus = () => {

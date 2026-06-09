@@ -6,6 +6,8 @@ param(
   [switch]$NoStart,
   [switch]$SkipInstall,
   [switch]$FullNativeInstall,
+  [string]$GitPath = "",
+  [string]$GitDirectory = "",
   [string]$LogFile = "out\webui-deploy.log"
 )
 
@@ -260,7 +262,7 @@ if ($NoStart) {
 }
 
 Write-Step "Starting GitDesk WebUI on http://$HostAddress`:$Port"
-Invoke-Step "node" @(
+$nodeArguments = @(
   "out\web-server.js",
   "--host",
   $HostAddress,
@@ -269,5 +271,15 @@ Invoke-Step "node" @(
   "--allowedRoot",
   $AllowedRoot
 )
+
+if (-not [string]::IsNullOrWhiteSpace($GitPath)) {
+  $nodeArguments += @("--git-path", $GitPath)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($GitDirectory)) {
+  $nodeArguments += @("--git-directory", $GitDirectory)
+}
+
+Invoke-Step "node" $nodeArguments
 
 Stop-DeployLog
