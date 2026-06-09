@@ -78,8 +78,8 @@ export async function readdir(path: string) {
   return invokeWebUIRPC<ReadonlyArray<string>>('filesystem.readdir', [path])
 }
 
-export async function readFile() {
-  unavailable()
+export async function readFile(path: string, encoding?: BufferEncoding) {
+  return invokeWebUIRPC<string>('filesystem.readFile', [path, encoding])
 }
 
 export async function readlink() {
@@ -108,8 +108,8 @@ export async function unlink() {
   unavailable()
 }
 
-export async function writeFile() {
-  unavailable()
+export async function writeFile(path: string, data: string) {
+  return invokeWebUIRPC<void>('filesystem.writeFile', [path, data])
 }
 
 export default {

@@ -12,6 +12,8 @@ interface ICommitConflictsWarningProps {
   readonly dispatcher: Dispatcher
   /** files that were selected for committing that are also conflicted */
   readonly files: ReadonlyArray<WorkingDirectoryFileChange>
+  /** all files that were selected for committing */
+  readonly selectedFiles: ReadonlyArray<WorkingDirectoryFileChange>
   /** repository user is committing in */
   readonly repository: Repository
   /** information for completing the commit */
@@ -34,7 +36,8 @@ export class CommitConflictsWarning extends React.Component<
     this.props.onDismissed()
     await this.props.dispatcher.commitIncludedChanges(
       this.props.repository,
-      this.props.context
+      this.props.context,
+      this.props.selectedFiles
     )
     this.props.dispatcher.clearBanner()
     this.props.dispatcher.setCommitMessage(

@@ -160,6 +160,9 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
     context: ICommitContext
   ): Promise<boolean> => {
     const { workingDirectory } = this.props.changes
+    const selectedFiles = workingDirectory.files.filter(
+      file => file.selection.getSelectionType() !== DiffSelectionType.None
+    )
 
     const overSizedFiles = await getLargeFilePaths(
       this.props.repository,
@@ -177,6 +180,7 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
         oversizedFiles: filesIgnoredByLFS,
         context: context,
         repository: this.props.repository,
+        files: selectedFiles,
       })
 
       return false
@@ -208,6 +212,7 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
       this.props.dispatcher.showPopup({
         type: PopupType.CommitConflictsWarning,
         files: conflictedFilesSelected,
+        selectedFiles,
         repository: this.props.repository,
         context,
       })
@@ -216,7 +221,8 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
 
     return this.props.dispatcher.commitIncludedChanges(
       this.props.repository,
-      context
+      context,
+      selectedFiles
     )
   }
 

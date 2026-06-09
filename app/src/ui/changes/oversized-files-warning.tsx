@@ -7,6 +7,7 @@ import { Repository } from '../../models/repository'
 import { ICommitContext } from '../../models/commit'
 import { DefaultCommitMessage } from '../../models/commit-message'
 import { OkCancelButtonGroup } from '../dialog/ok-cancel-button-group'
+import { WorkingDirectoryFileChange } from '../../models/status'
 
 const GitLFSWebsiteURL =
   'https://help.github.com/articles/versioning-large-files/'
@@ -17,6 +18,7 @@ interface IOversizedFilesProps {
   readonly dispatcher: Dispatcher
   readonly context: ICommitContext
   readonly repository: Repository
+  readonly files: ReadonlyArray<WorkingDirectoryFileChange>
 }
 
 /** A dialog to display a list of files that are too large to commit. */
@@ -79,7 +81,8 @@ export class OversizedFiles extends React.Component<IOversizedFilesProps> {
 
     await this.props.dispatcher.commitIncludedChanges(
       this.props.repository,
-      this.props.context
+      this.props.context,
+      this.props.files
     )
 
     this.props.dispatcher.setCommitMessage(

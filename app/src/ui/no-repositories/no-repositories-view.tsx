@@ -235,7 +235,7 @@ export class NoRepositoriesView extends React.Component<
     account: Account,
     accountState: IAccountRepositories | undefined
   ) {
-    const loading = accountState === undefined ? true : accountState.loading
+    const loading = accountState === undefined ? false : accountState.loading
 
     const repositories =
       accountState === undefined ? null : accountState.repositories

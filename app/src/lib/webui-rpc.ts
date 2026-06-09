@@ -14,6 +14,13 @@ export async function invokeWebUIRPC<T>(
 
   const payload = reviveFromWeb<any>(await response.json())
 
+  if (!response.ok) {
+    throw new Error(
+      payload.error?.message ??
+        `WebUI RPC '${method}' failed with HTTP ${response.status}`
+    )
+  }
+
   if (!payload.ok) {
     throw new Error(payload.error?.message ?? `WebUI RPC '${method}' failed`)
   }

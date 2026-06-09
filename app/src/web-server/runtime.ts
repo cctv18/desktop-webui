@@ -1,7 +1,7 @@
 import './node-globals'
 
 import * as Path from 'path'
-import { access, lstat, readdir, stat } from 'fs/promises'
+import { access, lstat, readFile, readdir, stat, writeFile } from 'fs/promises'
 import { Disposable } from 'event-kit'
 import {
   AccountsStore,
@@ -234,11 +234,15 @@ export class WebRuntime {
           lstat: (path: string) => this.statAllowedPath(path, false),
           pathExists: (path: string) => this.pathExists(path),
           readdir: (path: string) => this.readdirAllowedPath(path),
+          readFile: (path: string, encoding?: BufferEncoding) =>
+            this.readAllowedFile(path, encoding),
           readPartialFile: (path: string, start: number, end: number) =>
             this.readAllowedPartialFile(path, start, end),
           stat: (path: string) => this.statAllowedPath(path, true),
           validateCloneDestinationPath: (path: string) =>
             this.validateCloneDestinationPath(path),
+          writeFile: (path: string, data: string) =>
+            this.writeAllowedFile(path, data),
         }
       case 'clone':
         return {
@@ -353,12 +357,60 @@ export class WebRuntime {
     return readPartialFile(path, start, end)
   }
 
+  private resolveStaticPath(path: string) {
+    if (!path.startsWith('/static/')) {
+      return null
+    }
+
+    const staticRoot = process.env.GITDESK_WEBUI_STATIC_ROOT
+    if (!staticRoot) {
+      return null
+    }
+
+    const absoluteStaticRoot = Path.resolve(staticRoot)
+    const absolutePath = Path.resolve(
+      absoluteStaticRoot,
+      path.replace(/^\/+/, '')
+    )
+    const relativePath = Path.relative(absoluteStaticRoot, absolutePath)
+
+    if (
+      relativePath &&
+      !relativePath.startsWith('..') &&
+      !Path.isAbsolute(relativePath)
+    ) {
+      return absolutePath
+    }
+
+    return null
+  }
+
+  private async readAllowedFile(path: string, encoding?: BufferEncoding) {
+    const staticPath = this.resolveStaticPath(path)
+    if (staticPath !== null) {
+      return readFile(staticPath, encoding ?? 'utf8')
+    }
+
+    await this.pathGuard.assertAllowed(path)
+    return readFile(path, encoding ?? 'utf8')
+  }
+
+  private async writeAllowedFile(path: string, data: string) {
+    await this.pathGuard.assertAllowed(path)
+    return writeFile(path, data)
+  }
+
   private async accessAllowedPath(path: string) {
     await this.pathGuard.assertAllowed(path)
     await access(path)
   }
 
   private async readdirAllowedPath(path: string) {
+    const staticPath = this.resolveStaticPath(path)
+    if (staticPath !== null) {
+      return readdir(staticPath)
+    }
+
     await this.pathGuard.assertAllowed(path)
     return readdir(path)
   }

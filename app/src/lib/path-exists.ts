@@ -24,6 +24,10 @@ async function remotePathExists(path: string) {
       }),
     })
 
+    if (!response.ok) {
+      return false
+    }
+
     const payload = reviveFromWeb<any>(await response.json())
     return payload.ok ? Boolean(payload.result) : false
   } catch {

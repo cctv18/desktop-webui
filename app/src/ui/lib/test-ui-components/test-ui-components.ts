@@ -210,20 +210,23 @@ export function showTestUI(
       )
     }
 
+    const files = [
+      new WorkingDirectoryFileChange(
+        'test/test.md',
+        { kind: AppFileStatusKind.New },
+        DiffSelection.fromInitialSelection(DiffSelectionType.All)
+      ),
+      new WorkingDirectoryFileChange(
+        'mock/mock.md',
+        { kind: AppFileStatusKind.New },
+        DiffSelection.fromInitialSelection(DiffSelectionType.All)
+      ),
+    ]
+
     return dispatcher.showPopup({
       type: PopupType.CommitConflictsWarning,
-      files: [
-        new WorkingDirectoryFileChange(
-          'test/test.md',
-          { kind: AppFileStatusKind.New },
-          DiffSelection.fromInitialSelection(DiffSelectionType.All)
-        ),
-        new WorkingDirectoryFileChange(
-          'mock/mock.md',
-          { kind: AppFileStatusKind.New },
-          DiffSelection.fromInitialSelection(DiffSelectionType.All)
-        ),
-      ],
+      files,
+      selectedFiles: files,
       repository,
       context: {
         summary: 'Test summary',
@@ -311,6 +314,7 @@ export function showTestUI(
         description: 'Test description',
       },
       repository,
+      files: [],
     })
   }
 

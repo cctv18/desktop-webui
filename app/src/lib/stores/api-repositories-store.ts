@@ -178,8 +178,15 @@ export class ApiRepositoriesStore extends BaseStore {
     const currentState = this.getAccountState(account)
 
     if (currentState?.loading) {
+      log.info(
+        `[ApiRepositoriesStore] repository list refresh for ${account.login} is already in progress`
+      )
       return
     }
+
+    log.info(
+      `[ApiRepositoriesStore] loading repositories for ${account.login} from ${account.friendlyEndpoint}`
+    )
 
     this.updateAccount(account, { loading: true })
 
@@ -206,6 +213,9 @@ export class ApiRepositoriesStore extends BaseStore {
         repositories.set(r.clone_url, r)
         missing.delete(r.clone_url)
       })
+      log.info(
+        `[ApiRepositoriesStore] loaded ${page.length} repositories for ${account.login}; total ${repositories.size}`
+      )
       this.updateAccount(account, { repositories: [...repositories.values()] })
     }
 
@@ -301,6 +311,9 @@ export class ApiRepositoriesStore extends BaseStore {
       log.error(`Failed loading repositories for ${account.login}`, loadError)
       this.emitError(loadError)
     } finally {
+      log.info(
+        `[ApiRepositoriesStore] finished loading repositories for ${account.login}; received=${receivedRepositoryPage}; total=${repositories.size}`
+      )
       this.updateAccount(account, { loading: false })
     }
   }

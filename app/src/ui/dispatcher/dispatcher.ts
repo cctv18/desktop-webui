@@ -130,7 +130,7 @@ import { SignInResult } from '../../lib/stores/sign-in-store'
 import { ICustomIntegration } from '../../lib/custom-integration'
 import { isAbsolute } from 'path'
 import { CLIAction } from '../../lib/cli-action'
-import { BypassReasonType } from '../secret-scanning/bypass-push-protection-dialog'
+import type { BypassReasonType } from '../secret-scanning/bypass-push-protection-dialog'
 import {
   IConflictResolutionProgress,
   IFileResolution,
@@ -348,9 +348,14 @@ export class Dispatcher {
    */
   public async commitIncludedChanges(
     repository: Repository,
-    context: ICommitContext
+    context: ICommitContext,
+    selectedFiles?: ReadonlyArray<WorkingDirectoryFileChange>
   ): Promise<boolean> {
-    return this.appStore._commitIncludedChanges(repository, context)
+    return this.appStore._commitIncludedChanges(
+      repository,
+      context,
+      selectedFiles
+    )
   }
 
   /** Change the file's includedness. */
@@ -745,10 +750,6 @@ export class Dispatcher {
   }
 
   private pushWithOptions(repository: Repository, options?: PushOptions) {
-    if (options !== undefined && options.forceWithLease) {
-      this.dropCurrentBranchFromForcePushList(repository)
-    }
-
     return this.appStore._push(repository, options)
   }
 
@@ -851,6 +852,15 @@ export class Dispatcher {
 
       const addedRepository = addedRepositories[0]
       await this.selectRepository(addedRepository)
+
+      void this.appStore
+        ._fetch(addedRepository, FetchType.BackgroundTask)
+        .catch(error =>
+          log.warn(
+            `Initial fetch after clone failed for ${addedRepository.name}`,
+            error
+          )
+        )
 
       if (isRepositoryWithForkedGitHubRepository(addedRepository)) {
         this.showPopup({
@@ -2577,6 +2587,8 @@ export class Dispatcher {
     await this.pushWithOptions(repository, {
       forceWithLease: true,
     })
+
+    this.dropCurrentBranchFromForcePushList(repository)
 
     await this.appStore._loadStatus(repository)
   }

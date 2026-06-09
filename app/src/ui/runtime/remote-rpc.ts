@@ -19,6 +19,13 @@ export class RemoteRPCClient {
 
     const payload = reviveFromWeb<any>(await response.json())
 
+    if (!response.ok) {
+      const message =
+        payload.error?.message ??
+        `Remote call '${method}' failed with HTTP ${response.status}`
+      throw new Error(message)
+    }
+
     if (!payload.ok) {
       const message = payload.error?.message ?? `Remote call '${method}' failed`
       throw new Error(message)

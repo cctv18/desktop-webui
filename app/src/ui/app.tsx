@@ -2022,6 +2022,7 @@ export class App extends React.Component<IAppProps, IAppState> {
             dispatcher={this.props.dispatcher}
             context={popup.context}
             repository={popup.repository}
+            files={popup.files}
           />
         )
       case PopupType.CommitConflictsWarning:
@@ -2030,6 +2031,7 @@ export class App extends React.Component<IAppProps, IAppState> {
             key="commit-conflicts-warning"
             dispatcher={this.props.dispatcher}
             files={popup.files}
+            selectedFiles={popup.selectedFiles}
             repository={popup.repository}
             context={popup.context}
             onDismissed={onPopupDismissedFn}

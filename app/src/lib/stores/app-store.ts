@@ -554,6 +554,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** The background fetcher for the currently selected repository. */
   private currentBackgroundFetcher: BackgroundFetcher | null = null
 
+  private readonly pushPullFetchOperations = new Map<number, Promise<void>>()
+
   private currentBranchPruner: BranchPruner | null = null
 
   private readonly repositoryIndicatorUpdater: RepositoryIndicatorUpdater
@@ -2148,7 +2150,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     this.startBackgroundPruner(repository)
 
-    this.addUpstreamRemoteIfNeeded(repository)
+    await this.addUpstreamRemoteIfNeeded(repository)
 
     return this.repositoryWithRefreshedGitHubRepository(repository)
   }
@@ -2326,10 +2328,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.accounts = accounts
     this.repositories = repositories
 
-    if (__PROCESS_KIND__ === 'web-server') {
-      for (const account of accounts) {
-        void this.apiRepositoriesStore.loadRepositories(account)
-      }
+    for (const account of accounts) {
+      void this.apiRepositoriesStore.loadRepositories(account)
     }
 
     if (__PROCESS_KIND__ === 'web-server' && repositories.length > 0) {
@@ -3507,13 +3507,28 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _commitIncludedChanges(
     repository: Repository,
-    context: ICommitContext
+    context: ICommitContext,
+    filesToCommit?: ReadonlyArray<WorkingDirectoryFileChange>
   ): Promise<boolean> {
     const state = this.repositoryStateCache.get(repository)
     const files = state.changesState.workingDirectory.files
-    const selectedFiles = files.filter(file => {
-      return file.selection.getSelectionType() !== DiffSelectionType.None
-    })
+    const selectedFiles =
+      filesToCommit === undefined
+        ? files.filter(file => {
+            return file.selection.getSelectionType() !== DiffSelectionType.None
+          })
+        : filesToCommit.map(file => {
+            const matchingFile = files.find(
+              stateFile =>
+                stateFile.id === file.id || stateFile.path === file.path
+            )
+
+            return matchingFile?.withSelection(file.selection) ?? file
+          })
+
+    log.info(
+      `[AppStore] commitIncludedChanges amend=${context.amend} selected=${selectedFiles.length} stateFiles=${files.length}`
+    )
 
     const gitStore = this.gitStoreCache.get(repository)
 
@@ -3824,7 +3839,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }
     }
 
-    const state = this.repositoryStateCache.get(repository)
     const gitStore = this.gitStoreCache.get(repository)
 
     // if we cannot get a valid status it's a good indicator that the repository
@@ -3842,7 +3856,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
     await gitStore.loadRemotes()
     await gitStore.loadBranches()
 
-    const section = state.selectedSection
+    const { selectedSection: section } =
+      this.repositoryStateCache.get(repository)
     let refreshSectionPromise: Promise<void>
 
     if (section === RepositorySectionTab.History) {
@@ -3944,7 +3959,19 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     const gitStore = this.gitStoreCache.get(repository)
-    const status = await gitStore.loadStatus()
+    let status: IStatusResult | null = null
+
+    try {
+      status = await gitStore.loadStatus()
+    } catch (error) {
+      if (!(await pathExists(repository.path))) {
+        lookup.delete(repository.id)
+        return
+      }
+
+      throw error
+    }
+
     if (status === null) {
       lookup.delete(repository.id)
       return
@@ -3960,7 +3987,18 @@ export class AppStore extends TypedBaseStore<IAppState> {
     )
 
     if (await this.shouldBackgroundFetch(repository, lastPush)) {
-      const aheadBehind = await this.fetchForRepositoryIndicator(repository)
+      let aheadBehind = null
+
+      try {
+        aheadBehind = await this.fetchForRepositoryIndicator(repository)
+      } catch (error) {
+        if (!(await pathExists(repository.path))) {
+          lookup.delete(repository.id)
+          return
+        }
+
+        throw error
+      }
 
       const existing = lookup.get(repository.id)
       lookup.set(repository.id, {
@@ -3997,14 +4035,24 @@ export class AppStore extends TypedBaseStore<IAppState> {
    */
   private fetchForRepositoryIndicator(repo: Repository) {
     return this.withRefreshedGitHubRepository(repo, async repo => {
+      if (repo.missing || !(await pathExists(repo.path))) {
+        this.localRepositoryStateLookup.delete(repo.id)
+        return null
+      }
+
       const isBackgroundTask = true
       const gitStore = this.gitStoreCache.get(repo)
 
-      await this.withPushPullFetch(repo, () =>
-        gitStore.fetch(isBackgroundTask, progress =>
+      await this.withPushPullFetch(repo, async () => {
+        if (repo.missing || !(await pathExists(repo.path))) {
+          this.localRepositoryStateLookup.delete(repo.id)
+          return
+        }
+
+        await gitStore.fetch(isBackgroundTask, progress =>
           this.updatePushPullFetchProgress(repo, progress)
         )
-      )
+      })
       this.updatePushPullFetchProgress(repo, null)
 
       return gitStore.aheadBehind
@@ -4919,6 +4967,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const state = this.repositoryStateCache.get(repository)
     const { remote } = state
     if (remote === null) {
+      log.info(
+        `[AppStore] push requested for ${repository.name} but no remote is configured`
+      )
       this._showPopup({
         type: PopupType.PublishRepository,
         repository,
@@ -4931,6 +4982,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
       const branch = this.getBranchToPush(repository, options)
 
       if (branch === undefined) {
+        log.warn(
+          `[AppStore] push requested for ${repository.name} without a branch`
+        )
         return
       }
 
@@ -4997,6 +5051,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
       // so that we can confidently remove this safeguard in a future
       // release.
       const safeRemote: IRemote = { name: remoteName, url: remote.url }
+
+      log.info(
+        `[AppStore] pushing ${repository.name}:${branch.name} to ${safeRemote.name}${
+          branch.upstreamWithoutRemote === null
+            ? ' with upstream'
+            : `/${branch.upstreamWithoutRemote}`
+        }${options?.forceWithLease ? ' using force-with-lease' : ''}`
+      )
 
       if (safeRemote.name !== remote.name) {
         sendNonFatalException(
@@ -5145,11 +5207,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     fn: () => Promise<void>
   ): Promise<void> {
-    const state = this.repositoryStateCache.get(repository)
-    // Don't allow concurrent network operations.
-    if (state.isPushPullFetchInProgress) {
-      return
+    let existingOperation = this.pushPullFetchOperations.get(repository.id)
+    while (existingOperation !== undefined) {
+      log.info(
+        `[AppStore] waiting to run network operation for ${repository.name} because another push/pull/fetch is in progress`
+      )
+      await existingOperation.catch(() => undefined)
+      existingOperation = this.pushPullFetchOperations.get(repository.id)
     }
+
+    const operation = Promise.resolve().then(fn)
+    this.pushPullFetchOperations.set(repository.id, operation)
 
     this.repositoryStateCache.update(repository, () => ({
       isPushPullFetchInProgress: true,
@@ -5157,8 +5225,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.emitUpdate()
 
     try {
-      await fn()
+      await operation
     } finally {
+      if (this.pushPullFetchOperations.get(repository.id) === operation) {
+        this.pushPullFetchOperations.delete(repository.id)
+      }
+
       this.repositoryStateCache.update(repository, () => ({
         isPushPullFetchInProgress: false,
       }))
@@ -5649,7 +5721,20 @@ export class AppStore extends TypedBaseStore<IAppState> {
     fetchType: FetchType,
     remotes?: IRemote[]
   ): Promise<void> {
+    if (repository.missing || !(await pathExists(repository.path))) {
+      this.localRepositoryStateLookup.delete(repository.id)
+      log.info(
+        `[AppStore] skipping fetch for ${repository.name} because the repository path is unavailable`
+      )
+      return
+    }
+
     await this.withPushPullFetch(repository, async () => {
+      if (repository.missing || !(await pathExists(repository.path))) {
+        this.localRepositoryStateLookup.delete(repository.id)
+        return
+      }
+
       const gitStore = this.gitStoreCache.get(repository)
 
       try {
@@ -7532,7 +7617,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // in order to have the list of repositories ready for them when they
     // get to the blankslate.
     if (this.showWelcomeFlow && storedAccount !== null) {
-      this.apiRepositoriesStore.loadRepositories(storedAccount)
+      void this.apiRepositoriesStore.loadRepositories(storedAccount)
     }
   }
 
@@ -7698,6 +7783,16 @@ export class AppStore extends TypedBaseStore<IAppState> {
     moveToTrash: boolean
   ): Promise<void> {
     try {
+      if (repository === this.selectedRepository) {
+        this.stopBackgroundFetching()
+        this.stopPullRequestUpdater()
+        this.stopBackgroundPruner()
+      }
+
+      if (repository instanceof Repository) {
+        this.localRepositoryStateLookup.delete(repository.id)
+      }
+
       if (moveToTrash) {
         try {
           if (__PROCESS_KIND__ === 'web-server') {
@@ -7776,6 +7871,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     fn: (repository: Repository) => Promise<T>
   ): Promise<T> {
+    if (__PROCESS_KIND__ === 'web-server') {
+      return fn(repository)
+    }
+
     let updatedRepository = repository
     const account: Account | null = getAccountForRepository(
       this.accounts,

@@ -24,7 +24,7 @@ import { ValidNotificationPullRequestReview } from '../lib/valid-notification-pu
 import { UnreachableCommitsTab } from '../ui/history/unreachable-commits-dialog'
 import { IAPIComment } from '../lib/api'
 import { ISecretScanResult } from '../ui/secret-scanning/push-protection-error-dialog'
-import { BypassReasonType } from '../ui/secret-scanning/bypass-push-protection-dialog'
+import type { BypassReasonType } from '../ui/secret-scanning/bypass-push-protection-dialog'
 import { TerminalOutput, TerminalOutputListener } from '../lib/git'
 import type { IBYOKModel, IBYOKProvider } from '../lib/copilot/byok'
 import { WorktreeEntry } from './worktree'
@@ -245,11 +245,14 @@ export type PopupDetail =
       oversizedFiles: ReadonlyArray<string>
       context: ICommitContext
       repository: Repository
+      files: ReadonlyArray<WorkingDirectoryFileChange>
     }
   | {
       type: PopupType.CommitConflictsWarning
       /** files that were selected for committing that are also conflicted */
       files: ReadonlyArray<WorkingDirectoryFileChange>
+      /** all files that were selected for committing */
+      selectedFiles: ReadonlyArray<WorkingDirectoryFileChange>
       /** repository user is committing in */
       repository: Repository
       /** information for completing the commit */
