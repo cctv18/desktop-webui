@@ -113,21 +113,33 @@ export class ApiRepositoriesStore extends BaseStore {
    */
   private onAccountsChanged = (accounts: ReadonlyArray<Account>) => {
     const newState = new Map<Account, IAccountRepositories>()
+    const accountsToLoad = new Array<Account>()
 
     for (const account of accounts) {
+      let foundExistingState = false
+
       for (const [key, value] of this.accountState.entries()) {
         // Check to see whether the accounts store only emitted an
         // updated Account for the same login and endpoint meaning
         // that we don't need to discard our cached data.
         if (accountEquals(key, account)) {
           newState.set(account, value)
+          foundExistingState = true
           break
         }
+      }
+
+      if (!foundExistingState) {
+        accountsToLoad.push(account)
       }
     }
 
     this.accountState = newState
     this.emitUpdate()
+
+    for (const account of accountsToLoad) {
+      void this.loadRepositories(account)
+    }
   }
 
   private updateAccount<K extends keyof IAccountRepositories>(

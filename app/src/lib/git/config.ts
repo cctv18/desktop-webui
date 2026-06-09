@@ -233,6 +233,11 @@ export async function addGlobalConfigValue(
  * if the path is owner by a different user than the current.
  */
 export async function addSafeDirectory(path: string) {
+  if (__PROCESS_KIND__ === 'web') {
+    await invokeWebUIGit<void>('addSafeDirectory', [path])
+    return
+  }
+
   // UNC-paths on Windows need to be prefixed with `%(prefix)/`, see
   // https://github.com/git-for-windows/git/commit/e394a16023cbb62784e380f70ad8a833fb960d68
   if (__WIN32__ && path[0] === '/') {

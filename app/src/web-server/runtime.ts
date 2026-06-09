@@ -1,7 +1,7 @@
 import './node-globals'
 
 import * as Path from 'path'
-import { readdir } from 'fs/promises'
+import { access, lstat, readdir, stat } from 'fs/promises'
 import { Disposable } from 'event-kit'
 import {
   AccountsStore,
@@ -40,6 +40,7 @@ import { Repository } from '../models/repository'
 import { PathGuard } from './path-guard'
 import { API, IAPIRepositoryCloneInfo } from '../lib/api'
 import {
+  addSafeDirectory,
   getBooleanConfigValue,
   getConfigValue,
   getGlobalBooleanConfigValue,
@@ -47,6 +48,9 @@ import {
   setConfigValue,
   setGlobalConfigValue,
 } from '../lib/git/config'
+import { getRepositoryType } from '../lib/git/rev-parse'
+import { doMergeCommitsExistAfterCommit } from '../lib/git/rev-list'
+import { filesNotTrackedByLFS } from '../lib/git/lfs'
 import { getAuthors } from '../lib/git/log'
 import { getPartialBlobContents } from '../lib/git/show'
 import { readPartialFile } from '../lib/file-system'
@@ -210,20 +214,29 @@ export class WebRuntime {
         return this.notificationsDebugStore
       case 'git':
         return {
+          addSafeDirectory: (path: string) => this.addAllowedSafeDirectory(path),
+          doMergeCommitsExistAfterCommit,
+          filesNotTrackedByLFS,
           getAuthors,
           getBooleanConfigValue,
           getConfigValue,
           getGlobalBooleanConfigValue,
           getGlobalConfigValue,
           getPartialBlobContents,
+          getRepositoryType: (path: string) =>
+            this.getAllowedRepositoryType(path),
           setConfigValue,
           setGlobalConfigValue,
         }
       case 'filesystem':
         return {
+          access: (path: string) => this.accessAllowedPath(path),
+          lstat: (path: string) => this.statAllowedPath(path, false),
           pathExists: (path: string) => this.pathExists(path),
+          readdir: (path: string) => this.readdirAllowedPath(path),
           readPartialFile: (path: string, start: number, end: number) =>
             this.readAllowedPartialFile(path, start, end),
+          stat: (path: string) => this.statAllowedPath(path, true),
           validateCloneDestinationPath: (path: string) =>
             this.validateCloneDestinationPath(path),
         }
@@ -269,6 +282,16 @@ export class WebRuntime {
       log.error(`Failed to look up repository clone info for '${url}'`, error)
       return { url }
     })
+  }
+
+  private async getAllowedRepositoryType(path: string) {
+    await this.pathGuard.assertAllowed(path)
+    return getRepositoryType(path)
+  }
+
+  private async addAllowedSafeDirectory(path: string) {
+    await this.pathGuard.assertAllowed(path)
+    return addSafeDirectory(path)
   }
 
   private async validateCloneDestinationPath(path: string) {
@@ -328,6 +351,28 @@ export class WebRuntime {
   private async readAllowedPartialFile(path: string, start: number, end: number) {
     await this.pathGuard.assertAllowed(path)
     return readPartialFile(path, start, end)
+  }
+
+  private async accessAllowedPath(path: string) {
+    await this.pathGuard.assertAllowed(path)
+    await access(path)
+  }
+
+  private async readdirAllowedPath(path: string) {
+    await this.pathGuard.assertAllowed(path)
+    return readdir(path)
+  }
+
+  private async statAllowedPath(path: string, followSymlink: boolean) {
+    await this.pathGuard.assertAllowed(path)
+    const stats = followSymlink ? await stat(path) : await lstat(path)
+
+    return {
+      size: stats.size,
+      isFile: stats.isFile(),
+      isDirectory: stats.isDirectory(),
+      isSymbolicLink: stats.isSymbolicLink(),
+    }
   }
 
   private async pathExists(path: string) {

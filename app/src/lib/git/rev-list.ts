@@ -3,6 +3,7 @@ import { git } from './core'
 import { Repository } from '../../models/repository'
 import { Branch, BranchType, IAheadBehind } from '../../models/branch'
 import { CommitOneLine } from '../../models/commit'
+import { invokeWebUIRPC } from '../webui-rpc'
 
 /**
  * Convert two refs into the Git range syntax representing the set of commits
@@ -191,6 +192,13 @@ export async function doMergeCommitsExistAfterCommit(
   repository: Repository,
   commitRef: string | null
 ): Promise<boolean> {
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIRPC<boolean>('git.doMergeCommitsExistAfterCommit', [
+      repository,
+      commitRef,
+    ])
+  }
+
   const revision = commitRef === null ? 'HEAD' : revRange(commitRef, 'HEAD')
   const args = ['rev-list', '-1', '--merges', revision, '--']
 

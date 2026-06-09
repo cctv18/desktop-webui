@@ -1,5 +1,6 @@
 import { git } from './core'
 import { Repository } from '../../models/repository'
+import { invokeWebUIRPC } from '../webui-rpc'
 
 interface ILFSTrackOutput {
   readonly patterns: ReadonlyArray<{
@@ -108,6 +109,13 @@ export async function filesNotTrackedByLFS(
   repository: Repository,
   filePaths: ReadonlyArray<string>
 ): Promise<ReadonlyArray<string>> {
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIRPC<ReadonlyArray<string>>('git.filesNotTrackedByLFS', [
+      repository,
+      filePaths,
+    ])
+  }
+
   const filesNotTrackedByGitLFS = new Array<string>()
 
   for (const file of filePaths) {

@@ -1558,7 +1558,10 @@ export class GitStore extends BaseStore {
       if (file.status.kind !== AppFileStatusKind.Deleted && !foundSubmodule) {
         if (moveToTrash && __PROCESS_KIND__ === 'web-server') {
           if (file.status.kind === AppFileStatusKind.Untracked) {
-            await rm(Path.join(this.repository.path, file.path))
+            await rm(Path.join(this.repository.path, file.path), {
+              recursive: true,
+              force: true,
+            })
           }
         } else if (moveToTrash) {
           try {
@@ -1574,7 +1577,10 @@ export class GitStore extends BaseStore {
             // chosen to always discard the changes permanently if trash failes.
             // We need to remove the file manually.
             if (file.status.kind === AppFileStatusKind.Untracked) {
-              await rm(Path.join(this.repository.path, file.path))
+              await rm(Path.join(this.repository.path, file.path), {
+                recursive: true,
+                force: true,
+              })
             }
           }
         } else if (moveToTrash === false) {
@@ -1582,7 +1588,10 @@ export class GitStore extends BaseStore {
           // discard the changes permanently. We need to remove the file
           // manually.
           if (file.status.kind === AppFileStatusKind.Untracked) {
-            await rm(Path.join(this.repository.path, file.path))
+            await rm(Path.join(this.repository.path, file.path), {
+              recursive: true,
+              force: true,
+            })
           }
         }
       }

@@ -92,6 +92,10 @@ export function getReleaseSummary(
 export async function getChangeLog(
   limit?: number
 ): Promise<ReadonlyArray<ReleaseMetadata>> {
+  if (__PROCESS_KIND__ === 'web') {
+    return []
+  }
+
   const changelogURL = new URL(
     'https://central.github.com/deployments/desktop/desktop/changelog.json'
   )
@@ -104,21 +108,31 @@ export async function getChangeLog(
     changelogURL.searchParams.set('limit', limit.toString())
   }
 
-  const response = await fetch(changelogURL.toString(), {
-    headers: { 'user-agent': getUserAgent() },
-  })
-  if (response.ok) {
-    const releases: ReadonlyArray<ReleaseMetadata> = await response.json()
-    return releases
-  } else {
-    return []
+  try {
+    const response = await fetch(changelogURL.toString(), {
+      headers: { 'user-agent': getUserAgent() },
+    })
+
+    if (response.ok) {
+      const releases: ReadonlyArray<ReleaseMetadata> = await response.json()
+      return releases
+    }
+  } catch (error) {
+    log.debug('[ReleaseNotes] unable to fetch changelog', error)
   }
+
+  return []
 }
 
 export async function generateReleaseSummary(
   version?: string
 ): Promise<ReadonlyArray<ReleaseSummary>> {
   const lastTenReleases = await getChangeLog()
+
+  if (lastTenReleases.length === 0) {
+    return []
+  }
+
   const currentVersion = new semver.SemVer(version ?? getVersion())
   const recentReleases = lastTenReleases.filter(
     r =>

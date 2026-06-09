@@ -112,8 +112,15 @@ export class OkCancelButtonGroup extends React.Component<
     if (this.props.destructive === true) {
       event.preventDefault()
       if (event.currentTarget.form) {
-        // https://stackoverflow.com/a/12820780/2114
-        event.currentTarget.form.dispatchEvent(new Event('submit'))
+        const form = event.currentTarget.form
+
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit()
+        } else {
+          form.dispatchEvent(
+            new Event('submit', { bubbles: true, cancelable: true })
+          )
+        }
       }
     }
   }
@@ -136,7 +143,9 @@ export class OkCancelButtonGroup extends React.Component<
       event.preventDefault()
       if (event.currentTarget.form) {
         // https://stackoverflow.com/a/12820780/2114
-        event.currentTarget.form.dispatchEvent(new Event('reset'))
+        event.currentTarget.form.dispatchEvent(
+          new Event('reset', { bubbles: true, cancelable: true })
+        )
       }
     }
   }

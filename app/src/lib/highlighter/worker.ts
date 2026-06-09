@@ -34,6 +34,10 @@ export function highlight(
   tabSize: number,
   lines: Array<number>
 ): Promise<ITokens> {
+  if (__PROCESS_KIND__ === 'web') {
+    return Promise.resolve({})
+  }
+
   // Bail early if there's no content to highlight or if we don't
   // need any lines from this file.
   if (!contentLines.length || !lines.length) {

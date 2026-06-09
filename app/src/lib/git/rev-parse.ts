@@ -1,6 +1,7 @@
 import { git } from './core'
 import { directoryExists } from '../directory-exists'
 import { resolve } from 'path'
+import { invokeWebUIRPC } from '../webui-rpc'
 
 export type RepositoryType =
   | { kind: 'bare' }
@@ -16,6 +17,10 @@ export type RepositoryType =
  * found.
  */
 export async function getRepositoryType(path: string): Promise<RepositoryType> {
+  if (__PROCESS_KIND__ === 'web') {
+    return invokeWebUIRPC<RepositoryType>('git.getRepositoryType', [path])
+  }
+
   if (!(await directoryExists(path))) {
     return { kind: 'missing' }
   }

@@ -1,5 +1,5 @@
 import * as Path from 'path'
-import { writeFile } from 'fs/promises'
+import { rm, writeFile } from 'fs/promises'
 import {
   AccountsStore,
   CloningRepositoriesStore,
@@ -1389,45 +1389,54 @@ export class AppStore extends TypedBaseStore<IAppState> {
       const owner = gitHubRepo.owner.login
       const api = API.fromAccount(account)
 
-      const pushControl = await api.fetchPushControl(owner, name, branchName)
-      const currentBranchProtected = !isBranchPushable(pushControl)
-
+      let currentBranchProtected = false
       let currentRepoRulesInfo = new RepoRulesInfo()
-      if (useRepoRulesLogic(account, repository)) {
-        const slimRulesets = await api.fetchAllRepoRulesets(owner, name)
 
-        // ultimate goal here is to fetch all rulesets that apply to the repo
-        // so they're already cached when needed later on
-        if (slimRulesets?.length) {
-          const rulesetIds = slimRulesets.map(r => r.id)
+      try {
+        const pushControl = await api.fetchPushControl(owner, name, branchName)
+        currentBranchProtected = !isBranchPushable(pushControl)
 
-          const calls: Promise<IAPIRepoRuleset | null>[] = []
-          for (const id of rulesetIds) {
-            // check the cache and don't re-query any that are already in there
-            if (!this.cachedRepoRulesets.has(id)) {
-              calls.push(api.fetchRepoRuleset(owner, name, id))
+        if (useRepoRulesLogic(account, repository)) {
+          const slimRulesets = await api.fetchAllRepoRulesets(owner, name)
+
+          // ultimate goal here is to fetch all rulesets that apply to the repo
+          // so they're already cached when needed later on
+          if (slimRulesets?.length) {
+            const rulesetIds = slimRulesets.map(r => r.id)
+
+            const calls: Promise<IAPIRepoRuleset | null>[] = []
+            for (const id of rulesetIds) {
+              // check the cache and don't re-query any that are already in there
+              if (!this.cachedRepoRulesets.has(id)) {
+                calls.push(api.fetchRepoRuleset(owner, name, id))
+              }
+            }
+
+            if (calls.length > 0) {
+              const rulesets = await Promise.all(calls)
+              this._updateCachedRepoRulesets(rulesets)
             }
           }
 
-          if (calls.length > 0) {
-            const rulesets = await Promise.all(calls)
-            this._updateCachedRepoRulesets(rulesets)
+          const branchRules = await api.fetchRepoRulesForBranch(
+            owner,
+            name,
+            branchName
+          )
+
+          if (branchRules.length > 0) {
+            currentRepoRulesInfo = await parseRepoRules(
+              branchRules,
+              this.cachedRepoRulesets,
+              repository
+            )
           }
         }
-
-        const branchRules = await api.fetchRepoRulesForBranch(
-          owner,
-          name,
-          branchName
+      } catch (error) {
+        log.warn(
+          `[refreshBranchProtectionState] unable to refresh branch protection for ${owner}/${name}:${branchName}`,
+          error
         )
-
-        if (branchRules.length > 0) {
-          currentRepoRulesInfo = await parseRepoRules(
-            branchRules,
-            this.cachedRepoRulesets,
-            repository
-          )
-        }
       }
 
       this.repositoryStateCache.updateChangesState(repository, () => ({
@@ -1436,6 +1445,22 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }))
       this.emitUpdate()
     }
+  }
+
+  private async refreshBranchProtectionStateAfterNetworkOperation(
+    repository: Repository
+  ) {
+    if (__PROCESS_KIND__ !== 'web-server') {
+      await this.refreshBranchProtectionState(repository)
+      return
+    }
+
+    this.refreshBranchProtectionState(repository).catch(error => {
+      log.warn(
+        `Failed refreshing branch protection state for ${repository.name}`,
+        error
+      )
+    })
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -2300,6 +2325,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     this.accounts = accounts
     this.repositories = repositories
+
+    if (__PROCESS_KIND__ === 'web-server') {
+      for (const account of accounts) {
+        void this.apiRepositoriesStore.loadRepositories(account)
+      }
+    }
 
     if (__PROCESS_KIND__ === 'web-server' && repositories.length > 0) {
       this.showWelcomeFlow = false
@@ -4273,6 +4304,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return repository
     }
 
+    if (repositoryState.commitToAmend !== null) {
+      this.setRepositoryCommitToAmend(repository, null)
+    }
+
     // If the branch is checked out in another worktree, switch to that worktree
     // instead of checking out the branch in the current worktree.
     const wt = repositoryState.worktrees.find(wt => wt.branch === branch.ref)
@@ -4591,7 +4626,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const ghRepo = await repoStore.upsertGitHubRepository(endpoint, apiRepo)
     const freshRepo = await repoStore.setGitHubRepository(repository, ghRepo)
 
-    await this.refreshBranchProtectionState(freshRepo)
+    this.refreshBranchProtectionState(freshRepo).catch(error => {
+      log.warn(
+        `Failed refreshing branch protection state for ${freshRepo.name}`,
+        error
+      )
+    })
+
     return freshRepo
   }
 
@@ -4835,6 +4876,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     options?: PushOptions
   ): Promise<void> {
+    if (__PROCESS_KIND__ === 'web-server') {
+      return this.performPush(repository, options)
+    }
+
     return this.withRefreshedGitHubRepository(repository, repository => {
       return this.performPush(repository, options)
     })
@@ -5018,7 +5063,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
           // manually refresh branch protections after the push, to ensure
           // any new branch will immediately report as protected
-          await this.refreshBranchProtectionState(repository)
+          await this.refreshBranchProtectionStateAfterNetworkOperation(
+            repository
+          )
 
           await this._refreshRepository(repository)
         },
@@ -5271,7 +5318,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
           // manually refresh branch protections after the push, to ensure
           // any new branch will immediately report as protected
-          await this.refreshBranchProtectionState(repository)
+          await this.refreshBranchProtectionStateAfterNetworkOperation(
+            repository
+          )
 
           await this._refreshRepository(repository)
         } finally {
@@ -5646,7 +5695,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
         // manually refresh branch protections after the push, to ensure
         // any new branch will immediately report as protected
-        await this.refreshBranchProtectionState(repository)
+        await this.refreshBranchProtectionStateAfterNetworkOperation(repository)
 
         await this._refreshRepository(repository)
       } finally {
@@ -7651,7 +7700,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     try {
       if (moveToTrash) {
         try {
-          await shell.moveItemToTrash(repository.path)
+          if (__PROCESS_KIND__ === 'web-server') {
+            await rm(repository.path, { recursive: true, force: true })
+          } else {
+            await shell.moveItemToTrash(repository.path)
+          }
         } catch (error) {
           log.error('Failed moving repository to trash', error)
 
