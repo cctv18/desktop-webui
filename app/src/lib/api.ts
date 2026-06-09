@@ -27,7 +27,7 @@ import {
 } from './suppress-certificate-error'
 import { HttpStatusCode } from './http-status-code'
 import { CopilotError, parseCopilotPaymentRequiredError } from './copilot-error'
-import { BypassReasonType } from '../ui/secret-scanning/bypass-push-protection-dialog'
+import type { BypassReasonType } from '../ui/secret-scanning/bypass-push-protection-dialog'
 
 const envEndpoint = process.env['DESKTOP_GITHUB_DOTCOM_API_ENDPOINT']
 const envHTMLURL = process.env['DESKTOP_GITHUB_DOTCOM_HTML_URL']

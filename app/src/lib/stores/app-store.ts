@@ -386,7 +386,7 @@ import {
 } from '../custom-integration'
 import { updateStore } from '../../ui/lib/update-store'
 import { startTimer } from '../../ui/lib/timing'
-import { BypassReasonType } from '../../ui/secret-scanning/bypass-push-protection-dialog'
+import type { BypassReasonType } from '../../ui/secret-scanning/bypass-push-protection-dialog'
 import {
   selectReferencedContext,
   fallbackReferencedContext,

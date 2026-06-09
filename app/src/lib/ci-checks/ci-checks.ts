@@ -715,8 +715,8 @@ export function getCheckStatusCountMap(checks: ReadonlyArray<IRefCheck>) {
  * An array of check conclusions that are considerd a failure.
  */
 export const FailingCheckConclusions = [
-  APICheckConclusion.Failure,
-  APICheckConclusion.Canceled,
-  APICheckConclusion.ActionRequired,
-  APICheckConclusion.TimedOut,
-]
+  'failure',
+  'cancelled',
+  'action_required',
+  'timed_out',
+] as ReadonlyArray<APICheckConclusion>
