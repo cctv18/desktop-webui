@@ -8,6 +8,15 @@
 
   display: flex;
   flex-direction: row;
+  height: var(--win32-title-bar-height);
+  background: var(--win32-title-bar-background-color);
+  border-bottom: 1px solid #000;
+
+  .app-icon {
+    color: var(--toolbar-button-secondary-color);
+    margin: 0 var(--spacing);
+    align-self: center;
+  }
 
   @include darwin {
     height: var(--darwin-title-bar-height);
@@ -19,12 +28,6 @@
     height: var(--win32-title-bar-height);
     background: var(--win32-title-bar-background-color);
     border-bottom: 1px solid #000;
-
-    .app-icon {
-      color: var(--toolbar-button-secondary-color);
-      margin: 0 var(--spacing);
-      align-self: center;
-    }
   }
 
   .resize-handle {
@@ -122,6 +125,14 @@
 }
 
 #desktop-app-title-bar.light-title-bar {
+  background: transparent;
+  border-bottom: none;
+  --app-menu-button-color: var(--text-color);
+  --app-menu-button-hover-color: var(--text-color);
+  --app-menu-button-hover-background-color: rgba(0, 0, 0, 0.08);
+  --app-menu-button-active-color: var(--text-color);
+  --app-menu-button-active-background-color: rgba(0, 0, 0, 0.12);
+
   @include darwin {
     background: transparent;
     border-bottom: none;

@@ -251,6 +251,13 @@ export class CommitList extends React.Component<
   public componentDidUpdate(prevProps: ICommitListProps) {
     if (this.props.keyboardReorderData !== prevProps.keyboardReorderData) {
       this.updateKeyboardReorderingMessage(null)
+
+      if (
+        this.props.keyboardReorderData !== undefined &&
+        prevProps.keyboardReorderData === undefined
+      ) {
+        this.focus()
+      }
     }
   }
 

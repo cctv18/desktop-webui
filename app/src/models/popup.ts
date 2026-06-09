@@ -403,7 +403,15 @@ export type PopupDetail =
       prRef: string
       failedOnly: boolean
     }
-  | { type: PopupType.WarnForcePush; operation: string; onBegin: () => void }
+  | {
+      type: PopupType.WarnForcePush
+      operation: string
+      onBegin: () => void
+      continueAction?: 'amendCommit'
+      repository?: Repository
+      commit?: Commit
+      isLocalCommit?: boolean
+    }
   | {
       type: PopupType.DiscardChangesRetry
       retryAction: RetryAction

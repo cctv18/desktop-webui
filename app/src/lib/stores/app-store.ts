@@ -2301,6 +2301,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.accounts = accounts
     this.repositories = repositories
 
+    if (__PROCESS_KIND__ === 'web-server' && repositories.length > 0) {
+      this.showWelcomeFlow = false
+      markWelcomeFlowComplete()
+    }
+
     this.updateRepositorySelectionAfterRepositoriesChanged()
 
     this.sidebarWidth = constrain(
@@ -5416,6 +5421,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return this._showPopup({
         type: PopupType.WarnForcePush,
         operation: 'Amend',
+        continueAction: 'amendCommit',
+        repository,
+        commit,
+        isLocalCommit,
         onBegin: () => {
           this._startAmendingRepository(repository, commit, isLocalCommit, true)
         },

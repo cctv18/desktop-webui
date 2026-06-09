@@ -2467,7 +2467,7 @@ export class App extends React.Component<IAppProps, IAppState> {
             operation={popup.operation}
             askForConfirmationOnForcePush={askForConfirmationOnForcePush}
             onBegin={this.getWarnForcePushDialogOnBegin(
-              popup.onBegin,
+              popup,
               onPopupDismissedFn
             )}
             onDismissed={onPopupDismissedFn}
@@ -2967,11 +2967,25 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 
   private getWarnForcePushDialogOnBegin(
-    onBegin: () => void,
+    popup: Extract<Popup, { type: PopupType.WarnForcePush }>,
     onPopupDismissedFn: () => void
   ) {
     return () => {
-      onBegin()
+      if (
+        popup.continueAction === 'amendCommit' &&
+        popup.repository !== undefined &&
+        popup.commit !== undefined
+      ) {
+        this.props.dispatcher.startAmendingRepository(
+          popup.repository,
+          popup.commit,
+          popup.isLocalCommit ?? false,
+          true
+        )
+      } else {
+        popup.onBegin()
+      }
+
       onPopupDismissedFn()
     }
   }

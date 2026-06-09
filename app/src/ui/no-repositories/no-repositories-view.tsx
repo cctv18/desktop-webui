@@ -163,6 +163,13 @@ export class NoRepositoriesView extends React.Component<
         this.ensureRepositoriesForAccount(newSelectedAccount)
       }
     }
+
+    if (
+      prevProps.apiRepositories !== this.props.apiRepositories ||
+      prevState.selectedAccount !== this.state.selectedAccount
+    ) {
+      this.ensureRepositoriesForAccount(this.selectedAccount)
+    }
   }
 
   private ensureRepositoriesForAccount(account: Account | undefined) {

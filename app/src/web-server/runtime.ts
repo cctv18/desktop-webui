@@ -50,6 +50,7 @@ import {
 import { getAuthors } from '../lib/git/log'
 import { getPartialBlobContents } from '../lib/git/show'
 import { readPartialFile } from '../lib/file-system'
+import { pathExists as pathExistsOnDisk } from '../lib/path-exists'
 import { configureGitEnvironment } from './git-environment'
 import {
   IRepositoryIdentifier,
@@ -220,6 +221,7 @@ export class WebRuntime {
         }
       case 'filesystem':
         return {
+          pathExists: (path: string) => this.pathExists(path),
           readPartialFile: (path: string, start: number, end: number) =>
             this.readAllowedPartialFile(path, start, end),
           validateCloneDestinationPath: (path: string) =>
@@ -326,6 +328,11 @@ export class WebRuntime {
   private async readAllowedPartialFile(path: string, start: number, end: number) {
     await this.pathGuard.assertAllowed(path)
     return readPartialFile(path, start, end)
+  }
+
+  private async pathExists(path: string) {
+    await this.pathGuard.assertAllowed(path)
+    return pathExistsOnDisk(path)
   }
 
   private async reviveAndGuardArgument(param: unknown): Promise<unknown> {

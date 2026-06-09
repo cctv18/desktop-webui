@@ -1556,7 +1556,11 @@ export class GitStore extends BaseStore {
       const foundSubmodule = submodules.some(s => s.path === file.path)
 
       if (file.status.kind !== AppFileStatusKind.Deleted && !foundSubmodule) {
-        if (moveToTrash) {
+        if (moveToTrash && __PROCESS_KIND__ === 'web-server') {
+          if (file.status.kind === AppFileStatusKind.Untracked) {
+            await rm(Path.join(this.repository.path, file.path))
+          }
+        } else if (moveToTrash) {
           try {
             await this.shell.moveItemToTrash(
               Path.resolve(this.repository.path, file.path)

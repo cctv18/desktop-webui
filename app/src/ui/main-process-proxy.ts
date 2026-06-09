@@ -86,8 +86,10 @@ export const updateMenuState = sendProxy('update-menu-state', 1)
 export const sendReady = sendProxy('renderer-ready', 1)
 
 /** Tell the main process to execute (i.e. simulate a click of) the menu item. */
-export const executeMenuItem = (item: ExecutableMenuItem) =>
-  executeMenuItemById(item.id)
+export const executeMenuItem = (item: ExecutableMenuItem) => {
+  const send = ipcRenderer.send as any
+  send('execute-menu-item-by-id', item.id, item)
+}
 
 /** Tell the main process to execute (i.e. simulate a click of) the menu item. */
 export const executeMenuItemById = sendProxy('execute-menu-item-by-id', 1)

@@ -72,9 +72,11 @@ runtime.onDidUpdate(state => {
   broadcast({ type: 'state', payload: serializeForWeb(state) })
 })
 
-runtime.dispatcher.loadInitialState().catch(error => {
-  log.error('Unable to load initial WebUI state', error)
-})
+const initialStatePromise = runtime.dispatcher
+  .loadInitialState()
+  .catch(error => {
+    log.error('Unable to load initial WebUI state', error)
+  })
 
 const server = Http.createServer(async (req, res) => {
   try {
@@ -115,11 +117,13 @@ async function route(req: Http.IncomingMessage, res: Http.ServerResponse) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/state') {
+    await initialStatePromise
     writeJson(res, 200, serializeForWeb(runtime.getState()))
     return
   }
 
   if (req.method === 'GET' && url.pathname === '/api/events') {
+    await initialStatePromise
     subscribeEvents(res)
     return
   }
@@ -130,6 +134,7 @@ async function route(req: Http.IncomingMessage, res: Http.ServerResponse) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/rpc') {
+    await initialStatePromise
     const body = await readJson(req)
     const method = `${body.method ?? ''}`
     const params = Array.isArray(body.params) ? body.params : []

@@ -1,5 +1,9 @@
 import { Foldout, FoldoutType } from '../../lib/app-state'
-import { AppMenu } from '../../models/app-menu'
+import { AppMenu, ExecutableMenuItem } from '../../models/app-menu'
+import {
+  executeMenuItem,
+  executeMenuItemById,
+} from '../main-process-proxy'
 import { RemoteAppStore } from './remote-app-store'
 import { RemoteRPCClient } from './remote-rpc'
 
@@ -37,6 +41,20 @@ export function createRemoteDispatcher(
         if (property === 'setAppMenuState') {
           return (update: (appMenu: AppMenu) => AppMenu) =>
             setAppMenuState(appStore, update)
+        }
+
+        if (property === 'executeMenuItem') {
+          return (item: ExecutableMenuItem) => {
+            executeMenuItem(item)
+            return Promise.resolve()
+          }
+        }
+
+        if (property === 'executeMenuItemById') {
+          return (id: string) => {
+            executeMenuItemById(id)
+            return Promise.resolve()
+          }
         }
 
         if (property === 'showFoldout') {
