@@ -31,7 +31,11 @@ export async function withHooksEnv<T>(
   path: string,
   opts: IGitExecutionOptions | undefined
 ): Promise<T> {
-  if (!opts?.interceptHooks || !getHooksEnvEnabled()) {
+  if (
+    __PROCESS_KIND__ === 'web-server' ||
+    !opts?.interceptHooks ||
+    !getHooksEnvEnabled()
+  ) {
     return fn(opts?.env)
   }
 

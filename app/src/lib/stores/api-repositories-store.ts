@@ -4,9 +4,18 @@ import { IAPIRepository, API } from '../api'
 import { Account, accountEquals } from '../../models/account'
 import { merge } from '../merge'
 
+function accountMatchesRepositoryState(x: Account, y: Account) {
+  if (accountEquals(x, y)) {
+    return true
+  }
+
+  return x.endpoint === y.endpoint && x.login !== '' && x.login === y.login
+}
+
 /**
- * Attempt to look up an existing account in the account state
- * map based on endpoint and user id equality (see accountEquals).
+ * Attempt to look up an existing account in the account state map based on
+ * endpoint plus user id, falling back to endpoint plus login for WebUI account
+ * instances restored across the server/client boundary.
  *
  * The purpose of this method is to ensure that we're using the
  * most recent Account instance during our asynchronous refresh
@@ -37,10 +46,9 @@ function resolveAccount(
   // the accounts store has refreshed the account details
   // from the API and as such the reference equality no
   // longer holds. In the latter case we attempt to
-  // find the updated account instance by comparing its
-  // user id and endpoint to the provided account.
+  // find the updated account instance by comparing it to the provided account.
   for (const existingAccount of accountState.keys()) {
-    if (accountEquals(existingAccount, account)) {
+    if (accountMatchesRepositoryState(existingAccount, account)) {
       return existingAccount
     }
   }
@@ -122,7 +130,7 @@ export class ApiRepositoriesStore extends BaseStore {
         // Check to see whether the accounts store only emitted an
         // updated Account for the same login and endpoint meaning
         // that we don't need to discard our cached data.
-        if (accountEquals(key, account)) {
+        if (accountMatchesRepositoryState(key, account)) {
           newState.set(account, value)
           foundExistingState = true
           break

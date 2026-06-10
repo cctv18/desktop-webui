@@ -1287,7 +1287,23 @@ export class GitStore extends BaseStore {
   }
 
   public async loadRemotes(): Promise<void> {
-    const remotes = await getRemotes(this.repository)
+    let remotes: ReadonlyArray<IRemote>
+
+    try {
+      remotes = await getRemotes(this.repository)
+    } catch (error) {
+      log.warn(
+        `Unable to load remotes for ${this.repository.path}`,
+        error as Error
+      )
+      this._remotes = []
+      this._defaultRemote = null
+      this._currentRemote = null
+      this._upstreamRemote = null
+      this.emitUpdate()
+      return
+    }
+
     this._remotes = remotes
     this._defaultRemote = findDefaultRemote(remotes)
 

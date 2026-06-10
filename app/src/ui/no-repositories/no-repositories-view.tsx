@@ -69,6 +69,14 @@ interface INoRepositoriesState {
   readonly filterText: string
 }
 
+function accountMatchesRepositoryState(x: Account, y: Account) {
+  if (accountEquals(x, y)) {
+    return true
+  }
+
+  return x.endpoint === y.endpoint && x.login !== '' && x.login === y.login
+}
+
 function getAccountRepositories(
   apiRepositories: ReadonlyMap<Account, IAccountRepositories>,
   account: Account
@@ -80,7 +88,7 @@ function getAccountRepositories(
   }
 
   for (const [key, value] of apiRepositories) {
-    if (accountEquals(key, account)) {
+    if (accountMatchesRepositoryState(key, account)) {
       return value
     }
   }
@@ -154,7 +162,7 @@ export class NoRepositoriesView extends React.Component<
       const newSelectedAccount =
         (currentlySelectedAccount
           ? this.props.accounts.find(a =>
-              accountEquals(a, currentlySelectedAccount)
+              accountMatchesRepositoryState(a, currentlySelectedAccount)
             )
           : undefined) ?? this.props.accounts.at(0)
 
@@ -235,7 +243,7 @@ export class NoRepositoriesView extends React.Component<
     account: Account,
     accountState: IAccountRepositories | undefined
   ) {
-    const loading = accountState === undefined ? false : accountState.loading
+    const loading = accountState === undefined ? true : accountState.loading
 
     const repositories =
       accountState === undefined ? null : accountState.repositories
