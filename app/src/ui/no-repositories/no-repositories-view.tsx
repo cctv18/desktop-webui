@@ -10,7 +10,7 @@ import {
 import { IAccountRepositories } from '../../lib/stores/api-repositories-store'
 import { Account, accountEquals } from '../../models/account'
 import { CloneableRepositoryFilterList } from '../clone-repository/cloneable-repository-filter-list'
-import { IAPIRepository } from '../../lib/api'
+import { getHTMLURL, IAPIRepository } from '../../lib/api'
 import { ClickSource } from '../lib/list'
 import { AccountPicker } from '../account-picker'
 
@@ -74,7 +74,21 @@ function accountMatchesRepositoryState(x: Account, y: Account) {
     return true
   }
 
-  return x.endpoint === y.endpoint && x.login !== '' && x.login === y.login
+  if (accountEndpointKey(x) !== accountEndpointKey(y)) {
+    return false
+  }
+
+  return (
+    (x.id > 0 && x.id === y.id) || (x.login !== '' && x.login === y.login)
+  )
+}
+
+function accountEndpointKey(account: Account) {
+  try {
+    return new URL(getHTMLURL(account.endpoint)).origin
+  } catch {
+    return account.endpoint
+  }
 }
 
 function getAccountRepositories(

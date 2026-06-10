@@ -5688,6 +5688,16 @@ export class AppStore extends TypedBaseStore<IAppState> {
    * if _any_ fetches or pulls are currently in-progress.
    */
   public _fetch(repository: Repository, fetchType: FetchType): Promise<void> {
+    if (
+      fetchType === FetchType.UserInitiatedTask &&
+      this.pushPullFetchOperations.has(repository.id)
+    ) {
+      log.info(
+        `[AppStore] ignoring fetch request for ${repository.name} because another push/pull/fetch is in progress`
+      )
+      return Promise.resolve()
+    }
+
     return this.withRefreshedGitHubRepository(repository, repository => {
       return this.performFetch(repository, fetchType)
     })

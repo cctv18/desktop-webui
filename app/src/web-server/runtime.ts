@@ -66,6 +66,7 @@ import { trampolineServer } from '../lib/trampoline/trampoline-server'
 import { TrampolineCommandIdentifier } from '../lib/trampoline/trampoline-command'
 import { createAskpassTrampolineHandler } from '../lib/trampoline/trampoline-askpass-handler'
 import { createCredentialHelperTrampolineHandler } from '../lib/trampoline/trampoline-credential-helper'
+import { setWebUIGitCredentialAccountProvider } from '../lib/webui-git-credentials'
 
 class ServerActivityMonitor implements IUiActivityMonitor {
   public onActivity() {
@@ -105,6 +106,7 @@ export class WebRuntime {
       new ServerActivityMonitor()
     )
     const accountsStore = new AccountsStore(localStorage, TokenStore)
+    setWebUIGitCredentialAccountProvider(() => accountsStore.getAll())
     trampolineServer.registerCommandHandler(
       TrampolineCommandIdentifier.AskPass,
       createAskpassTrampolineHandler(accountsStore)

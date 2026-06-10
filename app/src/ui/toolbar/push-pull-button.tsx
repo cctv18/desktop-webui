@@ -451,6 +451,21 @@ export class PushPullButton extends React.Component<
       return this.progressButton(progress, networkActionInProgress)
     }
 
+    if (networkActionInProgress) {
+      return this.progressButton(
+        {
+          kind: 'generic',
+          title:
+            remoteName === null
+              ? 'Updating repository'
+              : `Fetching ${remoteName}`,
+          description: 'Network operation in progress',
+          value: 0,
+        },
+        true
+      )
+    }
+
     if (remoteName === null) {
       return this.publishRepositoryButton(this.push)
     }

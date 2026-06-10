@@ -120,6 +120,20 @@ export async function withTrampolineEnv<T>(
     // `fn` has been invoked, we can store the SSH key passphrase for this git
     // operation if there was one pending to be stored.
     try {
+      if (__PROCESS_KIND__ === 'web-server') {
+        const env: Record<string, string | undefined> = {
+          GIT_ASKPASS: '',
+          GIT_USER_AGENT: await GitUserAgent(),
+          ...sshEnv,
+        }
+
+        if (existingGitEnvConfig.length > 0) {
+          env.GIT_CONFIG_PARAMETERS = existingGitEnvConfig
+        }
+
+        return await fn(env)
+      }
+
       return await fn({
         DESKTOP_PORT: await trampolineServer.getPort(),
         DESKTOP_TRAMPOLINE_TOKEN: token,

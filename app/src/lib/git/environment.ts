@@ -1,6 +1,7 @@
 import { envForAuthentication } from './authentication'
 import { resolveGitProxy } from '../resolve-git-proxy'
 import { getHTMLURL } from '../api'
+import { getWebUIGitCredentialEnvironment } from '../webui-git-credentials'
 import {
   Repository,
   isRepositoryWithGitHubRepository,
@@ -77,6 +78,7 @@ export async function envForRemoteOperation(remoteUrl: string) {
   return {
     ...envForAuthentication(),
     ...(await envForProxy(remoteUrl)),
+    ...(await getWebUIGitCredentialEnvironment(remoteUrl)),
   }
 }
 

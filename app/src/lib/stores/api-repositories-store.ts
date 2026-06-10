@@ -1,15 +1,29 @@
 import { BaseStore } from './base-store'
 import { AccountsStore } from './accounts-store'
-import { IAPIRepository, API } from '../api'
+import { IAPIRepository, API, getHTMLURL } from '../api'
 import { Account, accountEquals } from '../../models/account'
 import { merge } from '../merge'
+
+function accountEndpointKey(account: Account) {
+  try {
+    return new URL(getHTMLURL(account.endpoint)).origin
+  } catch {
+    return account.endpoint
+  }
+}
 
 function accountMatchesRepositoryState(x: Account, y: Account) {
   if (accountEquals(x, y)) {
     return true
   }
 
-  return x.endpoint === y.endpoint && x.login !== '' && x.login === y.login
+  if (accountEndpointKey(x) !== accountEndpointKey(y)) {
+    return false
+  }
+
+  return (
+    (x.id > 0 && x.id === y.id) || (x.login !== '' && x.login === y.login)
+  )
 }
 
 /**
