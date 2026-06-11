@@ -61,11 +61,11 @@ export class MissingRepository extends React.Component<
 
   private updateUnsafePathState = async () => {
     const { path } = this.props.repository
-    const type = await getRepositoryType(path)
+    const type = await getRepositoryType(path).catch(() => null)
     if (path === this.props.repository.path) {
       this.setState({
-        isPathUnsafe: type.kind === 'unsafe',
-        unsafePath: type.kind === 'unsafe' ? type.path : undefined,
+        isPathUnsafe: type?.kind === 'unsafe',
+        unsafePath: type?.kind === 'unsafe' ? type.path : undefined,
       })
     }
   }
@@ -75,15 +75,21 @@ export class MissingRepository extends React.Component<
     const { isPathUnsafe, unsafePath } = this.state
 
     if (!isPathUnsafe) {
-      buttons.push(
-        <Button key="locate" onClick={this.locate} type="submit">
-          Locate…
-        </Button>
-      )
+      if (__PROCESS_KIND__ !== 'web-server') {
+        buttons.push(
+          <Button key="locate" onClick={this.locate} type="submit">
+            Locate…
+          </Button>
+        )
+      }
 
       if (this.canCloneAgain()) {
         buttons.push(
-          <Button key="clone-again" onClick={this.cloneAgain}>
+          <Button
+            key="clone-again"
+            onClick={this.cloneAgain}
+            type={__PROCESS_KIND__ === 'web-server' ? 'submit' : undefined}
+          >
             Clone Again
           </Button>
         )
@@ -150,8 +156,7 @@ export class MissingRepository extends React.Component<
   }
 
   private canCloneAgain() {
-    const gitHubRepository = this.props.repository.gitHubRepository
-    return gitHubRepository && gitHubRepository.cloneURL
+    return this.getCloneAgainURL() !== null
   }
 
   private checkAgain = () => {
@@ -167,13 +172,8 @@ export class MissingRepository extends React.Component<
   }
 
   private cloneAgain = async () => {
-    const gitHubRepository = this.props.repository.gitHubRepository
-    if (!gitHubRepository) {
-      return
-    }
-
-    const cloneURL = gitHubRepository.cloneURL
-    if (!cloneURL) {
+    const cloneURL = this.getCloneAgainURL()
+    if (cloneURL === null) {
       return
     }
 
@@ -185,5 +185,10 @@ export class MissingRepository extends React.Component<
     } catch (error) {
       this.props.dispatcher.postError(error)
     }
+  }
+
+  private getCloneAgainURL() {
+    const gitHubRepository = this.props.repository.gitHubRepository
+    return gitHubRepository?.cloneURL ?? gitHubRepository?.htmlURL ?? null
   }
 }

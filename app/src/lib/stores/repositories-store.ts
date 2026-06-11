@@ -1,6 +1,7 @@
 import {
   RepositoriesDatabase,
   IDatabaseGitHubRepository,
+  IDatabaseOwner,
   IDatabaseProtectedBranch,
   IDatabaseRepository,
   getOwnerKey,
@@ -37,6 +38,7 @@ type AddRepositoryOptions = {
 
 type WebUIPersistedRepository = {
   readonly id: number
+  readonly gitHubRepositoryID: number | null
   readonly path: string
   readonly alias: string | null
   readonly missing: boolean
@@ -44,6 +46,12 @@ type WebUIPersistedRepository = {
   readonly lastStashCheckDate?: number | null
   readonly workflowPreferences?: WorkflowPreferences
   readonly isTutorialRepository?: boolean
+}
+
+type WebUIPersistedRepositories = {
+  readonly repositories?: ReadonlyArray<unknown>
+  readonly gitHubRepositories?: ReadonlyArray<unknown>
+  readonly owners?: ReadonlyArray<unknown>
 }
 
 /** The store for local repositories. */
@@ -241,12 +249,29 @@ export class RepositoriesStore extends TypedBaseStore<
       return
     }
 
+    const persisted =
+      parsed !== null && typeof parsed === 'object'
+        ? (parsed as WebUIPersistedRepositories)
+        : null
+
+    const owners = Array.isArray(persisted?.owners)
+      ? persisted!.owners
+          .map(owner => this.toPersistedDatabaseOwner(owner))
+          .filter((owner): owner is IDatabaseOwner => owner !== null)
+      : []
+
+    const gitHubRepositories = Array.isArray(persisted?.gitHubRepositories)
+      ? persisted!.gitHubRepositories
+          .map(repo => this.toPersistedDatabaseGitHubRepository(repo))
+          .filter(
+            (repo): repo is IDatabaseGitHubRepository => repo !== null
+          )
+      : []
+
     const repositories = Array.isArray(parsed)
       ? parsed
-      : parsed !== null &&
-        typeof parsed === 'object' &&
-        Array.isArray((parsed as { repositories?: unknown }).repositories)
-      ? (parsed as { repositories: unknown[] }).repositories
+      : Array.isArray(persisted?.repositories)
+      ? persisted!.repositories
       : []
 
     const records = repositories
@@ -257,9 +282,97 @@ export class RepositoriesStore extends TypedBaseStore<
       return
     }
 
-    await this.db.transaction('rw', this.db.repositories, async () => {
-      await this.db.repositories.bulkPut(records)
-    })
+    await this.db.transaction(
+      'rw',
+      this.db.repositories,
+      this.db.gitHubRepositories,
+      this.db.owners,
+      async () => {
+        if (owners.length > 0) {
+          await this.db.owners.bulkPut(owners)
+        }
+
+        if (gitHubRepositories.length > 0) {
+          await this.db.gitHubRepositories.bulkPut(gitHubRepositories)
+        }
+
+        await this.db.repositories.bulkPut(records)
+      }
+    )
+  }
+
+  private toPersistedDatabaseOwner(owner: unknown): IDatabaseOwner | null {
+    if (owner === null || typeof owner !== 'object') {
+      return null
+    }
+
+    const value = owner as Partial<IDatabaseOwner>
+
+    if (
+      typeof value.id !== 'number' ||
+      value.id <= 0 ||
+      typeof value.key !== 'string' ||
+      typeof value.login !== 'string' ||
+      typeof value.endpoint !== 'string'
+    ) {
+      return null
+    }
+
+    return {
+      id: value.id,
+      key: value.key,
+      login: value.login,
+      endpoint: value.endpoint,
+      type: value.type,
+    }
+  }
+
+  private toPersistedDatabaseGitHubRepository(
+    repo: unknown
+  ): IDatabaseGitHubRepository | null {
+    if (repo === null || typeof repo !== 'object') {
+      return null
+    }
+
+    const value = repo as Partial<IDatabaseGitHubRepository>
+
+    if (
+      typeof value.id !== 'number' ||
+      value.id <= 0 ||
+      typeof value.ownerID !== 'number' ||
+      value.ownerID <= 0 ||
+      typeof value.name !== 'string'
+    ) {
+      return null
+    }
+
+    return {
+      id: value.id,
+      ownerID: value.ownerID,
+      name: value.name,
+      private: typeof value.private === 'boolean' ? value.private : null,
+      htmlURL: typeof value.htmlURL === 'string' ? value.htmlURL : null,
+      cloneURL: typeof value.cloneURL === 'string' ? value.cloneURL : null,
+      parentID:
+        typeof value.parentID === 'number' && value.parentID > 0
+          ? value.parentID
+          : null,
+      lastPruneDate:
+        typeof value.lastPruneDate === 'number' ? value.lastPruneDate : null,
+      issuesEnabled:
+        typeof value.issuesEnabled === 'boolean'
+          ? value.issuesEnabled
+          : undefined,
+      isArchived:
+        typeof value.isArchived === 'boolean' ? value.isArchived : undefined,
+      permissions:
+        value.permissions === 'read' ||
+        value.permissions === 'write' ||
+        value.permissions === 'admin' ||
+        value.permissions === null
+          ? value.permissions
+          : undefined,
+    }
   }
 
   private toPersistedDatabaseRepository(
@@ -279,6 +392,12 @@ export class RepositoriesStore extends TypedBaseStore<
       return null
     }
 
+    const gitHubRepositoryID =
+      typeof value.gitHubRepositoryID === 'number' &&
+      value.gitHubRepositoryID > 0
+        ? value.gitHubRepositoryID
+        : null
+
     const workflowPreferences =
       value.workflowPreferences !== null &&
       typeof value.workflowPreferences === 'object'
@@ -288,7 +407,7 @@ export class RepositoriesStore extends TypedBaseStore<
     return {
       id: value.id,
       path: value.path,
-      gitHubRepositoryID: null,
+      gitHubRepositoryID,
       missing: value.missing === true,
       lastStashCheckDate:
         typeof value.lastStashCheckDate === 'number'
@@ -308,10 +427,24 @@ export class RepositoriesStore extends TypedBaseStore<
     }
 
     const dbRepositories = await this.db.repositories.toArray()
+    const dbGitHubRepositories = await this.db.gitHubRepositories.toArray()
+    const dbOwners = await this.db.owners.toArray()
+
+    const owners = dbOwners
+      .filter(owner => owner.id !== undefined)
+      .map(owner => ({ ...owner }))
+      .sort((a, b) => a.id! - b.id!)
+
+    const gitHubRepositories = dbGitHubRepositories
+      .filter(repo => repo.id !== undefined)
+      .map(repo => ({ ...repo }))
+      .sort((a, b) => a.id! - b.id!)
+
     const repositories = dbRepositories
       .filter(repo => repo.id !== undefined)
       .map<WebUIPersistedRepository>(repo => ({
         id: repo.id!,
+        gitHubRepositoryID: repo.gitHubRepositoryID,
         path: repo.path,
         alias: repo.alias,
         missing: repo.missing,
@@ -325,7 +458,7 @@ export class RepositoriesStore extends TypedBaseStore<
     await mkdir(Path.dirname(persistencePath), { recursive: true, mode: 0o700 })
     await writeFile(
       persistencePath,
-      `${JSON.stringify({ repositories }, null, 2)}\n`,
+      `${JSON.stringify({ owners, gitHubRepositories, repositories }, null, 2)}\n`,
       {
         encoding: 'utf8',
         mode: 0o600,

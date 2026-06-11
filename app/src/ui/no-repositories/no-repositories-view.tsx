@@ -283,8 +283,11 @@ export class NoRepositoriesView extends React.Component<
   }
 
   private onItemClicked = (repository: IAPIRepository, source: ClickSource) => {
-    if (source.kind === 'keyboard' && source.event.key === 'Enter') {
-      this.onCloneSelectedRepository()
+    if (
+      source.kind === 'mouseclick' ||
+      (source.kind === 'keyboard' && source.event.key === 'Enter')
+    ) {
+      this.props.onClone(repository.clone_url)
     }
   }
 

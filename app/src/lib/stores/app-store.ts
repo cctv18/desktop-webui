@@ -1236,9 +1236,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   private onGitStoreUpdated(repository: Repository, gitStore: GitStore) {
-    const prevRepositoryState = this.repositoryStateCache.get(repository)
+    const stateRepository = this.getCurrentRepositoryForID(repository)
+    this.repositoryStateCache.copyState(repository, stateRepository)
 
-    this.repositoryStateCache.updateBranchesState(repository, state => {
+    const prevRepositoryState = this.repositoryStateCache.get(stateRepository)
+
+    this.repositoryStateCache.updateBranchesState(stateRepository, state => {
       let { currentPullRequest } = state
       const { tip, currentRemote: remote } = gitStore
 
@@ -1279,7 +1282,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
             state.tip.kind === TipState.Valid &&
             tip.branch.name !== state.tip.branch.name
           ) {
-            this.refreshBranchProtectionState(repository)
+            this.refreshBranchProtectionState(stateRepository)
           }
         }
       }
@@ -1298,7 +1301,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     let selectWorkingDirectory = false
     let selectStashEntry = false
 
-    this.repositoryStateCache.updateChangesState(repository, state => {
+    this.repositoryStateCache.updateChangesState(stateRepository, state => {
       const stashEntry = gitStore.currentBranchStashEntry
 
       // Figure out what selection changes we need to make as a result of this
@@ -1325,7 +1328,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }
     })
 
-    this.repositoryStateCache.update(repository, () => ({
+    this.repositoryStateCache.update(stateRepository, () => ({
       commitLookup: gitStore.commitLookup,
       localCommitSHAs: gitStore.localCommitSHAs,
       localTags: gitStore.localTags,
@@ -1338,9 +1341,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // _selectWorkingDirectoryFiles and _selectStashedFile will
     // emit updates by themselves.
     if (selectWorkingDirectory) {
-      this._selectWorkingDirectoryFiles(repository)
+      this._selectWorkingDirectoryFiles(stateRepository)
     } else if (selectStashEntry) {
-      this._selectStashedFile(repository)
+      this._selectStashedFile(stateRepository)
     } else {
       this.emitUpdate()
     }
@@ -1684,9 +1687,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
         currentSha = tip.currentSha
       }
 
-      const { compareState } = this.repositoryStateCache.get(repository)
+      const { compareState, commitLookup } =
+        this.repositoryStateCache.get(repository)
       const { formState, commitSHAs } = compareState
       const previousTip = compareState.tip
+      const commitCacheIsComplete = commitSHAs.every(sha =>
+        commitLookup.has(sha)
+      )
 
       const tipIsUnchanged =
         currentSha !== null &&
@@ -1696,7 +1703,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       if (
         tipIsUnchanged &&
         formState.kind === HistoryTabMode.History &&
-        commitSHAs.length > 0
+        commitSHAs.length > 0 &&
+        commitCacheIsComplete
       ) {
         // don't refresh the history view here because we know nothing important
         // has changed and we don't want to rebuild this state
@@ -1713,6 +1721,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       const newState: IDisplayHistory = {
         kind: HistoryTabMode.History,
       }
+
+      this.repositoryStateCache.update(repository, () => ({
+        commitLookup: gitStore.commitLookup,
+      }))
 
       this.repositoryStateCache.updateCompareState(repository, () => ({
         tip: currentSha,
@@ -1758,6 +1770,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (compare == null) {
       return
     }
+
+    this.repositoryStateCache.update(repository, () => ({
+      commitLookup: gitStore.commitLookup,
+    }))
 
     const { ahead, behind } = compare
     const aheadBehind = { ahead, behind }
@@ -1880,6 +1896,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       if (!newCommits) {
         return
       }
+
+      this.repositoryStateCache.update(repository, () => ({
+        commitLookup: gitStore.commitLookup,
+      }))
 
       this.repositoryStateCache.updateCompareState(repository, () => ({
         commitSHAs: commits.concat(newCommits),
@@ -2059,6 +2079,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
       : null
 
     this.updateRecentRepositories(previousRepositoryId, repository.id)
+
+    if (!repository.missing && !(await pathExists(repository.path))) {
+      const missingRepository = await this._updateRepositoryMissing(
+        repository,
+        true
+      )
+      this.gitStoreCache.remove(repository)
+      this.selectedRepository = missingRepository
+      this.emitUpdate()
+      return Promise.resolve(null)
+    }
 
     // if repository might be marked missing, try checking if it has been restored
     const refreshedRepository = await this.recoverMissingRepository(repository)
@@ -2313,10 +2344,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** Load the initial state for the app. */
   public async loadInitialState() {
-    const [accounts, repositories] = await Promise.all([
+    const [accounts, storedRepositories] = await Promise.all([
       this.accountsStore.getAll(),
       this.repositoriesStore.getAll(),
     ])
+    const repositories = await this.updateMissingRepositoryFlags(
+      storedRepositories
+    )
 
     log.info(
       `[AppStore] loading ${repositories.length} repositories from store`
@@ -2552,6 +2586,25 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.accountsStore.refresh()
 
     this.updateMenuLabelsForSelectedRepository()
+  }
+
+  private async updateMissingRepositoryFlags(
+    repositories: ReadonlyArray<Repository>
+  ): Promise<ReadonlyArray<Repository>> {
+    const updatedRepositories = new Array<Repository>()
+
+    for (const repository of repositories) {
+      if (repository.missing || (await pathExists(repository.path))) {
+        updatedRepositories.push(repository)
+        continue
+      }
+
+      const missingRepository =
+        await this.repositoriesStore.updateRepositoryMissing(repository, true)
+      updatedRepositories.push(missingRepository)
+    }
+
+    return updatedRepositories
   }
 
   /**
@@ -2841,6 +2894,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     clearPartialState: boolean = false
   ): Promise<IStatusResult | null> {
+    if (!repository.missing && !(await pathExists(repository.path))) {
+      await this._updateRepositoryMissing(repository, true)
+      return null
+    }
+
     const gitStore = this.gitStoreCache.get(repository)
     const status = await gitStore.loadStatus()
 
@@ -3834,7 +3892,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // set the flag and don't try anything Git-related
     const exists = await pathExists(repository.path)
     if (!exists) {
-      this._updateRepositoryMissing(repository, true)
+      await this._updateRepositoryMissing(repository, true)
       return
     }
 
@@ -3965,6 +4023,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const exists = await pathExists(repository.path)
     if (!exists) {
       lookup.delete(repository.id)
+      await this._updateRepositoryMissing(repository, true)
       return
     }
 
@@ -3976,6 +4035,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     } catch (error) {
       if (!(await pathExists(repository.path))) {
         lookup.delete(repository.id)
+        await this._updateRepositoryMissing(repository, true)
         return
       }
 
@@ -4004,6 +4064,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       } catch (error) {
         if (!(await pathExists(repository.path))) {
           lookup.delete(repository.id)
+          await this._updateRepositoryMissing(repository, true)
           return
         }
 
@@ -4148,11 +4209,22 @@ export class AppStore extends TypedBaseStore<IAppState> {
    */
   private async refreshHistorySection(repository: Repository): Promise<void> {
     const gitStore = this.gitStoreCache.get(repository)
-    const state = this.repositoryStateCache.get(repository)
+    let state = this.repositoryStateCache.get(repository)
     const tip = state.branchesState.tip
 
     if (tip.kind === TipState.Valid) {
       await gitStore.loadLocalCommits(tip.branch)
+    }
+
+    state = this.repositoryStateCache.get(repository)
+
+    if (
+      state.compareState.formState.kind === HistoryTabMode.History &&
+      state.compareState.commitSHAs.length > 0 &&
+      !state.compareState.commitSHAs.every(sha => state.commitLookup.has(sha))
+    ) {
+      await this._executeCompare(repository, state.compareState.formState)
+      return
     }
 
     return this.updateOrSelectFirstCommit(
@@ -4649,6 +4721,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private async repositoryWithRefreshedGitHubRepository(
     repository: Repository
   ): Promise<Repository> {
+    if (repository.missing || !(await pathExists(repository.path))) {
+      if (!repository.missing) {
+        return this._updateRepositoryMissing(repository, true)
+      }
+
+      return repository
+    }
+
     const repoStore = this.repositoriesStore
     const match = await this.matchGitHubRepository(repository)
 
@@ -5771,6 +5851,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ): Promise<void> {
     if (repository.missing || !(await pathExists(repository.path))) {
       this.localRepositoryStateLookup.delete(repository.id)
+      if (!repository.missing) {
+        await this._updateRepositoryMissing(repository, true)
+      }
       log.info(
         `[AppStore] skipping fetch for ${repository.name} because the repository path is unavailable`
       )
@@ -5780,6 +5863,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     await this.withPushPullFetch(repository, async () => {
       if (repository.missing || !(await pathExists(repository.path))) {
         this.localRepositoryStateLookup.delete(repository.id)
+        if (!repository.missing) {
+          await this._updateRepositoryMissing(repository, true)
+        }
         return
       }
 

@@ -4,7 +4,7 @@ import { IAppShell } from '../app-shell'
 import { IStatsStore } from '../stats'
 
 export class GitStoreCache {
-  /** GitStores keyed by their hash. */
+  /** GitStores keyed by their local repository identity. */
   private readonly gitStores = new Map<string, GitStore>()
 
   public constructor(
@@ -18,21 +18,27 @@ export class GitStoreCache {
   ) {}
 
   public remove(repository: Repository) {
-    if (this.gitStores.has(repository.hash)) {
-      this.gitStores.delete(repository.hash)
+    const key = this.getKey(repository)
+    if (this.gitStores.has(key)) {
+      this.gitStores.delete(key)
     }
   }
 
   public get(repository: Repository): GitStore {
-    let gitStore = this.gitStores.get(repository.hash)
+    const key = this.getKey(repository)
+    let gitStore = this.gitStores.get(key)
     if (gitStore === undefined) {
       gitStore = new GitStore(repository, this.shell, this.statsStore)
       gitStore.onDidUpdate(() => this.onGitStoreUpdated(repository, gitStore!))
       gitStore.onDidError(error => this.onDidError(error))
 
-      this.gitStores.set(repository.hash, gitStore)
+      this.gitStores.set(key, gitStore)
     }
 
     return gitStore
+  }
+
+  private getKey(repository: Repository) {
+    return `${repository.id}:${repository.path}:${repository.gitDir ?? ''}`
   }
 }

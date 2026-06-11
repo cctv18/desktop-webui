@@ -852,24 +852,34 @@ export class Dispatcher {
 
       const addedRepository = addedRepositories[0]
       await this.selectRepository(addedRepository)
+      await new Promise<void>(resolve => setImmediate(resolve))
 
-      if (isRepositoryWithForkedGitHubRepository(addedRepository)) {
+      const repositoryAfterStoreUpdate =
+        this.appStore
+          .getState()
+          .repositories.find(
+            r => r.id === addedRepository.id || r.path === addedRepository.path
+          ) ?? addedRepository
+
+      await this.selectRepository(repositoryAfterStoreUpdate)
+
+      if (isRepositoryWithForkedGitHubRepository(repositoryAfterStoreUpdate)) {
         this.showPopup({
           type: PopupType.ChooseForkSettings,
-          repository: addedRepository,
+          repository: repositoryAfterStoreUpdate,
         })
       }
 
       void this.appStore
-        ._fetch(addedRepository, FetchType.BackgroundTask)
+        ._fetch(repositoryAfterStoreUpdate, FetchType.BackgroundTask)
         .catch(error =>
           log.warn(
-            `Initial fetch after clone failed for ${addedRepository.name}`,
+            `Initial fetch after clone failed for ${repositoryAfterStoreUpdate.name}`,
             error
           )
         )
 
-      return addedRepository
+      return repositoryAfterStoreUpdate
     })
   }
 
