@@ -2149,7 +2149,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     previouslySelectedRepository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
-    this._refreshRepository(repository)
+    const refreshRepositoryPromise = this._refreshRepository(repository)
+
+    if (__PROCESS_KIND__ === 'web-server') {
+      await refreshRepositoryPromise
+      repository = this.getCurrentRepositoryForID(repository)
+    }
 
     if (isRepositoryWithGitHubRepository(repository)) {
       // Load issues from the upstream or fork depending
@@ -2165,7 +2170,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     // The selected repository could have changed while we were refreshing.
-    if (this.selectedRepository !== repository) {
+    if (__PROCESS_KIND__ === 'web-server') {
+      if (!this.isSelectedRepositoryID(repository)) {
+        return null
+      }
+    } else if (this.selectedRepository !== repository) {
       return null
     }
 
@@ -2176,7 +2185,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.stopPullRequestUpdater()
     this.stopBackgroundPruner()
 
-    this.startBackgroundFetching(repository, !previouslySelectedRepository)
+    const withInitialSkew =
+      !previouslySelectedRepository ||
+      (__PROCESS_KIND__ === 'web-server' &&
+        previouslySelectedRepository instanceof CloningRepository)
+
+    this.startBackgroundFetching(repository, withInitialSkew)
     this.startPullRequestUpdater(repository)
 
     this.startBackgroundPruner(repository)
@@ -3900,10 +3914,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (repository.gitDir === undefined) {
       const type = await getRepositoryType(repository.path)
       if (type.kind === 'regular') {
+        const previousRepository = repository
         repository = await this.repositoriesStore.updateRepositoryGitDir(
           repository,
           type.gitDir
         )
+
+        if (__PROCESS_KIND__ === 'web-server') {
+          this.replaceRepositoryInMemory(previousRepository, repository)
+        }
       }
     }
 
@@ -4750,7 +4769,16 @@ export class AppStore extends TypedBaseStore<IAppState> {
       // the endpoint changed, the skeleton repository is better than nothing.
       if (endpoint !== repository.gitHubRepository?.endpoint) {
         const ghRepo = await repoStore.upsertGitHubRepositoryFromMatch(match)
-        return repoStore.setGitHubRepository(repository, ghRepo)
+        const freshRepo = await repoStore.setGitHubRepository(
+          repository,
+          ghRepo
+        )
+
+        if (__PROCESS_KIND__ === 'web-server') {
+          this.replaceRepositoryInMemory(repository, freshRepo)
+        }
+
+        return freshRepo
       }
 
       return repository
@@ -4763,6 +4791,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     const ghRepo = await repoStore.upsertGitHubRepository(endpoint, apiRepo)
     const freshRepo = await repoStore.setGitHubRepository(repository, ghRepo)
+
+    if (__PROCESS_KIND__ === 'web-server') {
+      this.replaceRepositoryInMemory(repository, freshRepo)
+    }
 
     this.refreshBranchProtectionState(freshRepo).catch(error => {
       log.warn(
@@ -5013,6 +5045,32 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private getCurrentRepositoryForID(repository: Repository): Repository {
     return this.repositories.find(r => r.id === repository.id) ?? repository
+  }
+
+  private replaceRepositoryInMemory(
+    previousRepository: Repository,
+    repository: Repository
+  ) {
+    if (previousRepository.hash === repository.hash) {
+      return
+    }
+
+    const repositoryIndex = this.repositories.findIndex(
+      r => r.id === repository.id
+    )
+
+    if (repositoryIndex >= 0) {
+      const repositories = [...this.repositories]
+      repositories[repositoryIndex] = repository
+      this.repositories = repositories
+    }
+
+    this.repositoryStateCache.copyState(previousRepository, repository)
+    this.gitStoreCache.remove(previousRepository)
+
+    if (this.isSelectedRepositoryID(repository)) {
+      this.selectedRepository = repository
+    }
   }
 
   private getRepositoryStateTargets(
@@ -5813,6 +5871,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
       log.info(
         `[AppStore] ignoring fetch request for ${repository.name} because another push/pull/fetch is in progress`
       )
+      this.updateRepositoryStateByRepositoryID(repository, () => ({
+        isPushPullFetchInProgress: true,
+      }))
+      this.emitUpdate()
       return Promise.resolve()
     }
 

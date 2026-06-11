@@ -2317,8 +2317,11 @@ export async function fetchUser(
 ): Promise<Account> {
   const api = new API(endpoint, token)
   try {
-    const [user, emails, copilotInfo, features] = await Promise.all([
-      api.fetchAccount(),
+    const user = await retryWebUIRequest('fetchAccount', () =>
+      api.fetchAccount()
+    )
+
+    const [emails, copilotInfo, features] = await Promise.all([
       api.fetchEmails(),
       api.fetchUserCopilotInfo(),
       api.fetchFeatureFlags(),
@@ -2341,6 +2344,34 @@ export async function fetchUser(
     log.warn(`fetchUser: failed with endpoint ${endpoint}`, e)
     throw e
   }
+}
+
+async function retryWebUIRequest<T>(
+  operationName: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const maxAttempts = __PROCESS_KIND__ === 'web-server' ? 3 : 1
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+
+      if (attempt >= maxAttempts) {
+        break
+      }
+
+      log.warn(
+        `${operationName}: transient failure in WebUI, retrying (${attempt}/${maxAttempts})`,
+        error
+      )
+      await new Promise(resolve => setTimeout(resolve, attempt * 750))
+    }
+  }
+
+  throw lastError
 }
 
 /**

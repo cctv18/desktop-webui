@@ -388,7 +388,12 @@ export class NoChanges extends React.Component<
     const isDefaultBranch =
       defaultBranch !== null && tip.branch.name === defaultBranch.name
 
-    if (isGitHub && !hasOpenPullRequest && !isDefaultBranch) {
+    if (
+      isGitHub &&
+      defaultBranch !== null &&
+      !hasOpenPullRequest &&
+      !isDefaultBranch
+    ) {
       return this.renderCreatePullRequestAction(tip)
     }
 
