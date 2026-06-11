@@ -858,7 +858,9 @@ export class Dispatcher {
         this.appStore
           .getState()
           .repositories.find(
-            r => r.id === addedRepository.id || r.path === addedRepository.path
+            (r): r is Repository =>
+              r instanceof Repository &&
+              (r.id === addedRepository.id || r.path === addedRepository.path)
           ) ?? addedRepository
 
       await this.selectRepository(repositoryAfterStoreUpdate)
