@@ -2900,6 +2900,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }
       this._selectRepository(newSelectedRepository)
       this.emitUpdate()
+    } else if (
+      newSelectedRepository !== null &&
+      selectedRepository !== newSelectedRepository
+    ) {
+      this.selectedRepository = newSelectedRepository
     }
   }
 
@@ -7834,10 +7839,26 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     workflowPreferences: WorkflowPreferences
   ): Promise<void> {
-    await this.repositoriesStore.updateRepositoryWorkflowPreferences(
-      repository,
-      workflowPreferences
-    )
+    const currentRepository = this.getCurrentRepositoryForID(repository)
+    const wasSelectedRepository = this.isSelectedRepositoryID(currentRepository)
+    const updatedRepository =
+      await this.repositoriesStore.updateRepositoryWorkflowPreferences(
+        currentRepository,
+        workflowPreferences
+      )
+
+    if (__PROCESS_KIND__ === 'web-server') {
+      this.replaceRepositoryInMemory(currentRepository, updatedRepository)
+
+      if (wasSelectedRepository) {
+        await this._selectRepositoryRefreshTasks(
+          updatedRepository,
+          currentRepository
+        )
+      }
+
+      this.emitUpdate()
+    }
   }
 
   /**

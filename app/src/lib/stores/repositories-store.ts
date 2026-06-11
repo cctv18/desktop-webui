@@ -621,10 +621,21 @@ export class RepositoriesStore extends TypedBaseStore<
   public async updateRepositoryWorkflowPreferences(
     repository: Repository,
     workflowPreferences: WorkflowPreferences
-  ): Promise<void> {
+  ): Promise<Repository> {
     await this.db.repositories.update(repository.id, { workflowPreferences })
 
     this.emitUpdatedRepositories()
+
+    return new Repository(
+      repository.path,
+      repository.id,
+      repository.gitHubRepository,
+      repository.missing,
+      repository.alias,
+      workflowPreferences,
+      repository.isTutorialRepository,
+      repository.gitDir
+    )
   }
 
   /** Update the repository's path. */
