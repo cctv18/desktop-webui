@@ -437,25 +437,18 @@ export class List extends React.Component<IListProps, IListState> {
 
     this.state = { keyboardInsertionIndexPath: null }
 
-    const ResizeObserverClass: typeof ResizeObserver = (window as any)
-      .ResizeObserver
+    const ResizeObserverClass = (window as any).ResizeObserver as
+      | typeof ResizeObserver
+      | undefined
 
-    if (ResizeObserver || false) {
+    if (ResizeObserverClass !== undefined) {
       this.resizeObserver = new ResizeObserverClass(entries => {
         for (const { target, contentRect } of entries) {
           if (target === this.list && this.list !== null) {
             // We might end up causing a recursive update by updating the state
             // when we're reacting to a resize so we'll defer it until after
             // react is done with this frame.
-            if (this.updateSizeTimeoutId !== null) {
-              clearImmediate(this.updateSizeTimeoutId)
-            }
-
-            this.updateSizeTimeoutId = setImmediate(
-              this.onResized,
-              this.list,
-              contentRect
-            )
+            this.scheduleSizeUpdate(this.list, contentRect)
           }
         }
       })
@@ -472,10 +465,35 @@ export class List extends React.Component<IListProps, IListState> {
       : `${this.state.rowIdPrefix}-${row}`
   }
 
-  private onResized = (target: HTMLElement, contentRect: ClientRect) => {
+  private scheduleSizeUpdate(
+    target: HTMLElement,
+    contentRect?: ClientRect | DOMRectReadOnly
+  ) {
+    if (this.updateSizeTimeoutId !== null) {
+      clearImmediate(this.updateSizeTimeoutId)
+    }
+
+    this.updateSizeTimeoutId = setImmediate(
+      this.onResized,
+      target,
+      contentRect
+    )
+  }
+
+  private onResized = (
+    target: HTMLElement,
+    contentRect?: ClientRect | DOMRectReadOnly
+  ) => {
     this.updateSizeTimeoutId = null
 
-    const [width, height] = [target.offsetWidth, target.offsetHeight]
+    const width = Math.round(
+      target.offsetWidth || contentRect?.width || target.getBoundingClientRect().width
+    )
+    const height = Math.round(
+      target.offsetHeight ||
+        contentRect?.height ||
+        target.getBoundingClientRect().height
+    )
 
     if (this.state.width !== width || this.state.height !== height) {
       this.setState({ width, height })
@@ -530,9 +548,12 @@ export class List extends React.Component<IListProps, IListState> {
 
       if (element !== null) {
         this.resizeObserver.observe(element)
+        this.scheduleSizeUpdate(element)
       } else {
         this.setState({ width: undefined, height: undefined })
       }
+    } else if (element !== null) {
+      this.scheduleSizeUpdate(element)
     }
   }
 
@@ -997,6 +1018,10 @@ export class List extends React.Component<IListProps, IListState> {
     const { props, grid } = this
     const { selectedRows, scrollToRow, setScrollTop } = props
 
+    if (this.list !== null) {
+      this.scheduleSizeUpdate(this.list)
+    }
+
     // Prefer scrollTop position over scrollToRow
     if (grid !== null && setScrollTop === undefined) {
       if (scrollToRow !== undefined) {
@@ -1010,6 +1035,10 @@ export class List extends React.Component<IListProps, IListState> {
   }
 
   public componentDidUpdate(prevProps: IListProps, prevState: IListState) {
+    if (this.list !== null) {
+      this.scheduleSizeUpdate(this.list)
+    }
+
     const { scrollToRow, setScrollTop } = this.props
     if (scrollToRow !== undefined && prevProps.scrollToRow !== scrollToRow) {
       // Prefer scrollTop position over scrollToRow
@@ -1232,8 +1261,8 @@ export class List extends React.Component<IListProps, IListState> {
     let content: JSX.Element[] | JSX.Element | null
     if (this.resizeObserver) {
       content = this.renderContents(
-        this.state.width ?? 0,
-        this.state.height ?? 0
+        this.state.width ?? this.list?.offsetWidth ?? 0,
+        this.state.height ?? this.list?.offsetHeight ?? 0
       )
     } else {
       // Legacy in the event that we don't have ResizeObserver

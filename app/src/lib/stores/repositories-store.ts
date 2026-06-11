@@ -23,6 +23,8 @@ import {
   IAPIFullRepository,
   GitHubAccountType,
 } from '../api'
+import * as Path from 'path'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { TypedBaseStore } from './base-store'
 import { WorkflowPreferences } from '../../models/workflow-preferences'
 import { clearTagsToPush } from './helpers/tags-to-push-storage'
@@ -31,6 +33,17 @@ import { shallowEquals } from '../equality'
 
 type AddRepositoryOptions = {
   missing?: boolean
+}
+
+type WebUIPersistedRepository = {
+  readonly id: number
+  readonly path: string
+  readonly alias: string | null
+  readonly missing: boolean
+  readonly gitDir?: string
+  readonly lastStashCheckDate?: number | null
+  readonly workflowPreferences?: WorkflowPreferences
+  readonly isTutorialRepository?: boolean
 }
 
 /** The store for local repositories. */
@@ -53,6 +66,7 @@ export class RepositoriesStore extends TypedBaseStore<
   private protectionEnabledForBranchCache = new Map<string, boolean>()
 
   private emitQueued = false
+  private webUIPersistenceRestored = false
 
   public constructor(private readonly db: RepositoriesDatabase) {
     super()
@@ -168,7 +182,12 @@ export class RepositoriesStore extends TypedBaseStore<
   }
 
   /** Get all the local repositories. */
-  public getAll(): Promise<ReadonlyArray<Repository>> {
+  public async getAll(): Promise<ReadonlyArray<Repository>> {
+    if (__PROCESS_KIND__ === 'web-server' && !this.webUIPersistenceRestored) {
+      await this.restoreWebUIPersistedRepositories()
+      this.webUIPersistenceRestored = true
+    }
+
     return this.db.transaction(
       'r',
       this.db.repositories,
@@ -183,6 +202,133 @@ export class RepositoriesStore extends TypedBaseStore<
         }
 
         return repos
+      }
+    )
+  }
+
+  private get webUIPersistencePath(): string | null {
+    if (__PROCESS_KIND__ !== 'web-server') {
+      return null
+    }
+
+    const fromEnv = process.env.GITDESK_WEBUI_DATA_DIR
+    const fromArgs = getArgValue('--data-dir')
+    const raw =
+      fromEnv && fromEnv.trim().length > 0
+        ? fromEnv
+        : fromArgs && fromArgs.trim().length > 0
+        ? fromArgs
+        : Path.join(process.cwd(), '.gitdesk-webui')
+
+    return Path.join(Path.resolve(raw), 'repositories.json')
+  }
+
+  private async restoreWebUIPersistedRepositories(): Promise<void> {
+    const persistencePath = this.webUIPersistencePath
+    if (persistencePath === null) {
+      return
+    }
+
+    const existingCount = await this.db.repositories.count()
+    if (existingCount > 0) {
+      return
+    }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(await readFile(persistencePath, 'utf8'))
+    } catch {
+      return
+    }
+
+    const repositories = Array.isArray(parsed)
+      ? parsed
+      : parsed !== null &&
+        typeof parsed === 'object' &&
+        Array.isArray((parsed as { repositories?: unknown }).repositories)
+      ? (parsed as { repositories: unknown[] }).repositories
+      : []
+
+    const records = repositories
+      .map(repo => this.toPersistedDatabaseRepository(repo))
+      .filter((repo): repo is IDatabaseRepository => repo !== null)
+
+    if (records.length === 0) {
+      return
+    }
+
+    await this.db.transaction('rw', this.db.repositories, async () => {
+      await this.db.repositories.bulkPut(records)
+    })
+  }
+
+  private toPersistedDatabaseRepository(
+    repo: unknown
+  ): IDatabaseRepository | null {
+    if (repo === null || typeof repo !== 'object') {
+      return null
+    }
+
+    const value = repo as Partial<WebUIPersistedRepository>
+    if (
+      typeof value.id !== 'number' ||
+      value.id <= 0 ||
+      typeof value.path !== 'string' ||
+      value.path.length === 0
+    ) {
+      return null
+    }
+
+    const workflowPreferences =
+      value.workflowPreferences !== null &&
+      typeof value.workflowPreferences === 'object'
+        ? value.workflowPreferences
+        : undefined
+
+    return {
+      id: value.id,
+      path: value.path,
+      gitHubRepositoryID: null,
+      missing: value.missing === true,
+      lastStashCheckDate:
+        typeof value.lastStashCheckDate === 'number'
+          ? value.lastStashCheckDate
+          : null,
+      alias: typeof value.alias === 'string' ? value.alias : null,
+      gitDir: typeof value.gitDir === 'string' ? value.gitDir : undefined,
+      workflowPreferences,
+      isTutorialRepository: value.isTutorialRepository === true,
+    }
+  }
+
+  private async persistWebUIRepositories(): Promise<void> {
+    const persistencePath = this.webUIPersistencePath
+    if (persistencePath === null) {
+      return
+    }
+
+    const dbRepositories = await this.db.repositories.toArray()
+    const repositories = dbRepositories
+      .filter(repo => repo.id !== undefined)
+      .map<WebUIPersistedRepository>(repo => ({
+        id: repo.id!,
+        path: repo.path,
+        alias: repo.alias,
+        missing: repo.missing,
+        gitDir: repo.gitDir,
+        lastStashCheckDate: repo.lastStashCheckDate ?? null,
+        workflowPreferences: repo.workflowPreferences,
+        isTutorialRepository: repo.isTutorialRepository,
+      }))
+      .sort((a, b) => a.id - b.id)
+
+    await mkdir(Path.dirname(persistencePath), { recursive: true, mode: 0o700 })
+    await writeFile(
+      persistencePath,
+      `${JSON.stringify({ repositories }, null, 2)}\n`,
+      {
+        encoding: 'utf8',
+        mode: 0o600,
       }
     )
   }
@@ -780,6 +926,14 @@ export class RepositoriesStore extends TypedBaseStore<
    * (This is the only way we emit updates from this store.)
    */
   private emitUpdatedRepositories() {
+    if (__PROCESS_KIND__ === 'web-server') {
+      setImmediate(() =>
+        this.persistWebUIRepositories().catch(e =>
+          log.error(`Failed persisting repositories`, e)
+        )
+      )
+    }
+
     if (!this.emitQueued) {
       setImmediate(() => {
         this.getAll()
@@ -790,6 +944,17 @@ export class RepositoriesStore extends TypedBaseStore<
       this.emitQueued = true
     }
   }
+}
+
+function getArgValue(name: string) {
+  const index = process.argv.indexOf(name)
+
+  if (index < 0) {
+    return undefined
+  }
+
+  const value = process.argv[index + 1]
+  return value && !value.startsWith('--') ? value : undefined
 }
 
 /** Compute the key for the branch protection cache */

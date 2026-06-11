@@ -853,6 +853,13 @@ export class Dispatcher {
       const addedRepository = addedRepositories[0]
       await this.selectRepository(addedRepository)
 
+      if (isRepositoryWithForkedGitHubRepository(addedRepository)) {
+        this.showPopup({
+          type: PopupType.ChooseForkSettings,
+          repository: addedRepository,
+        })
+      }
+
       void this.appStore
         ._fetch(addedRepository, FetchType.BackgroundTask)
         .catch(error =>
@@ -861,13 +868,6 @@ export class Dispatcher {
             error
           )
         )
-
-      if (isRepositoryWithForkedGitHubRepository(addedRepository)) {
-        this.showPopup({
-          type: PopupType.ChooseForkSettings,
-          repository: addedRepository,
-        })
-      }
 
       return addedRepository
     })

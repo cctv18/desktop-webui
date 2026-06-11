@@ -2821,6 +2821,16 @@ export class AppStore extends TypedBaseStore<IAppState> {
       (selectedRepository && !newSelectedRepository) ||
       (!selectedRepository && newSelectedRepository)
     if (repositoryChanged) {
+      if (
+        selectedRepository instanceof Repository &&
+        newSelectedRepository instanceof Repository &&
+        selectedRepository.id === newSelectedRepository.id
+      ) {
+        this.repositoryStateCache.copyState(
+          selectedRepository,
+          newSelectedRepository
+        )
+      }
       this._selectRepository(newSelectedRepository)
       this.emitUpdate()
     }
@@ -4912,12 +4922,43 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     pushPullFetchProgress: Progress | null
   ) {
-    this.repositoryStateCache.update(repository, () => ({
+    this.updateRepositoryStateByRepositoryID(repository, () => ({
       pushPullFetchProgress,
     }))
-    if (this.selectedRepository === repository) {
+
+    if (this.isSelectedRepositoryID(repository)) {
       this.emitUpdate()
     }
+  }
+
+  private getCurrentRepositoryForID(repository: Repository): Repository {
+    return this.repositories.find(r => r.id === repository.id) ?? repository
+  }
+
+  private getRepositoryStateTargets(
+    repository: Repository
+  ): ReadonlyArray<Repository> {
+    const currentRepository = this.getCurrentRepositoryForID(repository)
+
+    return currentRepository.hash === repository.hash
+      ? [repository]
+      : [repository, currentRepository]
+  }
+
+  private updateRepositoryStateByRepositoryID<K extends keyof IRepositoryState>(
+    repository: Repository,
+    fn: (state: IRepositoryState) => Pick<IRepositoryState, K>
+  ) {
+    for (const target of this.getRepositoryStateTargets(repository)) {
+      this.repositoryStateCache.update(target, fn)
+    }
+  }
+
+  private isSelectedRepositoryID(repository: Repository): boolean {
+    return (
+      this.selectedRepository instanceof Repository &&
+      this.selectedRepository.id === repository.id
+    )
   }
 
   public async _push(
@@ -5219,7 +5260,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const operation = Promise.resolve().then(fn)
     this.pushPullFetchOperations.set(repository.id, operation)
 
-    this.repositoryStateCache.update(repository, () => ({
+    this.updateRepositoryStateByRepositoryID(repository, () => ({
       isPushPullFetchInProgress: true,
     }))
     this.emitUpdate()
@@ -5231,7 +5272,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         this.pushPullFetchOperations.delete(repository.id)
       }
 
-      this.repositoryStateCache.update(repository, () => ({
+      this.updateRepositoryStateByRepositoryID(repository, () => ({
         isPushPullFetchInProgress: false,
       }))
       this.emitUpdate()
@@ -5688,10 +5729,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
    * if _any_ fetches or pulls are currently in-progress.
    */
   public _fetch(repository: Repository, fetchType: FetchType): Promise<void> {
-    if (
-      fetchType === FetchType.UserInitiatedTask &&
-      this.pushPullFetchOperations.has(repository.id)
-    ) {
+    if (this.pushPullFetchOperations.has(repository.id)) {
       log.info(
         `[AppStore] ignoring fetch request for ${repository.name} because another push/pull/fetch is in progress`
       )
@@ -5780,9 +5818,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
           value: fetchWeight,
         })
 
-        await this.fastForwardBranches(repository)
+        const currentRepository = this.getCurrentRepositoryForID(repository)
 
-        this.updatePushPullFetchProgress(repository, {
+        await this.fastForwardBranches(currentRepository)
+
+        this.updatePushPullFetchProgress(currentRepository, {
           kind: 'generic',
           title: refreshTitle,
           value: fetchWeight + refreshWeight * 0.5,
@@ -5790,15 +5830,18 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
         // manually refresh branch protections after the push, to ensure
         // any new branch will immediately report as protected
-        await this.refreshBranchProtectionStateAfterNetworkOperation(repository)
+        await this.refreshBranchProtectionStateAfterNetworkOperation(
+          currentRepository
+        )
 
-        await this._refreshRepository(repository)
+        await this._refreshRepository(currentRepository)
       } finally {
         this.updatePushPullFetchProgress(repository, null)
 
         if (fetchType === FetchType.UserInitiatedTask) {
-          if (repository.gitHubRepository != null) {
-            this._refreshIssues(repository.gitHubRepository)
+          const currentRepository = this.getCurrentRepositoryForID(repository)
+          if (currentRepository.gitHubRepository != null) {
+            this._refreshIssues(currentRepository.gitHubRepository)
           }
         }
       }

@@ -171,8 +171,17 @@ export async function cherryPick(
   //  (the branch you are cherry-picking from) for the commit. It also means
   //  there could be multiple empty commits. I.E. If user does a range that
   //  includes commits from that merge.
+  //
+  // Some system Git versions used by the WebUI deployment do not support
+  // --empty=keep yet. --keep-redundant-commits preserves the same behavior for
+  // these environments and is supported by the older Git shown in the logs.
+  const keepEmptyCommitArg =
+    __PROCESS_KIND__ === 'web-server'
+      ? '--keep-redundant-commits'
+      : '--empty=keep'
+
   const result = await git(
-    ['cherry-pick', ...commits.map(c => c.sha), '--empty=keep', '-m 1'],
+    ['cherry-pick', ...commits.map(c => c.sha), keepEmptyCommitArg, '-m', '1'],
     repository.path,
     'cherry-pick',
     baseOptions

@@ -71,6 +71,24 @@ export class RepositoryStateCache {
     })
   }
 
+  /**
+   * Preserve UI state when a repository model is replaced with a new object for
+   * the same repository id, for example after GitHub metadata or workflow
+   * preferences change.
+   */
+  public copyState(source: Repository, target: Repository) {
+    if (source.hash === target.hash) {
+      return
+    }
+
+    const sourceState = this.repositoryState.get(source.hash)
+    if (sourceState === undefined) {
+      return
+    }
+
+    this.repositoryState.set(target.hash, sourceState)
+  }
+
   public updateCompareState<K extends keyof ICompareState>(
     repository: Repository,
     fn: (state: ICompareState) => Pick<ICompareState, K>

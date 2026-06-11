@@ -129,12 +129,22 @@
     }
 
     > .filter-list {
+      display: flex;
+      flex-direction: column;
+      flex: 0 1 min(45vh, 360px);
       height: min(45vh, 360px);
       min-height: 240px;
 
       .filter-field-row {
         margin: 0;
         margin-bottom: var(--spacing);
+      }
+
+      .filter-list-container,
+      .list,
+      .list-focus-container {
+        min-height: 0;
+        height: 100%;
       }
 
       .clone-repository-list-group-header {
