@@ -89,6 +89,19 @@ export class RepositoryStateCache {
     this.repositoryState.set(target.hash, sourceState)
   }
 
+  /**
+   * Drop any UI and Git-derived state cached for a repository model.
+   *
+   * This is used when the working tree at an existing repository path has been
+   * replaced, for example after recloning a missing repository. In that case
+   * preserving history selections, diffs, and branch state from the deleted
+   * checkout can leave the WebUI issuing follow-up requests against SHAs that
+   * no longer belong to the freshly cloned repository.
+   */
+  public reset(repository: Repository) {
+    this.repositoryState.set(repository.hash, getInitialRepositoryState())
+  }
+
   public updateCompareState<K extends keyof ICompareState>(
     repository: Repository,
     fn: (state: ICompareState) => Pick<ICompareState, K>

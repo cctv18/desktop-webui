@@ -1997,13 +1997,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const { shas, isContiguous } = stateBeforeLoad.commitSelection
 
     if (shas.length === 0) {
-      if (__DEV__) {
-        throw new Error(
-          "No currently selected sha yet we've been asked to switch file selection"
-        )
-      } else {
-        return
-      }
+      log.warn(
+        `[AppStore] ignoring file selection for ${repository.name} because no commit is selected`
+      )
+      this.repositoryStateCache.updateCommitSelection(repository, () => ({
+        file: null,
+        diff: null,
+      }))
+      this.emitUpdate()
+      return
     }
 
     if (shas.length > 1 && !isContiguous) {
@@ -3642,6 +3644,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
         async () => {
           const message = await formatCommitMessage(repository, context)
           let aborted = false
+          const allowEmpty =
+            state.allowEmptyCommit ||
+            (context.amend === true && selectedFiles.length === 0)
           return createCommit(repository, message, selectedFiles, {
             amend: context.amend,
             onHookProgress: this.onHookProgress(repository),
@@ -3654,7 +3659,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
             },
             noVerify: state.skipCommitHooks,
             signOff: state.signOffCommits,
-            allowEmpty: state.allowEmptyCommit,
+            allowEmpty,
           }).catch(err => (aborted ? undefined : Promise.reject(err)))
         },
         { gitContext: { kind: 'commit' }, repository }
@@ -3909,10 +3914,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (foundRepository) {
       let recovered = await this._updateRepositoryMissing(repository, false)
       if (type.kind === 'regular' && recovered.gitDir !== type.gitDir) {
+        const previousRepository = recovered
         recovered = await this.repositoriesStore.updateRepositoryGitDir(
           recovered,
           type.gitDir
         )
+
+        if (__PROCESS_KIND__ === 'web-server') {
+          this.replaceRepositoryInMemory(previousRepository, recovered)
+        }
       }
       return recovered
     }
@@ -7960,7 +7970,23 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     missing: boolean
   ): Promise<Repository> {
-    return this.repositoriesStore.updateRepositoryMissing(repository, missing)
+    return this.repositoriesStore
+      .updateRepositoryMissing(repository, missing)
+      .then(updatedRepository => {
+        if (__PROCESS_KIND__ === 'web-server') {
+          this.replaceRepositoryInMemory(repository, updatedRepository)
+
+          if (missing) {
+            this.gitStoreCache.remove(repository)
+            this.selectedRepositoryStatusSnapshots.delete(repository.id)
+            this.localRepositoryStateLookup.delete(repository.id)
+          }
+
+          this.emitUpdate()
+        }
+
+        return updatedRepository
+      })
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -8228,6 +8254,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
         return
       }
 
+      this.resetRepositoryStateAfterDiskReplacement(repositoryForPostClone)
+
       const selectedRepository =
         (await this._selectRepository(repositoryForPostClone)) ??
         repositoryForPostClone
@@ -8238,6 +8266,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
           r =>
             r.id === selectedRepository.id || r.path === selectedRepository.path
         ) ?? selectedRepository
+
+      if (repositoryAfterStoreUpdate.hash !== selectedRepository.hash) {
+        this.resetRepositoryStateAfterDiskReplacement(repositoryAfterStoreUpdate)
+      }
 
       const currentRepository =
         repositoryAfterStoreUpdate.hash === selectedRepository.hash
@@ -8262,6 +8294,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
     } finally {
       this._removeCloningRepository(repository)
     }
+  }
+
+  private resetRepositoryStateAfterDiskReplacement(repository: Repository) {
+    this.repositoryStateCache.reset(repository)
+    this.gitStoreCache.remove(repository)
+    this.selectedRepositoryStatusSnapshots.delete(repository.id)
+    this.localRepositoryStateLookup.delete(repository.id)
+    this.pushPullFetchOperations.delete(repository.id)
   }
 
   private getCloneAgainOptions(
