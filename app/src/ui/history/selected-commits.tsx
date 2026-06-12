@@ -383,18 +383,6 @@ export class SelectedCommits extends React.Component<
 
     const fullPath = Path.join(repository.path, file.path)
     const fileExistsOnDisk = await pathExists(fullPath)
-    if (!fileExistsOnDisk) {
-      showContextualMenu([
-        {
-          label: __DARWIN__
-            ? 'File Does Not Exist on Disk'
-            : 'File does not exist on disk',
-          enabled: false,
-        },
-      ])
-      return
-    }
-
     const extension = Path.extname(file.path)
 
     const isSafeExtension = isSafeFileExtension(extension)
@@ -402,23 +390,38 @@ export class SelectedCommits extends React.Component<
       ? `Open in ${externalEditorLabel}`
       : DefaultEditorLabel
 
-    const items: IMenuItem[] = [
-      {
-        label: RevealInFileManagerLabel,
-        action: () => revealInFileManager(repository, file.path),
-        enabled: fileExistsOnDisk,
-      },
-      {
-        label: openInExternalEditor,
-        action: () => this.props.onOpenInExternalEditor(file.path),
-        enabled: fileExistsOnDisk,
-      },
-      {
-        label: OpenWithDefaultProgramLabel,
-        action: () => this.onOpenItem(file.path),
-        enabled: isSafeExtension && fileExistsOnDisk,
-      },
-      { type: 'separator' },
+    const items: IMenuItem[] = []
+
+    if (fileExistsOnDisk) {
+      items.push(
+        {
+          label: RevealInFileManagerLabel,
+          action: () => revealInFileManager(repository, file.path),
+        },
+        {
+          label: openInExternalEditor,
+          action: () => this.props.onOpenInExternalEditor(file.path),
+        },
+        {
+          label: OpenWithDefaultProgramLabel,
+          action: () => this.onOpenItem(file.path),
+          enabled: isSafeExtension,
+        },
+        { type: 'separator' }
+      )
+    } else {
+      items.push(
+        {
+          label: __DARWIN__
+            ? 'File Does Not Exist on Disk'
+            : 'File does not exist on disk',
+          enabled: false,
+        },
+        { type: 'separator' }
+      )
+    }
+
+    items.push(
       {
         label: CopyFilePathLabel,
         action: () => clipboard.writeText(fullPath),
@@ -427,8 +430,8 @@ export class SelectedCommits extends React.Component<
         label: CopyRelativeFilePathLabel,
         action: () => clipboard.writeText(Path.normalize(file.path)),
       },
-      { type: 'separator' },
-    ]
+      { type: 'separator' }
+    )
 
     let viewOnGitHubLabel = 'View on GitHub'
     const gitHubRepository = repository.gitHubRepository

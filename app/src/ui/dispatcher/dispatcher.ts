@@ -3737,7 +3737,8 @@ export class Dispatcher {
         )
         break
       default:
-        // TODO: clear state
+        this.endMultiCommitOperation(repository)
+        await this.refreshRepository(repository)
         this.appStore._closePopup()
     }
   }

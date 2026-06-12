@@ -1,5 +1,6 @@
 import { Foldout, FoldoutType } from '../../lib/app-state'
 import { AppMenu, ExecutableMenuItem } from '../../models/app-menu'
+import { Popup, PopupType } from '../../models/popup'
 import {
   executeMenuItem,
   executeMenuItemById,
@@ -36,8 +37,7 @@ export function createRemoteDispatcher(
 
         if (property === 'openInBrowser') {
           return (url: string) => {
-            const opened = window.open(url, '_blank', 'noopener')
-            return Promise.resolve(opened !== null)
+            return Promise.resolve(openURLInNewTab(url))
           }
         }
 
@@ -49,6 +49,31 @@ export function createRemoteDispatcher(
         if (property === 'setAppMenuState') {
           return (update: (appMenu: AppMenu) => AppMenu) =>
             setAppMenuState(appStore, update)
+        }
+
+        if (property === 'showPopup') {
+          return (popup: Popup) => {
+            if (containsFunction(popup)) {
+              appStore.showLocalPopup(popup)
+              return Promise.resolve()
+            }
+
+            return rpc.invoke(property, [popup])
+          }
+        }
+
+        if (property === 'closePopup') {
+          return (popupType?: PopupType) =>
+            appStore.closeLocalPopup(popupType)
+              ? Promise.resolve()
+              : rpc.invoke(property, popupType === undefined ? [] : [popupType])
+        }
+
+        if (property === 'closePopupById') {
+          return (popupId: number) =>
+            appStore.closeLocalPopupById(popupId)
+              ? Promise.resolve()
+              : rpc.invoke(property, [popupId])
         }
 
         if (property === 'executeMenuItem') {
@@ -97,6 +122,44 @@ export function createRemoteDispatcher(
         return (...params: ReadonlyArray<unknown>) => rpc.invoke(property, params)
       },
     }
+  )
+}
+
+function openURLInNewTab(url: string): boolean {
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.target = '_blank'
+  anchor.rel = 'noopener noreferrer'
+  anchor.style.display = 'none'
+
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+
+  return true
+}
+
+function containsFunction(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (typeof value === 'function') {
+    return true
+  }
+
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+
+  if (seen.has(value)) {
+    return false
+  }
+
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value.some(item => containsFunction(item, seen))
+  }
+
+  return Object.keys(value).some(key =>
+    containsFunction((value as any)[key], seen)
   )
 }
 

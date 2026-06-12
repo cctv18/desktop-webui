@@ -2880,6 +2880,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
       newSelectedRepository = r
     }
 
+    if (
+      selectedRepository instanceof CloningRepository &&
+      newSelectedRepository === null
+    ) {
+      return
+    }
+
     if (newSelectedRepository === null && this.repositories.length > 0) {
       const lastSelectedID = getNumber(LastSelectedRepositoryIDKey, 0)
       if (lastSelectedID > 0) {
@@ -8175,7 +8182,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   public async _cloneAgain(url: string, path: string): Promise<void> {
-    const { promise, repository } = this._clone(url, path)
+    const repositoryBeforeClone = this.repositories.find(r => r.path === path)
+    const cloneOptions = this.getCloneAgainOptions(repositoryBeforeClone)
+    const { promise, repository } = this._clone(url, path, cloneOptions)
     await this._selectRepository(repository)
     const success = await promise
     if (!success) {
@@ -8252,6 +8261,26 @@ export class AppStore extends TypedBaseStore<IAppState> {
       )
     } finally {
       this._removeCloningRepository(repository)
+    }
+  }
+
+  private getCloneAgainOptions(
+    repository: Repository | undefined
+  ): { branch?: string; defaultBranch?: string } {
+    if (repository === undefined) {
+      return {}
+    }
+
+    const { branchesState } = this.repositoryStateCache.get(repository)
+    const { tip, defaultBranch } = branchesState
+
+    if (tip.kind !== TipState.Valid || tip.branch.upstream === null) {
+      return {}
+    }
+
+    return {
+      branch: tip.branch.name,
+      defaultBranch: defaultBranch?.name,
     }
   }
 
