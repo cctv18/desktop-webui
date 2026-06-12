@@ -6,6 +6,10 @@ import { IRemote } from '../../models/remote'
 import { envForRemoteOperation } from './environment'
 import { Branch } from '../../models/branch'
 
+function getTagPushRefspec(tagName: string): string {
+  return `refs/tags/${tagName}:refs/tags/${tagName}`
+}
+
 export type PushOptions = {
   /**
    * Force-push the branch without losing changes in the remote that
@@ -61,7 +65,7 @@ export async function push(
   ]
 
   if (tagsToPush !== null) {
-    args.push(...tagsToPush)
+    args.push(...tagsToPush.map(getTagPushRefspec))
   }
   if (!remoteBranch) {
     args.push('--set-upstream')

@@ -51,7 +51,9 @@ export class CloningRepositoriesStore extends BaseStore {
       this.emitError(e)
     }
 
-    this.remove(repository)
+    if (!success) {
+      this.remove(repository)
+    }
 
     return success
   }

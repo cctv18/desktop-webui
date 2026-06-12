@@ -26,11 +26,19 @@ export function createRemoteDispatcher(
         }
 
         if (property === 'initializeAppFocusState') {
-          return () => setAppFocusState(appStore, document.hasFocus())
+          return () => setAppFocusState(appStore, document.hasFocus(), rpc)
         }
 
         if (property === 'setAppFocusState') {
-          return (isFocused: boolean) => setAppFocusState(appStore, isFocused)
+          return (isFocused: boolean) =>
+            setAppFocusState(appStore, isFocused, rpc)
+        }
+
+        if (property === 'openInBrowser') {
+          return (url: string) => {
+            const opened = window.open(url, '_blank', 'noopener')
+            return Promise.resolve(opened !== null)
+          }
         }
 
         if (property === 'setAccessKeyHighlightState') {
@@ -113,11 +121,15 @@ async function openReturnedURL(result: Promise<unknown>, popup: Window | null) {
   }
 }
 
-function setAppFocusState(appStore: RemoteAppStore, appIsFocused: boolean) {
+function setAppFocusState(
+  appStore: RemoteAppStore,
+  appIsFocused: boolean,
+  rpc?: RemoteRPCClient
+) {
   appStore.updateState(state =>
     state.appIsFocused === appIsFocused ? state : { ...state, appIsFocused }
   )
-  return Promise.resolve()
+  return rpc?.invoke('setAppFocusState', [appIsFocused]) ?? Promise.resolve()
 }
 
 function setAccessKeyHighlightState(

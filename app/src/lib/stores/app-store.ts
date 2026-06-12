@@ -71,6 +71,7 @@ import {
   nameOf,
   Repository,
   isRepositoryWithGitHubRepository,
+  isRepositoryWithForkedGitHubRepository,
   RepositoryWithGitHubRepository,
   getNonForkGitHubRepository,
   isForkedRepositoryContributingToParent,
@@ -218,6 +219,7 @@ import {
   getBranchMergeBaseDiff,
   checkoutCommit,
   getRemoteURL,
+  getStatus,
   getGlobalConfigPath,
   getFilesDiffText,
   TerminalOutput,
@@ -507,6 +509,8 @@ const BackgroundFetchMinimumInterval = 30 * 60 * 1000
  */
 const InitialRepositoryIndicatorTimeout = 2 * 60 * 1000
 
+const WebUISelectedRepositoryStatusRefreshInterval = 2 * 1000
+
 const MaxInvalidFoldersToDisplay = 3
 
 const lastThankYouKey = 'version-and-users-of-last-thank-you'
@@ -555,6 +559,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private currentBackgroundFetcher: BackgroundFetcher | null = null
 
   private readonly pushPullFetchOperations = new Map<number, Promise<void>>()
+  private selectedRepositoryStatusRefreshTimer: number | null = null
+  private selectedRepositoryStatusRefreshInFlight = false
+  private readonly selectedRepositoryStatusSnapshots = new Map<number, string>()
 
   private currentBranchPruner: BranchPruner | null = null
 
@@ -799,6 +806,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.notificationsStore.onPullRequestCommentNotification(
       this.onPullRequestCommentNotification
     )
+
+    if (__PROCESS_KIND__ === 'web-server') {
+      this.startSelectedRepositoryStatusRefresh()
+    }
 
     onShowInstallingUpdate(this.onShowInstallingUpdate)
   }
@@ -4116,6 +4127,117 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // instance since that's a mutable array. We should always return
     // a copy.
     return this.repositories.filter(x => x !== this.selectedRepository)
+  }
+
+  private startSelectedRepositoryStatusRefresh() {
+    if (this.selectedRepositoryStatusRefreshTimer !== null) {
+      return
+    }
+
+    this.selectedRepositoryStatusRefreshTimer = window.setInterval(() => {
+      this.refreshSelectedRepositoryStatusIfChanged().catch(error =>
+        log.warn('Failed refreshing selected repository status', error)
+      )
+    }, WebUISelectedRepositoryStatusRefreshInterval)
+  }
+
+  private async refreshSelectedRepositoryStatusIfChanged(): Promise<void> {
+    if (this.selectedRepositoryStatusRefreshInFlight) {
+      return
+    }
+
+    const repository = this.selectedRepository
+
+    if (!(repository instanceof Repository) || repository.missing) {
+      return
+    }
+
+    const state = this.repositoryStateCache.get(repository)
+
+    if (
+      state.isCommitting ||
+      state.checkoutProgress !== null ||
+      state.pushPullFetchProgress !== null ||
+      state.multiCommitOperationState !== null ||
+      this.pushPullFetchOperations.has(repository.id)
+    ) {
+      return
+    }
+
+    this.selectedRepositoryStatusRefreshInFlight = true
+
+    try {
+      if (!(await pathExists(repository.path))) {
+        this.selectedRepositoryStatusSnapshots.delete(repository.id)
+        await this._updateRepositoryMissing(repository, true)
+        return
+      }
+
+      const status = await getStatus(repository)
+
+      if (status === null) {
+        this.selectedRepositoryStatusSnapshots.delete(repository.id)
+        await this._updateRepositoryMissing(repository, true)
+        return
+      }
+
+      const snapshot = this.getSelectedRepositoryStatusSnapshot(status)
+      const previousSnapshot = this.selectedRepositoryStatusSnapshots.get(
+        repository.id
+      )
+
+      if (previousSnapshot === snapshot) {
+        return
+      }
+
+      this.selectedRepositoryStatusSnapshots.set(repository.id, snapshot)
+      await this.updateSidebarIndicator(repository, status)
+      await this.refreshChangesSection(repository, {
+        includingStatus: true,
+        clearPartialState: false,
+      })
+      this.emitUpdate()
+    } catch (error) {
+      if (!(await pathExists(repository.path))) {
+        this.selectedRepositoryStatusSnapshots.delete(repository.id)
+        await this._updateRepositoryMissing(repository, true)
+        return
+      }
+
+      log.warn('Unable to refresh selected repository status', error)
+    } finally {
+      this.selectedRepositoryStatusRefreshInFlight = false
+    }
+  }
+
+  private getSelectedRepositoryStatusSnapshot(status: IStatusResult): string {
+    const files = status.workingDirectory.files
+      .map(file =>
+        JSON.stringify({
+          path: file.path,
+          id: file.id,
+          status: file.status,
+        })
+      )
+      .sort()
+      .join('\0')
+
+    return [
+      status.currentBranch ?? '',
+      status.currentUpstreamBranch ?? '',
+      status.currentTip ?? '',
+      status.branchAheadBehind === undefined
+        ? ''
+        : `${status.branchAheadBehind.ahead}:${status.branchAheadBehind.behind}`,
+      status.mergeHeadFound ? 'merge' : '',
+      status.squashMsgFound ? 'squash' : '',
+      status.rebaseInternalState === null
+        ? ''
+        : JSON.stringify(status.rebaseInternalState),
+      status.isCherryPickingHeadFound ? 'cherry-pick' : '',
+      status.doConflictedFilesExist ? 'conflicts' : '',
+      files,
+    ].join('\u0001')
   }
 
   /**
@@ -8060,15 +8182,76 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    const repositories = this.repositories
-    const found = repositories.find(r => r.path === path)
+    try {
+      const repositories = this.repositories
+      const found = repositories.find(r => r.path === path)
 
-    if (found) {
-      const updatedRepository = await this._updateRepositoryMissing(
-        found,
-        false
+      let repositoryForPostClone: Repository | null = null
+
+      if (found) {
+        repositoryForPostClone = await this.recoverMissingRepository(found)
+      }
+
+      if (repositoryForPostClone === null || repositoryForPostClone.missing) {
+        repositoryForPostClone = (await this._addRepositories([path]))[0] ?? null
+      }
+
+      if (repositoryForPostClone?.missing) {
+        repositoryForPostClone = await this.recoverMissingRepository(
+          repositoryForPostClone
+        )
+      }
+
+      if (repositoryForPostClone === null) {
+        return
+      }
+
+      if (repositoryForPostClone.missing) {
+        return
+      }
+
+      repositoryForPostClone =
+        await this.repositoryWithRefreshedGitHubRepository(
+          repositoryForPostClone
+        )
+
+      if (repositoryForPostClone.missing) {
+        return
+      }
+
+      const selectedRepository =
+        (await this._selectRepository(repositoryForPostClone)) ??
+        repositoryForPostClone
+      await new Promise<void>(resolve => setImmediate(resolve))
+
+      const repositoryAfterStoreUpdate =
+        this.repositories.find(
+          r =>
+            r.id === selectedRepository.id || r.path === selectedRepository.path
+        ) ?? selectedRepository
+
+      const currentRepository =
+        repositoryAfterStoreUpdate.hash === selectedRepository.hash
+          ? selectedRepository
+          : (await this._selectRepository(repositoryAfterStoreUpdate)) ??
+            repositoryAfterStoreUpdate
+
+      if (isRepositoryWithForkedGitHubRepository(currentRepository)) {
+        this._showPopup({
+          type: PopupType.ChooseForkSettings,
+          repository: currentRepository,
+        })
+      }
+
+      void this._fetch(currentRepository, FetchType.BackgroundTask).catch(
+        error =>
+          log.warn(
+            `Initial fetch after reclone failed for ${currentRepository.name}`,
+            error
+          )
       )
-      await this._selectRepository(updatedRepository)
+    } finally {
+      this._removeCloningRepository(repository)
     }
   }
 

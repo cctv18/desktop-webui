@@ -844,50 +844,54 @@ export class Dispatcher {
         return null
       }
 
-      const addedRepositories = await this.addRepositories([path])
+      try {
+        const addedRepositories = await this.addRepositories([path])
 
-      if (addedRepositories.length < 1) {
-        return null
-      }
+        if (addedRepositories.length < 1) {
+          return null
+        }
 
-      const addedRepository = addedRepositories[0]
-      const selectedAddedRepository =
-        (await this.selectRepository(addedRepository)) ?? addedRepository
-      await new Promise<void>(resolve => setImmediate(resolve))
+        const addedRepository = addedRepositories[0]
+        const selectedAddedRepository =
+          (await this.selectRepository(addedRepository)) ?? addedRepository
+        await new Promise<void>(resolve => setImmediate(resolve))
 
-      const repositoryAfterStoreUpdate =
-        this.appStore
-          .getState()
-          .repositories.find(
-            (r): r is Repository =>
-              r instanceof Repository &&
-              (r.id === selectedAddedRepository.id ||
-                r.path === selectedAddedRepository.path)
-          ) ?? selectedAddedRepository
+        const repositoryAfterStoreUpdate =
+          this.appStore
+            .getState()
+            .repositories.find(
+              (r): r is Repository =>
+                r instanceof Repository &&
+                (r.id === selectedAddedRepository.id ||
+                  r.path === selectedAddedRepository.path)
+            ) ?? selectedAddedRepository
 
-      const repositoryForPostClone =
-        repositoryAfterStoreUpdate.hash === selectedAddedRepository.hash
-          ? selectedAddedRepository
-          : (await this.selectRepository(repositoryAfterStoreUpdate)) ??
-            repositoryAfterStoreUpdate
+        const repositoryForPostClone =
+          repositoryAfterStoreUpdate.hash === selectedAddedRepository.hash
+            ? selectedAddedRepository
+            : (await this.selectRepository(repositoryAfterStoreUpdate)) ??
+              repositoryAfterStoreUpdate
 
-      if (isRepositoryWithForkedGitHubRepository(repositoryForPostClone)) {
-        this.showPopup({
-          type: PopupType.ChooseForkSettings,
-          repository: repositoryForPostClone,
-        })
-      }
+        if (isRepositoryWithForkedGitHubRepository(repositoryForPostClone)) {
+          this.showPopup({
+            type: PopupType.ChooseForkSettings,
+            repository: repositoryForPostClone,
+          })
+        }
 
-      void this.appStore
-        ._fetch(repositoryForPostClone, FetchType.BackgroundTask)
-        .catch(error =>
-          log.warn(
-            `Initial fetch after clone failed for ${repositoryForPostClone.name}`,
-            error
+        void this.appStore
+          ._fetch(repositoryForPostClone, FetchType.BackgroundTask)
+          .catch(error =>
+            log.warn(
+              `Initial fetch after clone failed for ${repositoryForPostClone.name}`,
+              error
+            )
           )
-        )
 
-      return repositoryForPostClone
+        return repositoryForPostClone
+      } finally {
+        this.appStore._removeCloningRepository(repository)
+      }
     })
   }
 
