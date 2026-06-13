@@ -5,9 +5,20 @@ import { PushProgressParser, executionOptionsWithProgress } from '../progress'
 import { IRemote } from '../../models/remote'
 import { envForRemoteOperation } from './environment'
 import { Branch } from '../../models/branch'
+import { formatAsLocalRef } from './refs'
 
 function getTagPushRefspec(tagName: string): string {
   return `refs/tags/${tagName}:refs/tags/${tagName}`
+}
+
+function getBranchPushRefspec(
+  localBranch: string,
+  remoteBranch: string | null
+): string {
+  const localRef = formatAsLocalRef(localBranch)
+  const remoteRef = formatAsLocalRef(remoteBranch ?? localBranch)
+
+  return `${localRef}:${remoteRef}`
 }
 
 export type PushOptions = {
@@ -61,7 +72,7 @@ export async function push(
   const args = [
     'push',
     remote.name,
-    remoteBranch ? `${localBranch}:${remoteBranch}` : localBranch,
+    getBranchPushRefspec(localBranch, remoteBranch),
   ]
 
   if (tagsToPush !== null) {

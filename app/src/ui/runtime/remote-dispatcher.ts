@@ -126,15 +126,30 @@ export function createRemoteDispatcher(
 }
 
 function openURLInNewTab(url: string): boolean {
-  const popup = window.open('about:blank', '_blank')
-  if (popup !== null) {
-    try {
-      popup.opener = null
-    } catch {
-      // Best effort only. Some browser configurations disallow changing opener.
-    }
+  const parsedURL = parseURL(url)
+  const hash = parsedURL?.hash ?? ''
 
-    popup.location.href = url
+  if (hash.startsWith('#diff-') && parsedURL !== null) {
+    const urlWithoutHash = new URL(parsedURL.toString())
+    urlWithoutHash.hash = ''
+
+    const popup = window.open(urlWithoutHash.toString(), '_blank')
+    if (popup !== null) {
+      window.setTimeout(() => {
+        try {
+          popup.location.href = url
+        } catch {
+          // If the browser refuses a delayed cross-origin navigation, the
+          // initial tab still lands on the commit page.
+        }
+      }, 1200)
+
+      return true
+    }
+  }
+
+  const popup = window.open(url, '_blank')
+  if (popup !== null) {
     return true
   }
 
@@ -149,6 +164,14 @@ function openURLInNewTab(url: string): boolean {
   anchor.remove()
 
   return true
+}
+
+function parseURL(url: string): URL | null {
+  try {
+    return new URL(url)
+  } catch {
+    return null
+  }
 }
 
 function containsFunction(value: unknown, seen = new WeakSet<object>()): boolean {

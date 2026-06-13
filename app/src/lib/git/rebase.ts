@@ -538,6 +538,66 @@ export async function continueRebase(
   return parseRebaseResult(result)
 }
 
+export async function continueRebaseWithEmptyCommit(
+  repository: Repository,
+  commitMessagePath?: string,
+  opts?: RebaseInteractiveOptions
+): Promise<RebaseResult> {
+  const baseOptions: IGitStringExecutionOptions = {
+    expectedErrors: new Set([
+      GitError.RebaseConflicts,
+      GitError.UnresolvedConflicts,
+    ]),
+    env: {
+      GIT_EDITOR: opts?.gitEditor ?? ':',
+    },
+  }
+
+  let options = baseOptions
+
+  if (opts?.progressCallback && opts.commits !== undefined) {
+    options = configureOptionsForRebase(baseOptions, {
+      commits: opts.commits,
+      progressCallback: opts.progressCallback,
+    })
+  }
+
+  options = {
+    ...options,
+    onTerminalOutputAvailable: opts?.onTerminalOutputAvailable,
+    onHookFailure: opts?.onHookFailure,
+    onHookProgress: opts?.onHookProgress,
+  }
+
+  const amendArgs = ['commit', '--amend', '--allow-empty']
+
+  if (opts?.noVerify) {
+    amendArgs.push('--no-verify')
+  }
+
+  if (commitMessagePath !== undefined) {
+    amendArgs.push('-F', commitMessagePath)
+  } else {
+    amendArgs.push('--no-edit')
+  }
+
+  await git(
+    amendArgs,
+    repository.path,
+    'continueRebaseWithEmptyCommit',
+    options
+  )
+
+  const result = await git(
+    ['rebase', '--continue', ...(opts?.noVerify ? ['--no-verify'] : [])],
+    repository.path,
+    'continueRebaseAfterEmptyCommit',
+    options
+  )
+
+  return parseRebaseResult(result)
+}
+
 export type RebaseInteractiveOptions = {
   /**
    * a description of the action to be displayed in the progress dialog - i.e. Squash, Amend, etc..

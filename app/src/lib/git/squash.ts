@@ -5,7 +5,32 @@ import { MultiCommitOperationKind } from '../../models/multi-commit-operation'
 import { IMultiCommitOperationProgress } from '../../models/progress'
 import { Repository } from '../../models/repository'
 import { getTempFilePath } from '../file-system'
-import { rebaseInteractive, RebaseResult } from './rebase'
+import {
+  continueRebaseWithEmptyCommit,
+  rebaseInteractive,
+  RebaseResult,
+} from './rebase'
+
+function isEmptyCommitRebaseStop(error: unknown): boolean {
+  const result = (error as { result?: { stdout?: unknown; stderr?: unknown } })
+    .result
+  const message = error instanceof Error ? error.message : ''
+  const output = [result?.stdout, result?.stderr, message]
+    .filter(value => value !== undefined && value !== null)
+    .map(value => String(value))
+    .join('\n')
+
+  const hasEmptyCommitHint =
+    output.includes('--allow-empty') &&
+    (output.includes('empty commit') || output.includes('空提交'))
+
+  const hasRebaseContinueHint =
+    output.includes('rebase --continue') ||
+    output.includes('变基操作正在进行') ||
+    output.includes('interactive rebase')
+
+  return hasEmptyCommitHint && hasRebaseContinueHint
+}
 
 /**
  * Squashes provided commits by calling interactive rebase.
@@ -145,17 +170,35 @@ export async function squash(
     const gitEditor =
       messagePath !== undefined ? `cat "${messagePath}" >` : undefined
 
-    result = await rebaseInteractive(
-      repository,
-      todoPath,
-      lastRetainedCommitRef,
-      {
-        action: MultiCommitOperationKind.Squash,
-        gitEditor,
-        progressCallback,
-        commits: [...toSquash, squashOnto],
+    const rebaseOptions = {
+      action: MultiCommitOperationKind.Squash,
+      gitEditor,
+      progressCallback,
+      commits: [...toSquash, squashOnto],
+    }
+
+    try {
+      result = await rebaseInteractive(
+        repository,
+        todoPath,
+        lastRetainedCommitRef,
+        rebaseOptions
+      )
+    } catch (e) {
+      if (!isEmptyCommitRebaseStop(e)) {
+        throw e
       }
-    )
+
+      log.info('[squash] accepting empty squashed commit during rebase')
+      result = await continueRebaseWithEmptyCommit(
+        repository,
+        messagePath,
+        {
+          ...rebaseOptions,
+          action: 'continue empty squash rebase',
+        }
+      )
+    }
   } catch (e) {
     log.error(e)
     return RebaseResult.Error
