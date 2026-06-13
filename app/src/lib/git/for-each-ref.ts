@@ -9,7 +9,7 @@ import {
 } from '../../models/branch'
 import { createForEachRefParser } from './git-delimiter-parser'
 
-function getBranchShortName(fullName: string, fallbackShortName: string) {
+function getBranchShortName(fullName: string) {
   const localPrefix = 'refs/heads/'
   if (fullName.startsWith(localPrefix)) {
     return fullName.substring(localPrefix.length)
@@ -20,7 +20,7 @@ function getBranchShortName(fullName: string, fallbackShortName: string) {
     return fullName.substring(remotePrefix.length)
   }
 
-  return fallbackShortName
+  return fullName
 }
 
 /** Get all the branches. */
@@ -30,9 +30,7 @@ export async function getBranches(
 ): Promise<ReadonlyArray<Branch>> {
   const { formatArgs, parse } = createForEachRefParser({
     fullName: '%(refname)',
-    shortName: '%(refname:short)',
     upstreamFullName: '%(upstream)',
-    upstreamShortName: '%(upstream:short)',
     sha: '%(objectname)',
     symRef: '%(symref)',
   })
@@ -64,7 +62,7 @@ export async function getBranches(
     }
 
     const tip: IBranchTip = { sha: ref.sha }
-    const name = getBranchShortName(ref.fullName, ref.shortName)
+    const name = getBranchShortName(ref.fullName)
 
     const type = ref.fullName.startsWith('refs/heads')
       ? BranchType.Local
@@ -72,7 +70,7 @@ export async function getBranches(
 
     const upstream =
       ref.upstreamFullName.length > 0
-        ? getBranchShortName(ref.upstreamFullName, ref.upstreamShortName)
+        ? getBranchShortName(ref.upstreamFullName)
         : null
 
     branches.push(new Branch(name, upstream, tip, type, ref.fullName))

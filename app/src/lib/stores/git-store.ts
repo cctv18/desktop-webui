@@ -108,6 +108,11 @@ const LoadingHistoryRequestKey = 'history'
 /** The max number of recent branches to find. */
 const RecentBranchesLimit = 5
 
+function getNormalizedLocalBranchName(name: string) {
+  const headsPrefix = 'heads/'
+  return name.startsWith(headsPrefix) ? name.substring(headsPrefix.length) : name
+}
+
 /** The store for a repository's git data. */
 export class GitStore extends BaseStore {
   /** The commits keyed by their SHA. */
@@ -549,9 +554,7 @@ export class GitStore extends BaseStore {
 
       const branch =
         branchesByName.get(name) ??
-        (name.startsWith('heads/')
-          ? branchesByName.get(name.substring('heads/'.length))
-          : undefined)
+        branchesByName.get(getNormalizedLocalBranchName(name))
 
       if (!branch) {
         // This means the recent branch has been deleted. That's fine.
@@ -1146,14 +1149,15 @@ export class GitStore extends BaseStore {
 
     if (currentBranch || currentTip) {
       if (currentTip && currentBranch) {
+        const branchName = getNormalizedLocalBranchName(currentBranch)
         const branchTipCommit = await this.lookupCommit(currentTip)
 
         const branch = new Branch(
-          currentBranch,
+          branchName,
           status.currentUpstreamBranch || null,
           branchTipCommit,
           BranchType.Local,
-          `refs/heads/${currentBranch}`
+          `refs/heads/${branchName}`
         )
         this._tip = { kind: TipState.Valid, branch }
       } else if (currentTip) {

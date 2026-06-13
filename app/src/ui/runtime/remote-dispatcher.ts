@@ -126,8 +126,16 @@ export function createRemoteDispatcher(
 }
 
 function openURLInNewTab(url: string): boolean {
-  const popup = window.open(url, '_blank')
+  const popup = window.open('about:blank', '_blank')
   if (popup !== null) {
+    try {
+      popup.opener = null
+      popup.focus()
+      popup.location.replace(url)
+    } catch {
+      popup.location.href = url
+    }
+
     return true
   }
 
