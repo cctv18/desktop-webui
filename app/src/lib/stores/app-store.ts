@@ -4190,7 +4190,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         return
       }
 
-      const status = await getStatus(repository)
+      const status = await getStatus(repository, true, false, true)
 
       if (status === null) {
         this.selectedRepositoryStatusSnapshots.delete(repository.id)

@@ -547,7 +547,12 @@ export class GitStore extends BaseStore {
         continue
       }
 
-      const branch = branchesByName.get(name)
+      const branch =
+        branchesByName.get(name) ??
+        (name.startsWith('heads/')
+          ? branchesByName.get(name.substring('heads/'.length))
+          : undefined)
+
       if (!branch) {
         // This means the recent branch has been deleted. That's fine.
         continue
@@ -1128,7 +1133,7 @@ export class GitStore extends BaseStore {
 
   public async loadStatus(): Promise<IStatusResult | null> {
     const status = await this.performFailableOperation(() =>
-      getStatus(this.repository)
+      getStatus(this.repository, true, false, true)
     )
 
     if (!status) {

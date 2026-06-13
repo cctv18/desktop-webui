@@ -202,12 +202,25 @@ export async function getStatus(
 export async function getStatus(
   repository: Repository,
   includeUntracked: boolean,
+  rejectOnError: true,
+  suppressSuccessfulCommandLogging: boolean
+): Promise<IStatusResult>
+export async function getStatus(
+  repository: Repository,
+  includeUntracked: boolean,
   rejectOnError: false
 ): Promise<IStatusResult | null>
 export async function getStatus(
   repository: Repository,
+  includeUntracked: boolean,
+  rejectOnError: false,
+  suppressSuccessfulCommandLogging: boolean
+): Promise<IStatusResult | null>
+export async function getStatus(
+  repository: Repository,
   includeUntracked = true,
-  rejectOnError = false
+  rejectOnError = false,
+  suppressSuccessfulCommandLogging = false
 ): Promise<IStatusResult | null> {
   const args = [
     '--no-optional-locks',
@@ -221,6 +234,7 @@ export async function getStatus(
   const { stdout, exitCode } = await git(args, repository.path, 'getStatus', {
     successExitCodes: new Set(rejectOnError ? [0] : [0, 128]),
     encoding: 'buffer',
+    suppressSuccessfulCommandLogging,
   })
 
   if (exitCode === 128) {

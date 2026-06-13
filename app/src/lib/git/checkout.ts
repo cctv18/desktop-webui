@@ -25,9 +25,19 @@ function getCheckoutArgs(progressCallback?: ProgressCallback) {
   return ['checkout', ...(progressCallback ? ['--progress'] : [])]
 }
 
+function getBranchCheckoutTarget(branch: Branch) {
+  if (branch.type === BranchType.Local && branch.ref.startsWith('refs/heads/')) {
+    return branch.ref
+  }
+
+  return branch.name
+}
+
 async function getBranchCheckoutArgs(branch: Branch) {
+  const checkoutTarget = getBranchCheckoutTarget(branch)
+
   return [
-    branch.name,
+    checkoutTarget,
     ...(branch.type === BranchType.Remote
       ? ['-b', branch.nameWithoutRemote]
       : []),

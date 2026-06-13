@@ -87,6 +87,12 @@ export interface IGitExecutionOptions
   readonly isBackgroundTask?: boolean
 
   readonly interceptHooks?: string[]
+
+  /**
+   * Suppress the standard "Executing ..." timing log when the command exits
+   * cleanly. Non-zero exits and thrown errors are still logged.
+   */
+  readonly suppressSuccessfulCommandLogging?: boolean
 }
 
 /**
@@ -279,20 +285,26 @@ export async function git(
         async env => {
           const commandName = `${name}: git ${args.join(' ')}`
 
-          const result = await GitPerf.measure(commandName, () =>
-            exec(args, path, {
-              ...opts,
-              env: {
-                // Explicitly set TERM to 'dumb' so that if Desktop was launched
-                // from a terminal or if the system environment variables
-                // have TERM set Git won't consider us as a smart terminal.
-                // See https://github.com/git/git/blob/a7312d1a2/editor.c#L11-L15
-                TERM: 'dumb',
-                ...opts.env,
-                ...hooksEnv,
-                ...env,
-              },
-            })
+          const result = await GitPerf.measure(
+            commandName,
+            () =>
+              exec(args, path, {
+                ...opts,
+                env: {
+                  // Explicitly set TERM to 'dumb' so that if Desktop was launched
+                  // from a terminal or if the system environment variables
+                  // have TERM set Git won't consider us as a smart terminal.
+                  // See https://github.com/git/git/blob/a7312d1a2/editor.c#L11-L15
+                  TERM: 'dumb',
+                  ...opts.env,
+                  ...hooksEnv,
+                  ...env,
+                },
+              }),
+            {
+              suppressSuccessfulCommandLogging:
+                opts.suppressSuccessfulCommandLogging,
+            }
           ).catch(err => {
             // If this is an exception thrown by Node.js (as opposed to
             // dugite) let's keep the salient details but include the name of
