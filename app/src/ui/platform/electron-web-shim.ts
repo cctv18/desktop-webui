@@ -8,7 +8,6 @@ import {
   getWebMenuEventForItem,
   getWebMenuExternalURL,
 } from '../../lib/webui-app-menu'
-import { invokeWebUIRPC } from '../../lib/webui-rpc'
 
 const noop = () => undefined
 const storagePrefix = 'gitdesk-webui:'
@@ -191,7 +190,7 @@ export const clipboard = {
   writeText(text: string) {
     writeTextWithLegacyClipboard(text)
     navigator.clipboard?.writeText(text).catch(() => undefined)
-    invokeWebUIRPC('clipboard.writeText', [text]).catch(() => undefined)
+    writeTextWithServerClipboard(text)
   },
   readText() {
     return ''
@@ -216,6 +215,19 @@ function writeTextWithLegacyClipboard(text: string) {
   } finally {
     textarea.remove()
   }
+}
+
+function writeTextWithServerClipboard(text: string) {
+  fetch('/api/rpc', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      method: 'clipboard.writeText',
+      params: [text],
+    }),
+  }).catch(() => undefined)
 }
 
 export const shell = {
