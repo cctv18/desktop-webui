@@ -4,6 +4,7 @@ set -euo pipefail
 
 HOST_ADDRESS="127.0.0.1"
 PORT="8080"
+PUBLIC_URL=""
 ALLOWED_ROOT=""
 PRODUCTION=0
 NO_START=0
@@ -15,6 +16,11 @@ GIT_DIRECTORY=""
 GIT_EXEC_PATH_ARG=""
 GIT_CONFIG_GLOBAL=""
 DATA_DIR=""
+STATIC_ROOT=""
+COPILOT_CLI_PATH=""
+OAUTH_CLIENT_ID=""
+OAUTH_CLIENT_SECRET=""
+OAUTH_CALLBACK_URL=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -26,6 +32,7 @@ Usage: bash script/deploy-webui.sh [options]
 Options:
   --host <host>            Host to bind. Default: 127.0.0.1
   --port <port>            Port to bind. Default: 8080
+  --public-url <url>       Browser-visible WebUI base URL
   --allowed-root <path>    Filesystem root WebUI may access. Default: project root
   --production             Build production WebUI bundle
   --no-start               Install and compile only
@@ -37,6 +44,14 @@ Options:
   --git-config-global <path>
                            Independent WebUI global gitconfig path
   --data-dir <path>        Independent WebUI account/token data directory
+  --static-root <path>     Web static asset directory
+  --copilot-cli-path <path>
+                           Copilot CLI index.js path or package directory
+  --oauth-client-id <id>   Override the built-in GitHub OAuth client id
+  --oauth-client-secret <secret>
+                           GitHub OAuth client secret
+  --oauth-callback-url <url>
+                           GitHub OAuth callback URL
   --log-file <path>        Write full deploy output to a log file. Default: out/webui-deploy.log
   --no-log-file            Do not write a deploy log file
   -h, --help               Show this help
@@ -51,6 +66,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port)
       PORT="$2"
+      shift 2
+      ;;
+    --public-url)
+      PUBLIC_URL="$2"
       shift 2
       ;;
     --allowed-root)
@@ -93,6 +112,26 @@ while [[ $# -gt 0 ]]; do
       DATA_DIR="$2"
       shift 2
       ;;
+    --static-root)
+      STATIC_ROOT="$2"
+      shift 2
+      ;;
+    --copilot-cli-path)
+      COPILOT_CLI_PATH="$2"
+      shift 2
+      ;;
+    --oauth-client-id)
+      OAUTH_CLIENT_ID="$2"
+      shift 2
+      ;;
+    --oauth-client-secret)
+      OAUTH_CLIENT_SECRET="$2"
+      shift 2
+      ;;
+    --oauth-callback-url)
+      OAUTH_CALLBACK_URL="$2"
+      shift 2
+      ;;
     --log-file)
       LOG_FILE="$2"
       shift 2
@@ -123,6 +162,18 @@ step() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+default_public_url() {
+  local url_host="$HOST_ADDRESS"
+
+  if [[ "$url_host" == "0.0.0.0" || "$url_host" == "::" || "$url_host" == "[::]" ]]; then
+    url_host="127.0.0.1"
+  elif [[ "$url_host" == *:* && "$url_host" != \[* ]]; then
+    url_host="[$url_host]"
+  fi
+
+  printf 'http://%s:%s' "$url_host" "$PORT"
 }
 
 run() {
@@ -222,7 +273,8 @@ project_dependencies_present() {
     -d "$PROJECT_ROOT/node_modules/ts-node" &&
     -d "$PROJECT_ROOT/node_modules/webpack" &&
     -d "$PROJECT_ROOT/app/node_modules/react" &&
-    -d "$PROJECT_ROOT/app/node_modules/dugite"
+    -d "$PROJECT_ROOT/app/node_modules/dugite" &&
+    -d "$PROJECT_ROOT/app/node_modules/@github/copilot"
   ]]
 }
 
@@ -310,32 +362,66 @@ if [[ "$NO_START" -eq 1 ]]; then
   exit 0
 fi
 
-step "Starting GitDesk WebUI on http://$HOST_ADDRESS:$PORT"
-node_args=(
-  out/web-server.js
+runtime_script="$PROJECT_ROOT/out/run-webui.sh"
+if [[ ! -f "$runtime_script" ]]; then
+  echo "WebUI runtime launcher was not produced: $runtime_script" >&2
+  exit 1
+fi
+
+if [[ ! -x "$runtime_script" ]]; then
+  chmod +x "$runtime_script" || true
+fi
+
+if [[ -z "$PUBLIC_URL" ]]; then
+  PUBLIC_URL="$(default_public_url)"
+fi
+
+step "Starting GitDesk WebUI via out/run-webui.sh on $PUBLIC_URL"
+run_args=(
   --host "$HOST_ADDRESS"
   --port "$PORT"
+  --public-url "$PUBLIC_URL"
   --allowedRoot "$ALLOWED_ROOT"
 )
 
 if [[ -n "$GIT_PATH" ]]; then
-  node_args+=(--git-path "$GIT_PATH")
+  run_args+=(--git-path "$GIT_PATH")
 fi
 
 if [[ -n "$GIT_DIRECTORY" ]]; then
-  node_args+=(--git-directory "$GIT_DIRECTORY")
+  run_args+=(--git-directory "$GIT_DIRECTORY")
 fi
 
 if [[ -n "$GIT_EXEC_PATH_ARG" ]]; then
-  node_args+=(--git-exec-path "$GIT_EXEC_PATH_ARG")
+  run_args+=(--git-exec-path "$GIT_EXEC_PATH_ARG")
 fi
 
 if [[ -n "$GIT_CONFIG_GLOBAL" ]]; then
-  node_args+=(--git-config-global "$GIT_CONFIG_GLOBAL")
+  run_args+=(--git-config-global "$GIT_CONFIG_GLOBAL")
 fi
 
 if [[ -n "$DATA_DIR" ]]; then
-  node_args+=(--data-dir "$DATA_DIR")
+  run_args+=(--data-dir "$DATA_DIR")
 fi
 
-run node "${node_args[@]}"
+if [[ -n "$STATIC_ROOT" ]]; then
+  run_args+=(--static-root "$STATIC_ROOT")
+fi
+
+if [[ -n "$COPILOT_CLI_PATH" ]]; then
+  run_args+=(--copilot-cli-path "$COPILOT_CLI_PATH")
+fi
+
+if [[ -n "$OAUTH_CLIENT_ID" ]]; then
+  run_args+=(--oauth-client-id "$OAUTH_CLIENT_ID")
+fi
+
+if [[ -n "$OAUTH_CLIENT_SECRET" ]]; then
+  run_args+=(--oauth-client-secret "$OAUTH_CLIENT_SECRET")
+fi
+
+if [[ -n "$OAUTH_CALLBACK_URL" ]]; then
+  run_args+=(--oauth-callback-url "$OAUTH_CALLBACK_URL")
+fi
+
+run "$runtime_script" "${run_args[@]}"

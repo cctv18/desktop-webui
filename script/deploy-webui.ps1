@@ -1,6 +1,7 @@
 param(
   [string]$HostAddress = "127.0.0.1",
   [int]$Port = 8080,
+  [string]$PublicUrl = "",
   [string]$AllowedRoot = "",
   [switch]$Production,
   [switch]$NoStart,
@@ -11,6 +12,11 @@ param(
   [string]$GitExecPath = "",
   [string]$GitConfigGlobal = "",
   [string]$DataDir = "",
+  [string]$StaticRoot = "",
+  [string]$CopilotCliPath = "",
+  [string]$OAuthClientId = "",
+  [string]$OAuthClientSecret = "",
+  [string]$OAuthCallbackUrl = "",
   [string]$LogFile = "out\webui-deploy.log"
 )
 
@@ -86,6 +92,18 @@ function Refresh-Path {
 function Test-Command {
   param([string]$Name)
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-DefaultPublicUrl {
+  $urlHost = $HostAddress
+
+  if ($urlHost -eq "0.0.0.0" -or $urlHost -eq "::" -or $urlHost -eq "[::]") {
+    $urlHost = "127.0.0.1"
+  } elseif ($urlHost.Contains(":") -and -not $urlHost.StartsWith("[")) {
+    $urlHost = "[$urlHost]"
+  }
+
+  return "http://$urlHost`:$Port"
 }
 
 function Invoke-Step {
@@ -183,7 +201,8 @@ function Test-ProjectDependencies {
     (Test-Path (Join-Path $ProjectRoot "node_modules\ts-node")) -and
     (Test-Path (Join-Path $ProjectRoot "node_modules\webpack")) -and
     (Test-Path (Join-Path $ProjectRoot "app\node_modules\react")) -and
-    (Test-Path (Join-Path $ProjectRoot "app\node_modules\dugite"))
+    (Test-Path (Join-Path $ProjectRoot "app\node_modules\dugite")) -and
+    (Test-Path (Join-Path $ProjectRoot "app\node_modules\@github\copilot"))
   )
 }
 
@@ -264,37 +283,70 @@ if ($NoStart) {
   exit 0
 }
 
-Write-Step "Starting GitDesk WebUI on http://$HostAddress`:$Port"
-$nodeArguments = @(
-  "out\web-server.js",
-  "--host",
+$runScript = Join-Path $ProjectRoot "out\run-webui.ps1"
+if (-not (Test-Path $runScript)) {
+  throw "WebUI runtime launcher was not produced: $runScript"
+}
+
+if ([string]::IsNullOrWhiteSpace($PublicUrl)) {
+  $PublicUrl = Get-DefaultPublicUrl
+}
+
+Write-Step "Starting GitDesk WebUI via out\run-webui.ps1 on $PublicUrl"
+$runArguments = @(
+  "-HostAddress",
   $HostAddress,
-  "--port",
+  "-Port",
   "$Port",
-  "--allowedRoot",
+  "-PublicUrl",
+  $PublicUrl,
+  "-AllowedRoot",
   $AllowedRoot
 )
 
 if (-not [string]::IsNullOrWhiteSpace($GitPath)) {
-  $nodeArguments += @("--git-path", $GitPath)
+  $runArguments += @("-GitPath", $GitPath)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($GitDirectory)) {
-  $nodeArguments += @("--git-directory", $GitDirectory)
+  $runArguments += @("-GitDirectory", $GitDirectory)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($GitExecPath)) {
-  $nodeArguments += @("--git-exec-path", $GitExecPath)
+  $runArguments += @("-GitExecPath", $GitExecPath)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($GitConfigGlobal)) {
-  $nodeArguments += @("--git-config-global", $GitConfigGlobal)
+  $runArguments += @("-GitConfigGlobal", $GitConfigGlobal)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($DataDir)) {
-  $nodeArguments += @("--data-dir", $DataDir)
+  $runArguments += @("-DataDir", $DataDir)
 }
 
-Invoke-Step "node" $nodeArguments
+if (-not [string]::IsNullOrWhiteSpace($StaticRoot)) {
+  $runArguments += @("-StaticRoot", $StaticRoot)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($CopilotCliPath)) {
+  $runArguments += @("-CopilotCliPath", $CopilotCliPath)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($OAuthClientId)) {
+  $runArguments += @("-OAuthClientId", $OAuthClientId)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($OAuthClientSecret)) {
+  $runArguments += @("-OAuthClientSecret", $OAuthClientSecret)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($OAuthCallbackUrl)) {
+  $runArguments += @("-OAuthCallbackUrl", $OAuthCallbackUrl)
+}
+
+& $runScript @runArguments
+if ($LASTEXITCODE -ne 0) {
+  throw "Command failed with exit code ${LASTEXITCODE}: $runScript $($runArguments -join ' ')"
+}
 
 Stop-DeployLog

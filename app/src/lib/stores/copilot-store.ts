@@ -36,7 +36,7 @@ import {
 } from '../copilot-conflict-context'
 import * as ipcRenderer from '../ipc-renderer'
 import { startTimer } from '../../ui/lib/timing'
-import { join } from 'path'
+import { isAbsolute, join } from 'path'
 import { pathToFileURL } from 'url'
 import { randomBytes } from 'crypto'
 import { BaseStore } from './base-store'
@@ -133,6 +133,27 @@ export async function getCopilotCLIPath(): Promise<string> {
 
 function getCopilotCLIDir(): string {
   return join(__dirname, 'copilot')
+}
+
+function getCopilotCLIIndexPath(): string {
+  const configuredPath = process.env.GITDESK_WEBUI_COPILOT_CLI_PATH
+
+  if (configuredPath !== undefined && configuredPath.trim().length > 0) {
+    return resolveCopilotCLIIndexPath(configuredPath)
+  }
+
+  return join(getCopilotCLIDir(), 'index.js')
+}
+
+function resolveCopilotCLIIndexPath(value: string): string {
+  const trimmedValue = value.trim()
+  const resolvedPath = isAbsolute(trimmedValue)
+    ? trimmedValue
+    : join(__dirname, trimmedValue)
+
+  return resolvedPath.endsWith('.js')
+    ? resolvedPath
+    : join(resolvedPath, 'index.js')
 }
 
 /**
@@ -660,8 +681,7 @@ export class CopilotStore extends BaseStore {
     // However, when trying to do this directly without the --eval flag, Copilot
     // CLI fails to parse the arguments correctly, so we ended up using --eval
     // and just importing the index.js from the CLI as a workaround.
-    const cliDir = getCopilotCLIDir()
-    const indexPath = join(cliDir, 'index.js')
+    const indexPath = getCopilotCLIIndexPath()
 
     // Make sure the import path exists before creating the client, so we don't
     // end up with a half-broken client that can't start. We check the
@@ -677,7 +697,8 @@ export class CopilotStore extends BaseStore {
       ? pathToFileURL(indexPath).href
       : indexPath
 
-    return new CopilotClient({
+    const clientOptions = {
+      cliPath: indexPath,
       connection: RuntimeConnection.forStdio({
         path: await getCopilotCLIPath(),
         args: ['--eval', `import '${importSpecifier}'`, '--'],
@@ -688,7 +709,9 @@ export class CopilotStore extends BaseStore {
       },
       workingDirectory: repositoryPath,
       gitHubToken: this.currentAccount.token,
-    })
+    }
+
+    return new CopilotClient(clientOptions)
   }
 
   /**

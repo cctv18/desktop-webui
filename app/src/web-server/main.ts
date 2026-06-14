@@ -12,14 +12,21 @@ type ServerEvent = {
 }
 
 const args = parseArgs(process.argv.slice(2))
+const DefaultWebUIOAuthClientId = 'Ov23liz1Wb08XDEhs7tm'
 const host = args.host ?? process.env.GITDESK_HOST ?? '127.0.0.1'
 const port = parseInt(args.port ?? process.env.GITDESK_PORT ?? '8080', 10)
 const staticRoot =
-  args.staticRoot ?? process.env.GITDESK_STATIC_ROOT ?? Path.join(__dirname, 'web')
+  args.staticRoot ??
+  args['static-root'] ??
+  process.env.GITDESK_STATIC_ROOT ??
+  Path.join(__dirname, 'web')
 process.env.GITDESK_WEBUI_STATIC_ROOT = staticRoot
 setEnvIfValue(
   'GITDESK_WEBUI_OAUTH_CLIENT_ID',
-  args.oauthClientId ?? args['oauth-client-id']
+  args.oauthClientId ??
+    args['oauth-client-id'] ??
+    process.env.GITDESK_WEBUI_OAUTH_CLIENT_ID ??
+    DefaultWebUIOAuthClientId
 )
 setEnvIfValue(
   'GITDESK_WEBUI_OAUTH_CLIENT_SECRET',
@@ -44,6 +51,10 @@ setEnvIfValue(
 setEnvIfValue(
   'GITDESK_WEBUI_GIT_CONFIG_GLOBAL',
   args.gitConfigGlobal ?? args['git-config-global']
+)
+setEnvIfValue(
+  'GITDESK_WEBUI_COPILOT_CLI_PATH',
+  args.copilotCliPath ?? args['copilot-cli-path']
 )
 const publicBaseURL = resolvePublicBaseURL(
   args.publicUrl ?? args['public-url'] ?? process.env.GITDESK_WEBUI_URL,
@@ -226,6 +237,23 @@ function serveStatic(pathname: string, res: Http.ServerResponse) {
 
   Fs.readFile(absolutePath, (error, data) => {
     if (error) {
+      const fallbackPath = getStaticFallbackPath(requestedPath)
+
+      if (fallbackPath !== null && fallbackPath !== absolutePath) {
+        Fs.readFile(fallbackPath, (fallbackError, fallbackData) => {
+          if (fallbackError) {
+            writeJson(res, 404, { error: 'Not found' })
+            return
+          }
+
+          res.writeHead(200, {
+            'Content-Type': contentType(fallbackPath),
+          })
+          res.end(fallbackData)
+        })
+        return
+      }
+
       writeJson(res, 404, { error: 'Not found' })
       return
     }
@@ -233,6 +261,14 @@ function serveStatic(pathname: string, res: Http.ServerResponse) {
     res.writeHead(200, { 'Content-Type': contentType(absolutePath) })
     res.end(data)
   })
+}
+
+function getStaticFallbackPath(requestedPath: string) {
+  if (requestedPath !== '/favicon.ico') {
+    return null
+  }
+
+  return Path.resolve(staticRoot, 'static', 'favicon.ico')
 }
 
 function decodeURLPathname(pathname: string) {
@@ -327,6 +363,8 @@ function contentType(file: string) {
       return 'image/jpeg'
     case '.svg':
       return 'image/svg+xml'
+    case '.ico':
+      return 'image/x-icon'
     default:
       return 'application/octet-stream'
   }

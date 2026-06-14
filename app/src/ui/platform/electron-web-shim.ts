@@ -679,22 +679,50 @@ function appendMenuRow(
 ) {
   const row = document.createElement('div')
   const enabled = item.enabled !== false
-  const labelPrefix =
-    item.type === 'checkbox' ? (item.checked ? '[x] ' : '[ ] ') : ''
-  const label = `${labelPrefix}${item.label ?? item.role ?? ''}`
+  const label = `${item.label ?? item.role ?? ''}`
 
-  row.textContent = item.submenu === undefined ? label : `${label} >`
   row.dataset.indices = indices.join(',')
   row.style.boxSizing = 'border-box'
-  row.style.display = 'block'
+  row.style.display = 'flex'
+  row.style.alignItems = 'center'
   row.style.width = '100%'
-  row.style.padding = '5px 28px 5px 16px'
+  row.style.padding = '5px 28px 5px 28px'
+  row.style.position = 'relative'
   row.style.whiteSpace = 'nowrap'
   row.style.overflow = 'hidden'
   row.style.textOverflow = 'ellipsis'
   row.style.cursor = enabled ? 'default' : 'not-allowed'
   row.style.opacity = enabled ? '1' : '0.5'
-  row.setAttribute('role', 'menuitem')
+  row.setAttribute(
+    'role',
+    item.type === 'checkbox' ? 'menuitemcheckbox' : 'menuitem'
+  )
+
+  const checkmark = document.createElement('span')
+  checkmark.textContent =
+    item.type === 'checkbox' && item.checked ? '\u2713' : ''
+  checkmark.style.position = 'absolute'
+  checkmark.style.left = '10px'
+  checkmark.style.width = '12px'
+  checkmark.style.textAlign = 'center'
+  checkmark.style.pointerEvents = 'none'
+  row.appendChild(checkmark)
+
+  const labelElement = document.createElement('span')
+  labelElement.textContent = label
+  labelElement.style.display = 'block'
+  labelElement.style.overflow = 'hidden'
+  labelElement.style.textOverflow = 'ellipsis'
+  row.appendChild(labelElement)
+
+  if (item.submenu !== undefined) {
+    const submenuArrow = document.createElement('span')
+    submenuArrow.textContent = '>'
+    submenuArrow.style.position = 'absolute'
+    submenuArrow.style.right = '10px'
+    submenuArrow.style.pointerEvents = 'none'
+    row.appendChild(submenuArrow)
+  }
 
   if (enabled) {
     row.addEventListener('mouseenter', () => {

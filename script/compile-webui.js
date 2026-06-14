@@ -164,14 +164,9 @@ function copyWebRuntimeAssets() {
   const emojiJsonDestination = path.join(webOutDir, 'emoji.json')
   const faviconSource = path.join(commonStaticSource, 'favicon.ico')
   const faviconDestination = path.join(webOutDir, 'favicon.ico')
-  const copilotSource = path.join(
-    projectRoot,
-    'app',
-    'node_modules',
-    '@github',
-    'copilot'
-  )
+  const copilotSource = resolvePackageDir('@github/copilot')
   const copilotDestination = path.join(outDir, 'copilot')
+  const runtimeFiles = writeRuntimeLauncherFiles()
   let copiedCopilot = false
 
   fs.mkdirSync(webOutDir, { recursive: true })
@@ -207,6 +202,7 @@ function copyWebRuntimeAssets() {
       verbatimSymlinks: true,
     })
     copiedCopilot = true
+    copyCopilotNodePackages()
   } else {
     appendUtf8File(
       diagnosticsLogPath,
@@ -220,6 +216,9 @@ function copyWebRuntimeAssets() {
     `Copied favicon to: ${faviconDestination}`,
     `Copied emoji images to: ${emojiImagesDestination}`,
     `Copied emoji metadata to: ${emojiJsonDestination}`,
+    `Wrote runtime config to: ${runtimeFiles.serverConfigPath}`,
+    `Wrote POSIX launcher to: ${runtimeFiles.shellLauncherPath}`,
+    `Wrote PowerShell launcher to: ${runtimeFiles.powershellLauncherPath}`,
     copiedCopilot
       ? `Copied Copilot CLI to: ${copilotDestination}`
       : `Copilot CLI source not found: ${copilotSource}`,
@@ -228,6 +227,486 @@ function copyWebRuntimeAssets() {
   ].join('\n')
 
   appendBuildLog(text)
+}
+
+function resolvePackageDir(packageName) {
+  try {
+    return path.dirname(
+      require.resolve(`${packageName}/package.json`, {
+        paths: [path.join(projectRoot, 'app')],
+      })
+    )
+  } catch {
+    return path.join(
+      projectRoot,
+      'app',
+      'node_modules',
+      ...packageName.split('/')
+    )
+  }
+}
+
+function copyCopilotNodePackages() {
+  const githubSourceDir = path.join(
+    projectRoot,
+    'app',
+    'node_modules',
+    '@github'
+  )
+  const githubDestinationDir = path.join(outDir, 'node_modules', '@github')
+
+  fs.rmSync(githubDestinationDir, { recursive: true, force: true })
+
+  if (fs.existsSync(githubSourceDir)) {
+    fs.mkdirSync(githubDestinationDir, { recursive: true })
+
+    for (const entry of fs.readdirSync(githubSourceDir)) {
+      if (!entry.startsWith('copilot')) {
+        continue
+      }
+
+      fs.cpSync(
+        path.join(githubSourceDir, entry),
+        path.join(githubDestinationDir, entry),
+        {
+          recursive: true,
+          verbatimSymlinks: true,
+        }
+      )
+    }
+  } else {
+    appendUtf8File(
+      diagnosticsLogPath,
+      `Copilot scoped packages source not found: ${githubSourceDir}\n`
+    )
+  }
+
+  copyPackageToRuntimeNodeModules('detect-libc')
+}
+
+function copyPackageToRuntimeNodeModules(packageName) {
+  const source = resolvePackageDir(packageName)
+  const destination = path.join(outDir, 'node_modules', ...packageName.split('/'))
+
+  fs.rmSync(destination, { recursive: true, force: true })
+
+  if (!fs.existsSync(source)) {
+    appendUtf8File(
+      diagnosticsLogPath,
+      `Runtime package source not found: ${source}\n`
+    )
+    return
+  }
+
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  fs.cpSync(source, destination, {
+    recursive: true,
+    verbatimSymlinks: true,
+  })
+}
+
+function writeRuntimeLauncherFiles() {
+  const serverConfigPath = path.join(outDir, 'server.conf')
+  const shellLauncherPath = path.join(outDir, 'run-webui.sh')
+  const powershellLauncherPath = path.join(outDir, 'run-webui.ps1')
+
+  fs.writeFileSync(serverConfigPath, getDefaultServerConfig(), 'utf8')
+  fs.writeFileSync(shellLauncherPath, getRunWebUISh(), 'utf8')
+  fs.writeFileSync(powershellLauncherPath, getRunWebUIPowerShell(), 'utf8')
+
+  try {
+    fs.chmodSync(shellLauncherPath, 0o755)
+  } catch (error) {
+    appendUtf8File(
+      diagnosticsLogPath,
+      `Unable to mark POSIX launcher as executable: ${error}\n`
+    )
+  }
+
+  return {
+    serverConfigPath,
+    shellLauncherPath,
+    powershellLauncherPath,
+  }
+}
+
+function getDefaultServerConfig() {
+  return [
+    '# GitDesk WebUI runtime configuration.',
+    '# Lines beginning with # are comments. Values are read by run-webui.sh and run-webui.ps1.',
+    '# Relative paths are resolved from the directory containing web-server.js.',
+    '',
+    'host=127.0.0.1',
+    'port=8080',
+    'public-url=http://127.0.0.1:8080',
+    '',
+    '# Use : to separate multiple roots on Linux/Android and ; on Windows.',
+    'allowedRoot=.',
+    '',
+    '# The WebUI server has a built-in default OAuth client id.',
+    '# Remove the leading # only when overriding it manually.',
+    '# oauth-client-id=Ov23liz1Wb08XDEhs7tm',
+    '# oauth-client-secret=',
+    '# oauth-callback-url=',
+    '',
+    '# Leave Git paths commented to let GitDesk WebUI discover Git from PATH.',
+    '# git-path=/usr/bin/git',
+    '# git-directory=',
+    '# git-exec-path=/usr/lib/git-core',
+    '# git-config-global=',
+    '',
+    'data-dir=.gitdesk-webui',
+    'static-root=web',
+    'copilot-cli-path=copilot/index.js',
+    '',
+  ].join('\n')
+}
+
+function getRunWebUISh() {
+  return [
+    '#!/usr/bin/env sh',
+    'set -eu',
+    '',
+    'SCRIPT_PATH=$0',
+    'case "$SCRIPT_PATH" in',
+    '  /*) ;;',
+    '  *) SCRIPT_PATH=$PWD/$SCRIPT_PATH ;;',
+    'esac',
+    'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)',
+    'CONFIG_FILE=$SCRIPT_DIR/server.conf',
+    '',
+    'HOST=',
+    'PORT=',
+    'PUBLIC_URL=',
+    'ALLOWED_ROOT=',
+    'OAUTH_CLIENT_ID=',
+    'OAUTH_CLIENT_SECRET=',
+    'OAUTH_CALLBACK_URL=',
+    'GIT_PATH=',
+    'GIT_DIRECTORY=',
+    'GIT_EXEC_PATH=',
+    'GIT_CONFIG_GLOBAL=',
+    'DATA_DIR=',
+    'STATIC_ROOT=',
+    'COPILOT_CLI_PATH=',
+    '',
+    'CLI_HOST=',
+    'CLI_PORT=',
+    'CLI_PUBLIC_URL=',
+    'CLI_ALLOWED_ROOT=',
+    'CLI_OAUTH_CLIENT_ID=',
+    'CLI_OAUTH_CLIENT_SECRET=',
+    'CLI_OAUTH_CALLBACK_URL=',
+    'CLI_GIT_PATH=',
+    'CLI_GIT_DIRECTORY=',
+    'CLI_GIT_EXEC_PATH=',
+    'CLI_GIT_CONFIG_GLOBAL=',
+    'CLI_DATA_DIR=',
+    'CLI_STATIC_ROOT=',
+    'CLI_COPILOT_CLI_PATH=',
+    '',
+    'usage() {',
+    "  cat <<'USAGE'",
+    'Usage: ./run-webui.sh [options]',
+    '',
+    'Options override values in server.conf:',
+    '  --config <path>             Runtime config file. Default: ./server.conf',
+    '  --host <host>               Host to bind',
+    '  --port <port>               Port to bind',
+    '  --public-url <url>          Browser-visible WebUI base URL',
+    '  --allowed-root <paths>      Allowed repository roots',
+    '  --oauth-client-id <id>      GitHub OAuth app client id',
+    '  --oauth-client-secret <s>   GitHub OAuth app client secret',
+    '  --oauth-callback-url <url>  OAuth callback URL',
+    '  --git-path <path>           Git executable path',
+    '  --git-directory <path>      Git installation root',
+    '  --git-exec-path <path>      Git helper directory',
+    '  --git-config-global <path>  Isolated global gitconfig path',
+    '  --data-dir <path>           Account/token data directory',
+    '  --static-root <path>        Web static asset directory',
+    '  --copilot-cli-path <path>   Copilot CLI index.js path or package directory',
+    '  -h, --help                  Show this help',
+    'USAGE',
+    '}',
+    '',
+    'trim() {',
+    '  printf "%s" "$1" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"',
+    '}',
+    '',
+    'set_config_value() {',
+    '  case "$1" in',
+    '    host) HOST=$2 ;;',
+    '    port) PORT=$2 ;;',
+    '    public-url|publicUrl) PUBLIC_URL=$2 ;;',
+    '    allowedRoot|allowed-root) ALLOWED_ROOT=$2 ;;',
+    '    oauth-client-id|oauthClientId) OAUTH_CLIENT_ID=$2 ;;',
+    '    oauth-client-secret|oauthClientSecret) OAUTH_CLIENT_SECRET=$2 ;;',
+    '    oauth-callback-url|oauthCallbackUrl) OAUTH_CALLBACK_URL=$2 ;;',
+    '    git-path|gitPath) GIT_PATH=$2 ;;',
+    '    git-directory|gitDirectory) GIT_DIRECTORY=$2 ;;',
+    '    git-exec-path|gitExecPath) GIT_EXEC_PATH=$2 ;;',
+    '    git-config-global|gitConfigGlobal) GIT_CONFIG_GLOBAL=$2 ;;',
+    '    data-dir|dataDir) DATA_DIR=$2 ;;',
+    '    static-root|staticRoot) STATIC_ROOT=$2 ;;',
+    '    copilot-cli-path|copilotCliPath) COPILOT_CLI_PATH=$2 ;;',
+    '  esac',
+    '}',
+    '',
+    'load_config() {',
+    '  [ -f "$CONFIG_FILE" ] || return 0',
+    '',
+    '  while IFS= read -r line || [ -n "$line" ]; do',
+    '    case "$line" in',
+    '      ""|\\#*) continue ;;',
+    '      *=*) ;;',
+    '      *) continue ;;',
+    '    esac',
+    '',
+    '    key=$(trim "${line%%=*}")',
+    '    value=$(trim "${line#*=}")',
+    '    [ -n "$key" ] || continue',
+    '    set_config_value "$key" "$value"',
+    '  done < "$CONFIG_FILE"',
+    '}',
+    '',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    --config) CONFIG_FILE=$2; shift 2 ;;',
+    '    --host) CLI_HOST=$2; shift 2 ;;',
+    '    --port) CLI_PORT=$2; shift 2 ;;',
+    '    --public-url) CLI_PUBLIC_URL=$2; shift 2 ;;',
+    '    --allowed-root|--allowedRoot) CLI_ALLOWED_ROOT=$2; shift 2 ;;',
+    '    --oauth-client-id) CLI_OAUTH_CLIENT_ID=$2; shift 2 ;;',
+    '    --oauth-client-secret) CLI_OAUTH_CLIENT_SECRET=$2; shift 2 ;;',
+    '    --oauth-callback-url) CLI_OAUTH_CALLBACK_URL=$2; shift 2 ;;',
+    '    --git-path) CLI_GIT_PATH=$2; shift 2 ;;',
+    '    --git-directory) CLI_GIT_DIRECTORY=$2; shift 2 ;;',
+    '    --git-exec-path) CLI_GIT_EXEC_PATH=$2; shift 2 ;;',
+    '    --git-config-global) CLI_GIT_CONFIG_GLOBAL=$2; shift 2 ;;',
+    '    --data-dir) CLI_DATA_DIR=$2; shift 2 ;;',
+    '    --static-root|--staticRoot) CLI_STATIC_ROOT=$2; shift 2 ;;',
+    '    --copilot-cli-path) CLI_COPILOT_CLI_PATH=$2; shift 2 ;;',
+    '    -h|--help) usage; exit 0 ;;',
+    '    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;',
+    '  esac',
+    'done',
+    '',
+    'load_config',
+    '',
+    '[ -n "$CLI_HOST" ] && HOST=$CLI_HOST',
+    '[ -n "$CLI_PORT" ] && PORT=$CLI_PORT',
+    '[ -n "$CLI_PUBLIC_URL" ] && PUBLIC_URL=$CLI_PUBLIC_URL',
+    '[ -n "$CLI_ALLOWED_ROOT" ] && ALLOWED_ROOT=$CLI_ALLOWED_ROOT',
+    '[ -n "$CLI_OAUTH_CLIENT_ID" ] && OAUTH_CLIENT_ID=$CLI_OAUTH_CLIENT_ID',
+    '[ -n "$CLI_OAUTH_CLIENT_SECRET" ] && OAUTH_CLIENT_SECRET=$CLI_OAUTH_CLIENT_SECRET',
+    '[ -n "$CLI_OAUTH_CALLBACK_URL" ] && OAUTH_CALLBACK_URL=$CLI_OAUTH_CALLBACK_URL',
+    '[ -n "$CLI_GIT_PATH" ] && GIT_PATH=$CLI_GIT_PATH',
+    '[ -n "$CLI_GIT_DIRECTORY" ] && GIT_DIRECTORY=$CLI_GIT_DIRECTORY',
+    '[ -n "$CLI_GIT_EXEC_PATH" ] && GIT_EXEC_PATH=$CLI_GIT_EXEC_PATH',
+    '[ -n "$CLI_GIT_CONFIG_GLOBAL" ] && GIT_CONFIG_GLOBAL=$CLI_GIT_CONFIG_GLOBAL',
+    '[ -n "$CLI_DATA_DIR" ] && DATA_DIR=$CLI_DATA_DIR',
+    '[ -n "$CLI_STATIC_ROOT" ] && STATIC_ROOT=$CLI_STATIC_ROOT',
+    '[ -n "$CLI_COPILOT_CLI_PATH" ] && COPILOT_CLI_PATH=$CLI_COPILOT_CLI_PATH',
+    '',
+    'HOST=${HOST:-127.0.0.1}',
+    'PORT=${PORT:-8080}',
+    '',
+    'if ! command -v node >/dev/null 2>&1; then',
+    '  echo "Node.js is required. Install Node.js 18 or newer, then rerun this script." >&2',
+    '  exit 1',
+    'fi',
+    '',
+    'NODE_MAJOR=$(node -p "Number(process.versions.node.split(\\".\\")[0])")',
+    'if [ "$NODE_MAJOR" -lt 18 ]; then',
+    '  echo "Node.js 18 or newer is required. Node.js 22 LTS is recommended." >&2',
+    '  exit 1',
+    'fi',
+    '',
+    'if [ ! -f "$SCRIPT_DIR/web-server.js" ]; then',
+    '  echo "web-server.js was not found next to this launcher: $SCRIPT_DIR" >&2',
+    '  exit 1',
+    'fi',
+    '',
+    'if [ -z "$GIT_PATH" ] && ! command -v git >/dev/null 2>&1; then',
+    '  echo "Warning: git was not found on PATH. Set git-path in server.conf if repository operations fail." >&2',
+    'fi',
+    '',
+    'cd "$SCRIPT_DIR"',
+    '',
+    'set -- web-server.js',
+    '[ -n "$HOST" ] && set -- "$@" --host "$HOST"',
+    '[ -n "$PORT" ] && set -- "$@" --port "$PORT"',
+    '[ -n "$PUBLIC_URL" ] && set -- "$@" --public-url "$PUBLIC_URL"',
+    '[ -n "$ALLOWED_ROOT" ] && set -- "$@" --allowedRoot "$ALLOWED_ROOT"',
+    '[ -n "$OAUTH_CLIENT_ID" ] && set -- "$@" --oauth-client-id "$OAUTH_CLIENT_ID"',
+    '[ -n "$OAUTH_CLIENT_SECRET" ] && set -- "$@" --oauth-client-secret "$OAUTH_CLIENT_SECRET"',
+    '[ -n "$OAUTH_CALLBACK_URL" ] && set -- "$@" --oauth-callback-url "$OAUTH_CALLBACK_URL"',
+    '[ -n "$GIT_PATH" ] && set -- "$@" --git-path "$GIT_PATH"',
+    '[ -n "$GIT_DIRECTORY" ] && set -- "$@" --git-directory "$GIT_DIRECTORY"',
+    '[ -n "$GIT_EXEC_PATH" ] && set -- "$@" --git-exec-path "$GIT_EXEC_PATH"',
+    '[ -n "$GIT_CONFIG_GLOBAL" ] && set -- "$@" --git-config-global "$GIT_CONFIG_GLOBAL"',
+    '[ -n "$DATA_DIR" ] && set -- "$@" --data-dir "$DATA_DIR"',
+    '[ -n "$STATIC_ROOT" ] && set -- "$@" --static-root "$STATIC_ROOT"',
+    '[ -n "$COPILOT_CLI_PATH" ] && set -- "$@" --copilot-cli-path "$COPILOT_CLI_PATH"',
+    '',
+    'echo "Starting GitDesk WebUI on http://$HOST:$PORT"',
+    'exec node "$@"',
+    '',
+  ].join('\n')
+}
+
+function getRunWebUIPowerShell() {
+  return [
+    'param(',
+    '  [string]$Config = "",',
+    '  [string]$HostAddress = "",',
+    '  [int]$Port = 0,',
+    '  [string]$PublicUrl = "",',
+    '  [string]$AllowedRoot = "",',
+    '  [string]$OAuthClientId = "",',
+    '  [string]$OAuthClientSecret = "",',
+    '  [string]$OAuthCallbackUrl = "",',
+    '  [string]$GitPath = "",',
+    '  [string]$GitDirectory = "",',
+    '  [string]$GitExecPath = "",',
+    '  [string]$GitConfigGlobal = "",',
+    '  [string]$DataDir = "",',
+    '  [string]$StaticRoot = "",',
+    '  [string]$CopilotCliPath = ""',
+    ')',
+    '',
+    '$ErrorActionPreference = "Stop"',
+    '$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path',
+    'if ([string]::IsNullOrWhiteSpace($Config)) {',
+    '  $Config = Join-Path $ScriptDir "server.conf"',
+    '}',
+    '',
+    'function Read-ServerConfig {',
+    '  param([string]$Path)',
+    '  $values = @{}',
+    '',
+    '  if (-not (Test-Path $Path)) {',
+    '    return $values',
+    '  }',
+    '',
+    '  foreach ($line in Get-Content -LiteralPath $Path) {',
+    '    $trimmed = $line.Trim()',
+    '    if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#")) {',
+    '      continue',
+    '    }',
+    '',
+    '    $separator = $trimmed.IndexOf("=")',
+    '    if ($separator -lt 1) {',
+    '      continue',
+    '    }',
+    '',
+    '    $key = $trimmed.Substring(0, $separator).Trim()',
+    '    $value = $trimmed.Substring($separator + 1).Trim()',
+    '    $values[$key] = $value',
+    '  }',
+    '',
+    '  return $values',
+    '}',
+    '',
+    'function Get-ConfigValue {',
+    '  param(',
+    '    [hashtable]$Values,',
+    '    [string[]]$Names,',
+    '    [string]$Fallback = ""',
+    '  )',
+    '',
+    '  foreach ($name in $Names) {',
+    '    if ($Values.ContainsKey($name)) {',
+    '      return [string]$Values[$name]',
+    '    }',
+    '  }',
+    '',
+    '  return $Fallback',
+    '}',
+    '',
+    'function Add-ServerArgument {',
+    '  param(',
+    '    [string]$Name,',
+    '    [string]$Value',
+    '  )',
+    '',
+    '  if (-not [string]::IsNullOrWhiteSpace($Value)) {',
+    '    $script:NodeArguments += @($Name, $Value)',
+    '  }',
+    '}',
+    '',
+    '$configValues = Read-ServerConfig $Config',
+    '$hostValue = Get-ConfigValue $configValues @("host") "127.0.0.1"',
+    '$portValue = Get-ConfigValue $configValues @("port") "8080"',
+    '$publicUrlValue = Get-ConfigValue $configValues @("public-url", "publicUrl") ""',
+    '$allowedRootValue = Get-ConfigValue $configValues @("allowedRoot", "allowed-root") ""',
+    '$oauthClientIdValue = Get-ConfigValue $configValues @("oauth-client-id", "oauthClientId") ""',
+    '$oauthClientSecretValue = Get-ConfigValue $configValues @("oauth-client-secret", "oauthClientSecret") ""',
+    '$oauthCallbackUrlValue = Get-ConfigValue $configValues @("oauth-callback-url", "oauthCallbackUrl") ""',
+    '$gitPathValue = Get-ConfigValue $configValues @("git-path", "gitPath") ""',
+    '$gitDirectoryValue = Get-ConfigValue $configValues @("git-directory", "gitDirectory") ""',
+    '$gitExecPathValue = Get-ConfigValue $configValues @("git-exec-path", "gitExecPath") ""',
+    '$gitConfigGlobalValue = Get-ConfigValue $configValues @("git-config-global", "gitConfigGlobal") ""',
+    '$dataDirValue = Get-ConfigValue $configValues @("data-dir", "dataDir") ""',
+    '$staticRootValue = Get-ConfigValue $configValues @("static-root", "staticRoot") ""',
+    '$copilotCliPathValue = Get-ConfigValue $configValues @("copilot-cli-path", "copilotCliPath") ""',
+    '',
+    'if ($PSBoundParameters.ContainsKey("HostAddress")) { $hostValue = $HostAddress }',
+    'if ($PSBoundParameters.ContainsKey("Port") -and $Port -gt 0) { $portValue = "$Port" }',
+    'if ($PSBoundParameters.ContainsKey("PublicUrl")) { $publicUrlValue = $PublicUrl }',
+    'if ($PSBoundParameters.ContainsKey("AllowedRoot")) { $allowedRootValue = $AllowedRoot }',
+    'if ($PSBoundParameters.ContainsKey("OAuthClientId")) { $oauthClientIdValue = $OAuthClientId }',
+    'if ($PSBoundParameters.ContainsKey("OAuthClientSecret")) { $oauthClientSecretValue = $OAuthClientSecret }',
+    'if ($PSBoundParameters.ContainsKey("OAuthCallbackUrl")) { $oauthCallbackUrlValue = $OAuthCallbackUrl }',
+    'if ($PSBoundParameters.ContainsKey("GitPath")) { $gitPathValue = $GitPath }',
+    'if ($PSBoundParameters.ContainsKey("GitDirectory")) { $gitDirectoryValue = $GitDirectory }',
+    'if ($PSBoundParameters.ContainsKey("GitExecPath")) { $gitExecPathValue = $GitExecPath }',
+    'if ($PSBoundParameters.ContainsKey("GitConfigGlobal")) { $gitConfigGlobalValue = $GitConfigGlobal }',
+    'if ($PSBoundParameters.ContainsKey("DataDir")) { $dataDirValue = $DataDir }',
+    'if ($PSBoundParameters.ContainsKey("StaticRoot")) { $staticRootValue = $StaticRoot }',
+    'if ($PSBoundParameters.ContainsKey("CopilotCliPath")) { $copilotCliPathValue = $CopilotCliPath }',
+    '',
+    '$nodeCommand = Get-Command node -ErrorAction SilentlyContinue',
+    'if ($null -eq $nodeCommand) {',
+    '  throw "Node.js is required. Install Node.js 18 or newer, then rerun this script."',
+    '}',
+    '',
+    '$nodeMajor = [int](& $nodeCommand.Source -p "Number(process.versions.node.split(\'.\')[0])")',
+    'if ($nodeMajor -lt 18) {',
+    '  throw "Node.js 18 or newer is required. Node.js 22 LTS is recommended."',
+    '}',
+    '',
+    '$serverBundle = Join-Path $ScriptDir "web-server.js"',
+    'if (-not (Test-Path $serverBundle)) {',
+    '  throw "web-server.js was not found next to this launcher: $ScriptDir"',
+    '}',
+    '',
+    'if ([string]::IsNullOrWhiteSpace($gitPathValue) -and $null -eq (Get-Command git -ErrorAction SilentlyContinue)) {',
+    '  Write-Warning "git was not found on PATH. Set git-path in server.conf if repository operations fail."',
+    '}',
+    '',
+    'Set-Location $ScriptDir',
+    '$script:NodeArguments = @("web-server.js")',
+    'Add-ServerArgument "--host" $hostValue',
+    'Add-ServerArgument "--port" $portValue',
+    'Add-ServerArgument "--public-url" $publicUrlValue',
+    'Add-ServerArgument "--allowedRoot" $allowedRootValue',
+    'Add-ServerArgument "--oauth-client-id" $oauthClientIdValue',
+    'Add-ServerArgument "--oauth-client-secret" $oauthClientSecretValue',
+    'Add-ServerArgument "--oauth-callback-url" $oauthCallbackUrlValue',
+    'Add-ServerArgument "--git-path" $gitPathValue',
+    'Add-ServerArgument "--git-directory" $gitDirectoryValue',
+    'Add-ServerArgument "--git-exec-path" $gitExecPathValue',
+    'Add-ServerArgument "--git-config-global" $gitConfigGlobalValue',
+    'Add-ServerArgument "--data-dir" $dataDirValue',
+    'Add-ServerArgument "--static-root" $staticRootValue',
+    'Add-ServerArgument "--copilot-cli-path" $copilotCliPathValue',
+    '',
+    'Write-Host "Starting GitDesk WebUI on http://$hostValue`:$portValue"',
+    '& $nodeCommand.Source @script:NodeArguments',
+    'exit $LASTEXITCODE',
+    '',
+  ].join('\n')
 }
 
 function generateLicenseMetadata(webOutDir) {
