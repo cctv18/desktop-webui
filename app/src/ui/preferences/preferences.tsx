@@ -58,25 +58,13 @@ import {
 import {
   defaultGitHookEnvShell,
   defaultHooksEnvEnabledValue,
-  getCacheHooksEnv,
-  getGitHookEnvShell,
-  getHooksEnvEnabled,
-  setCacheHooksEnv,
-  setGitHookEnvShell,
-  setHooksEnvEnabled,
+  type SupportedHooksEnvShell,
 } from '../../lib/hooks/config'
 import { enableCopilotSdkCommitMessageGeneration } from '../../lib/feature-flag'
 import {
   DateFormat,
   TimeFormat,
   INumberFormat,
-  getPreferAbsoluteDates,
-  getDateFormatPreference,
-  getTimeFormatPreference,
-  getNumberFormatPreference,
-  setDateFormatPreference,
-  setTimeFormatPreference,
-  setNumberFormatPreference,
 } from '../../models/formatting-preferences'
 import { enableFormattingPreferences } from '../../lib/feature-flag'
 
@@ -114,6 +102,13 @@ interface IPreferencesProps {
   readonly onEditGlobalGitConfig: () => void
   readonly underlineLinks: boolean
   readonly showDiffCheckMarks: boolean
+  readonly enableGitHookEnv: boolean
+  readonly cacheGitHookEnv: boolean
+  readonly selectedGitHookEnvShell: SupportedHooksEnvShell
+  readonly selectedDateFormat: DateFormat
+  readonly selectedTimeFormat: TimeFormat
+  readonly selectedNumberFormat: INumberFormat
+  readonly preferAbsoluteDates: boolean
   readonly selectedCopilotModels: CopilotModelSelections
   readonly copilotModels: ReadonlyArray<ModelInfo> | null
   readonly copilotAvailable: boolean
@@ -244,15 +239,15 @@ export class Preferences extends React.Component<
       isLoadingGitConfig: true,
       underlineLinks: this.props.underlineLinks,
       showDiffCheckMarks: this.props.showDiffCheckMarks,
-      enableGitHookEnv: getHooksEnvEnabled(),
-      cacheGitHookEnv: getCacheHooksEnv(),
-      selectedGitHookEnvShell: getGitHookEnvShell(),
+      enableGitHookEnv: this.props.enableGitHookEnv,
+      cacheGitHookEnv: this.props.cacheGitHookEnv,
+      selectedGitHookEnvShell: this.props.selectedGitHookEnvShell,
       hooksPreferencesDirty: false,
       selectedCopilotModels: this.props.selectedCopilotModels,
-      selectedDateFormat: getDateFormatPreference(),
-      selectedTimeFormat: getTimeFormatPreference(),
-      selectedNumberFormat: getNumberFormatPreference(),
-      preferAbsoluteDates: getPreferAbsoluteDates(),
+      selectedDateFormat: this.props.selectedDateFormat,
+      selectedTimeFormat: this.props.selectedTimeFormat,
+      selectedNumberFormat: this.props.selectedNumberFormat,
+      preferAbsoluteDates: this.props.preferAbsoluteDates,
     }
   }
 
@@ -583,19 +578,19 @@ export class Preferences extends React.Component<
             selectedTabSize={this.props.selectedTabSize}
             onSelectedTabSizeChanged={this.onSelectedTabSizeChanged}
             selectedDateFormat={
-              this.state.selectedDateFormat ?? getDateFormatPreference()
+              this.state.selectedDateFormat ?? this.props.selectedDateFormat
             }
             onSelectedDateFormatChanged={this.onSelectedDateFormatChanged}
             selectedTimeFormat={
-              this.state.selectedTimeFormat ?? getTimeFormatPreference()
+              this.state.selectedTimeFormat ?? this.props.selectedTimeFormat
             }
             onSelectedTimeFormatChanged={this.onSelectedTimeFormatChanged}
             selectedNumberFormat={
-              this.state.selectedNumberFormat ?? getNumberFormatPreference()
+              this.state.selectedNumberFormat ?? this.props.selectedNumberFormat
             }
             onSelectedNumberFormatChanged={this.onSelectedNumberFormatChanged}
             preferAbsoluteDates={
-              this.state.preferAbsoluteDates ?? getPreferAbsoluteDates()
+              this.state.preferAbsoluteDates ?? this.props.preferAbsoluteDates
             }
             onPreferAbsoluteDatesChanged={this.onPreferAbsoluteDatesChanged}
           />
@@ -959,16 +954,16 @@ export class Preferences extends React.Component<
       }
 
       if (this.state.hooksPreferencesDirty) {
-        if (this.state.enableGitHookEnv !== undefined) {
-          setHooksEnvEnabled(this.state.enableGitHookEnv)
-        }
-
-        if (this.state.cacheGitHookEnv !== undefined) {
-          setCacheHooksEnv(this.state.cacheGitHookEnv)
-        }
-
-        if (this.state.selectedGitHookEnvShell !== undefined) {
-          setGitHookEnvShell(this.state.selectedGitHookEnvShell)
+        if (
+          this.state.enableGitHookEnv !== undefined &&
+          this.state.cacheGitHookEnv !== undefined &&
+          this.state.selectedGitHookEnvShell !== undefined
+        ) {
+          await dispatcher.setGitHookPreferences(
+            this.state.enableGitHookEnv,
+            this.state.cacheGitHookEnv,
+            this.state.selectedGitHookEnvShell as SupportedHooksEnvShell
+          )
         }
       }
     } catch (e) {
@@ -1068,20 +1063,18 @@ export class Preferences extends React.Component<
     dispatcher.setSelectedCopilotModels(this.state.selectedCopilotModels)
 
     if (enableFormattingPreferences()) {
-      if (this.state.selectedDateFormat !== undefined) {
-        setDateFormatPreference(this.state.selectedDateFormat)
-      }
-
-      if (this.state.selectedTimeFormat !== undefined) {
-        setTimeFormatPreference(this.state.selectedTimeFormat)
-      }
-
-      if (this.state.selectedNumberFormat !== undefined) {
-        setNumberFormatPreference(this.state.selectedNumberFormat)
-      }
-
-      if (this.state.preferAbsoluteDates !== undefined) {
-        dispatcher.setPreferAbsoluteDates(this.state.preferAbsoluteDates)
+      if (
+        this.state.selectedDateFormat !== undefined &&
+        this.state.selectedTimeFormat !== undefined &&
+        this.state.selectedNumberFormat !== undefined &&
+        this.state.preferAbsoluteDates !== undefined
+      ) {
+        await dispatcher.setFormattingPreferences(
+          this.state.selectedDateFormat,
+          this.state.selectedTimeFormat,
+          this.state.selectedNumberFormat,
+          this.state.preferAbsoluteDates
+        )
       }
     }
 

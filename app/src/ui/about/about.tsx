@@ -23,6 +23,10 @@ const logoPath = __DARWIN__
   ? 'static/logo-64x64@2x.png'
   : 'static/windows-logo-64x64@2x.png'
 const DesktopLogo = encodePathAsUrl(__dirname, logoPath)
+const FallbackDesktopLogo = encodePathAsUrl(
+  __dirname,
+  'static/logo-64x64@2x.png'
+)
 
 interface IAboutProps {
   /**
@@ -88,6 +92,13 @@ class UpdateInfo extends React.Component<IUpdateInfoProps> {
  * running application such as name and version.
  */
 export class About extends React.Component<IAboutProps> {
+  private onLogoError = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    if (event.currentTarget.dataset.fallbackLogo !== '1') {
+      event.currentTarget.dataset.fallbackLogo = '1'
+      event.currentTarget.src = FallbackDesktopLogo
+    }
+  }
+
   private get canCheckForUpdates() {
     return (
       __RELEASE_CHANNEL__ !== 'development' ||
@@ -270,6 +281,7 @@ export class About extends React.Component<IAboutProps> {
           <Row className="logo">
             <img
               src={DesktopLogo}
+              onError={this.onLogoError}
               alt="GitHub Desktop"
               width="64"
               height="64"

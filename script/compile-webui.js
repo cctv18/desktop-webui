@@ -177,6 +177,7 @@ function copyWebRuntimeAssets() {
     force: false,
     verbatimSymlinks: true,
   })
+  generateLicenseMetadata(webOutDir)
 
   fs.rmSync(emojiImagesDestination, { recursive: true, force: true })
   fs.cpSync(emojiImagesSource, emojiImagesDestination, {
@@ -195,6 +196,105 @@ function copyWebRuntimeAssets() {
   ].join('\n')
 
   appendBuildLog(text)
+}
+
+function generateLicenseMetadata(webOutDir) {
+  const chooseALicense = path.join(
+    webOutDir,
+    'static',
+    'choosealicense.com'
+  )
+  const licensesDir = path.join(chooseALicense, '_licenses')
+
+  if (!fs.existsSync(licensesDir)) {
+    appendUtf8File(
+      diagnosticsLogPath,
+      `License metadata source not found: ${licensesDir}\n`
+    )
+    return
+  }
+
+  const licenses = []
+  for (const file of fs.readdirSync(licensesDir)) {
+    const fullPath = path.join(licensesDir, file)
+    const contents = fs.readFileSync(fullPath, 'utf8')
+    const parsed = parseLicenseFrontMatter(contents)
+
+    if (parsed === null || parsed.attributes.hidden === true) {
+      continue
+    }
+
+    licenses.push({
+      name: parsed.attributes.nickname || parsed.attributes.title,
+      featured: parsed.attributes.featured === true,
+      hidden: false,
+      body: `${parsed.body.trim()}\n`,
+    })
+  }
+
+  fs.writeFileSync(
+    path.join(webOutDir, 'static', 'available-licenses.json'),
+    JSON.stringify(licenses),
+    'utf8'
+  )
+
+  const chooseALicenseLicense = path.join(chooseALicense, 'LICENSE.md')
+  if (fs.existsSync(chooseALicenseLicense)) {
+    const licenseText = fs.readFileSync(chooseALicenseLicense, 'utf8')
+    const licenseWithHeader = `GitHub Desktop uses licensing information provided by choosealicense.com.
+
+The bundle in available-licenses.json has been generated from a source list provided at https://github.com/github/choosealicense.com, which is made available under the below license:
+
+------------
+
+${licenseText}`
+
+    fs.writeFileSync(
+      path.join(webOutDir, 'static', 'LICENSE.choosealicense.md'),
+      licenseWithHeader,
+      'utf8'
+    )
+  }
+
+  fs.rmSync(chooseALicense, { recursive: true, force: true })
+}
+
+function parseLicenseFrontMatter(contents) {
+  if (!contents.startsWith('---')) {
+    return null
+  }
+
+  const end = contents.indexOf('\n---', 3)
+  if (end < 0) {
+    return null
+  }
+
+  const attributes = {}
+  for (const rawLine of contents.slice(3, end).split(/\r?\n/)) {
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(rawLine.trim())
+    if (match === null) {
+      continue
+    }
+
+    const key = match[1]
+    const value = match[2].trim()
+    if (value === 'true') {
+      attributes[key] = true
+    } else if (value === 'false') {
+      attributes[key] = false
+    } else if (value.length > 0) {
+      attributes[key] = value.replace(/^['"]|['"]$/g, '')
+    }
+  }
+
+  if (typeof attributes.title !== 'string') {
+    return null
+  }
+
+  return {
+    attributes,
+    body: contents.slice(end + '\n---'.length),
+  }
 }
 
 function writeBuildSummary(stats, diagnostics) {

@@ -8,6 +8,8 @@ import {
 } from '../lib/webui-app-menu'
 
 const noop = () => {}
+let nativeThemeSource = 'system'
+let windowZoomFactor = 1
 
 type IPCListener = (event: unknown, ...args: ReadonlyArray<any>) => void
 
@@ -29,6 +31,14 @@ function send(channel: string, ...args: ReadonlyArray<any>) {
       break
     case 'update-preferred-app-menu-item-labels':
       updateWebMenuLabels(args[0])
+      break
+    case 'set-native-theme-source':
+      nativeThemeSource = normalizeThemeSource(`${args[0] ?? 'system'}`)
+      emitIPC('native-theme-updated')
+      break
+    case 'set-window-zoom-factor':
+      windowZoomFactor = normalizeZoomFactor(Number(args[0]))
+      emitIPC('zoom-factor-changed', windowZoomFactor)
       break
   }
 }
@@ -71,7 +81,16 @@ function emitIPC(channel: string, ...args: ReadonlyArray<any>) {
 }
 
 export const ipcRenderer = {
-  invoke: async () => undefined,
+  invoke: async (channel: string) => {
+    switch (channel) {
+      case 'should-use-dark-colors':
+        return nativeThemeSource === 'dark'
+      case 'get-current-window-zoom-factor':
+        return windowZoomFactor
+      default:
+        return undefined
+    }
+  },
   send,
   sendSync: noop,
   on,
@@ -104,8 +123,16 @@ export const app = {
 }
 
 export const nativeTheme = {
-  shouldUseDarkColors: false,
-  themeSource: 'system',
+  get shouldUseDarkColors() {
+    return nativeThemeSource === 'dark'
+  },
+  get themeSource() {
+    return nativeThemeSource
+  },
+  set themeSource(value: string) {
+    nativeThemeSource = normalizeThemeSource(value)
+    emitIPC('native-theme-updated')
+  },
   on: noop,
 }
 
@@ -178,4 +205,16 @@ function executeWebMenuItemById(id: string, item?: { readonly label?: string }) 
   if (menuEvent !== null) {
     emitIPC('menu-event', menuEvent)
   }
+}
+
+function normalizeThemeSource(value: string) {
+  return value === 'light' || value === 'dark' || value === 'system'
+    ? value
+    : 'system'
+}
+
+function normalizeZoomFactor(value: number) {
+  return Number.isFinite(value) && value > 0
+    ? Math.max(0.25, Math.min(2, value))
+    : 1
 }

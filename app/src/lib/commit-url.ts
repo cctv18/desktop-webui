@@ -17,8 +17,16 @@ export function createCommitURL(
     return `${baseURL}/commit/${SHA}`
   }
 
-  const fileHash = crypto.createHash('sha256').update(filePath).digest('hex')
+  const normalizedFilePath = normalizeCommitFilePath(filePath)
+  const fileHash = crypto
+    .createHash('sha256')
+    .update(normalizedFilePath)
+    .digest('hex')
   const fileSuffix = '#diff-' + fileHash
 
   return `${baseURL}/commit/${SHA}${fileSuffix}`
+}
+
+function normalizeCommitFilePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').replace(/^\.\//, '')
 }

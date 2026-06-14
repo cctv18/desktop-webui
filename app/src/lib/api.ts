@@ -49,19 +49,19 @@ type AffiliationFilter =
 
 /** Response type of GraphQL query of Copilot-related info */
 type ViewerCopilotResponse = {
-  readonly data: {
-    readonly viewer: {
-      readonly copilotEndpoints: {
+  readonly data?: {
+    readonly viewer?: {
+      readonly copilotEndpoints?: {
         readonly api: string
       }
-      readonly isCopilotDesktopEnabled: boolean
-    }
+      readonly isCopilotDesktopEnabled?: boolean
+    } | null
   }
 }
 
 /** Copilot-related info relevant to Desktop */
 type UserCopilotInfo = {
-  readonly isCopilotDesktopEnabled: boolean
+  readonly isCopilotDesktopEnabled?: boolean
   readonly copilotEndpoint: string
 }
 
@@ -2230,9 +2230,18 @@ export class API {
 
       const json: ViewerCopilotResponse =
         (await response.json()) as ViewerCopilotResponse
-      const { viewer } = json.data
+      const viewer = json.data?.viewer
+      if (viewer === undefined || viewer === null) {
+        return undefined
+      }
+
+      const copilotEndpoint = viewer.copilotEndpoints?.api
+      if (typeof copilotEndpoint !== 'string' || copilotEndpoint.length === 0) {
+        return undefined
+      }
+
       return {
-        copilotEndpoint: viewer.copilotEndpoints.api,
+        copilotEndpoint,
         isCopilotDesktopEnabled: viewer.isCopilotDesktopEnabled,
       }
     } catch (e) {

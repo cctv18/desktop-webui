@@ -35,8 +35,21 @@ import { BranchesTab } from '../../models/branches-tab'
 import { CloneRepositoryTab } from '../../models/clone-repository-tab'
 import { CloningRepository } from '../../models/cloning-repository'
 import {
+  DateFormat,
+  defaultDateFormat,
+  defaultNumberFormat,
+  defaultTimeFormat,
+  getDateFormatPreference,
+  getNumberFormatPreference,
   getPreferAbsoluteDates,
+  getTimeFormatPreference,
+  INumberFormat,
+  numberFormatToKey,
+  setDateFormatPreference,
+  setNumberFormatPreference,
   setPreferAbsoluteDates,
+  setTimeFormatPreference,
+  TimeFormat,
 } from '../../models/formatting-preferences'
 import {
   Commit,
@@ -96,6 +109,18 @@ import {
 } from '../../models/progress'
 import { Popup, PopupType } from '../../models/popup'
 import { themeChangeMonitor } from '../../ui/lib/theme-change-monitor'
+import {
+  defaultCacheHooksEnvValue,
+  defaultGitHookEnvShell,
+  defaultHooksEnvEnabledValue,
+  getCacheHooksEnv,
+  getGitHookEnvShell,
+  getHooksEnvEnabled,
+  setCacheHooksEnv,
+  setGitHookEnvShell,
+  setHooksEnvEnabled,
+  type SupportedHooksEnvShell,
+} from '../hooks/config'
 import { getAppPath } from '../../ui/lib/app-proxy'
 import {
   ApplicableTheme,
@@ -702,6 +727,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private showDiffCheckMarks: boolean = showDiffCheckMarksDefault
 
   private preferAbsoluteDates: boolean = false
+  private enableGitHookEnv: boolean = defaultHooksEnvEnabledValue
+  private cacheGitHookEnv: boolean = defaultCacheHooksEnvValue
+  private selectedGitHookEnvShell: SupportedHooksEnvShell =
+    defaultGitHookEnvShell
+  private selectedDateFormat: DateFormat = defaultDateFormat
+  private selectedTimeFormat: TimeFormat = defaultTimeFormat
+  private selectedNumberFormat: INumberFormat = defaultNumberFormat
 
   private cachedRepoRulesets = new Map<number, IAPIRepoRuleset>()
 
@@ -1229,6 +1261,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
       underlineLinks: this.underlineLinks,
       showDiffCheckMarks: this.showDiffCheckMarks,
       preferAbsoluteDates: this.preferAbsoluteDates,
+      enableGitHookEnv: this.enableGitHookEnv,
+      cacheGitHookEnv: this.cacheGitHookEnv,
+      selectedGitHookEnvShell: this.selectedGitHookEnvShell,
+      selectedDateFormat: this.selectedDateFormat,
+      selectedTimeFormat: this.selectedTimeFormat,
+      selectedNumberFormat: this.selectedNumberFormat,
       updateState: updateStore.state,
       commitMessageGenerationDisclaimerLastSeen:
         this.commitMessageGenerationDisclaimerLastSeen,
@@ -2582,6 +2620,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
       showDiffCheckMarksDefault
     )
 
+    this.enableGitHookEnv = getHooksEnvEnabled()
+    this.cacheGitHookEnv = getCacheHooksEnv()
+    this.selectedGitHookEnvShell = getGitHookEnvShell()
+    this.selectedDateFormat = getDateFormatPreference()
+    this.selectedTimeFormat = getTimeFormatPreference()
+    this.selectedNumberFormat = getNumberFormatPreference()
     this.preferAbsoluteDates = getPreferAbsoluteDates()
 
     this.commitMessageGenerationDisclaimerLastSeen =
@@ -8812,9 +8856,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /**
    * Set the application-wide theme
    */
-  public _setSelectedTheme(theme: ApplicationTheme) {
+  public async _setSelectedTheme(theme: ApplicationTheme) {
     setPersistedTheme(theme)
     this.selectedTheme = theme
+    this.currentTheme =
+      theme === ApplicationTheme.System
+        ? await getCurrentlyAppliedTheme()
+        : theme
     this.emitUpdate()
 
     return Promise.resolve()
@@ -10286,6 +10334,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         }
       }
       this.saveCopilotModelSelections()
+      this.emitUpdate()
     }
   }
 
@@ -10338,6 +10387,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // resurrect a stale selection.
     this.scrubMissingCopilotModelSelections()
     this.saveCopilotModelSelections()
+    this.emitUpdate()
   }
 
   /**
@@ -10553,6 +10603,60 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (value !== this.preferAbsoluteDates) {
       this.preferAbsoluteDates = value
       setPreferAbsoluteDates(value)
+      this.emitUpdate()
+    }
+  }
+
+  public _setGitHookPreferences(
+    enableGitHookEnv: boolean,
+    cacheGitHookEnv: boolean,
+    selectedGitHookEnvShell: SupportedHooksEnvShell
+  ) {
+    const changed =
+      enableGitHookEnv !== this.enableGitHookEnv ||
+      cacheGitHookEnv !== this.cacheGitHookEnv ||
+      selectedGitHookEnvShell !== this.selectedGitHookEnvShell
+
+    this.enableGitHookEnv = enableGitHookEnv
+    this.cacheGitHookEnv = cacheGitHookEnv
+    this.selectedGitHookEnvShell = selectedGitHookEnvShell
+
+    setHooksEnvEnabled(enableGitHookEnv)
+    setCacheHooksEnv(cacheGitHookEnv)
+    setGitHookEnvShell(selectedGitHookEnvShell)
+
+    if (changed) {
+      this.emitUpdate()
+    }
+  }
+
+  public _setFormattingPreferences(
+    selectedDateFormat: DateFormat,
+    selectedTimeFormat: TimeFormat,
+    selectedNumberFormat: INumberFormat,
+    preferAbsoluteDates: boolean
+  ) {
+    const numberFormatChanged =
+      numberFormatToKey(selectedNumberFormat) !==
+      numberFormatToKey(this.selectedNumberFormat)
+
+    const changed =
+      selectedDateFormat !== this.selectedDateFormat ||
+      selectedTimeFormat !== this.selectedTimeFormat ||
+      numberFormatChanged ||
+      preferAbsoluteDates !== this.preferAbsoluteDates
+
+    this.selectedDateFormat = selectedDateFormat
+    this.selectedTimeFormat = selectedTimeFormat
+    this.selectedNumberFormat = selectedNumberFormat
+    this.preferAbsoluteDates = preferAbsoluteDates
+
+    setDateFormatPreference(selectedDateFormat)
+    setTimeFormatPreference(selectedTimeFormat)
+    setNumberFormatPreference(selectedNumberFormat)
+    setPreferAbsoluteDates(preferAbsoluteDates)
+
+    if (changed) {
       this.emitUpdate()
     }
   }

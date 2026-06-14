@@ -1,7 +1,15 @@
 import './node-globals'
 
 import * as Path from 'path'
-import { access, lstat, readFile, readdir, stat, writeFile } from 'fs/promises'
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from 'fs/promises'
 import { Disposable } from 'event-kit'
 import {
   AccountsStore,
@@ -234,6 +242,10 @@ export class WebRuntime {
         return {
           access: (path: string) => this.accessAllowedPath(path),
           lstat: (path: string) => this.statAllowedPath(path, false),
+          mkdir: (
+            path: string,
+            options?: { readonly recursive?: boolean; readonly mode?: number }
+          ) => this.mkdirAllowedPath(path, options),
           pathExists: (path: string) => this.pathExists(path),
           readdir: (path: string) => this.readdirAllowedPath(path),
           readFile: (path: string, encoding?: BufferEncoding) =>
@@ -400,6 +412,17 @@ export class WebRuntime {
   private async writeAllowedFile(path: string, data: string) {
     await this.pathGuard.assertAllowed(path)
     return writeFile(path, data)
+  }
+
+  private async mkdirAllowedPath(
+    path: string,
+    options?: { readonly recursive?: boolean; readonly mode?: number }
+  ) {
+    await this.pathGuard.assertAllowed(path)
+    return mkdir(path, {
+      recursive: options?.recursive,
+      mode: options?.mode,
+    })
   }
 
   private async accessAllowedPath(path: string) {

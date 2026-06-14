@@ -126,14 +126,14 @@ export function createRemoteDispatcher(
 }
 
 function openURLInNewTab(url: string): boolean {
-  const popup = window.open('about:blank', '_blank')
+  const popup = window.open(url, '_blank', 'noopener,noreferrer')
   if (popup !== null) {
     try {
       popup.opener = null
       popup.focus()
-      popup.location.replace(url)
     } catch {
-      popup.location.href = url
+      // Ignore focus/opener failures. The browser has already started loading
+      // the requested URL, including any hash fragment.
     }
 
     return true

@@ -1694,6 +1694,13 @@ export class App extends React.Component<IAppProps, IAppState> {
             onEditGlobalGitConfig={this.editGlobalGitConfig}
             underlineLinks={this.state.underlineLinks}
             showDiffCheckMarks={this.state.showDiffCheckMarks}
+            enableGitHookEnv={this.state.enableGitHookEnv}
+            cacheGitHookEnv={this.state.cacheGitHookEnv}
+            selectedGitHookEnvShell={this.state.selectedGitHookEnvShell}
+            selectedDateFormat={this.state.selectedDateFormat}
+            selectedTimeFormat={this.state.selectedTimeFormat}
+            selectedNumberFormat={this.state.selectedNumberFormat}
+            preferAbsoluteDates={this.state.preferAbsoluteDates}
             selectedCopilotModels={this.state.selectedCopilotModels}
             copilotModels={this.state.copilotModels}
             copilotAvailable={this.state.copilotAvailable}

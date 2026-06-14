@@ -66,8 +66,11 @@ export async function mkdtemp() {
   unavailable()
 }
 
-export async function mkdir() {
-  unavailable()
+export async function mkdir(
+  path: string,
+  options?: { readonly recursive?: boolean; readonly mode?: number }
+) {
+  return invokeWebUIRPC<string | undefined>('filesystem.mkdir', [path, options])
 }
 
 export async function open() {

@@ -89,6 +89,14 @@ export const enableCustomIntegration = () => true
 export const enableResizingToolbarButtons = () => true
 
 export const enableCommitMessageGeneration = (account: Account) => {
+  if (
+    (__PROCESS_KIND__ === 'web' || __PROCESS_KIND__ === 'web-server') &&
+    account.token.length > 0 &&
+    account.isCopilotDesktopEnabled !== false
+  ) {
+    return true
+  }
+
   return (
     (account.features ?? []).includes(
       'desktop_copilot_generate_commit_message'
@@ -100,6 +108,14 @@ export const enableCommitMessageGeneration = (account: Account) => {
 }
 
 export const enableCopilotSdkCommitMessageGeneration = (account: Account) => {
+  if (
+    (__PROCESS_KIND__ === 'web' || __PROCESS_KIND__ === 'web-server') &&
+    account.token.length > 0 &&
+    account.isCopilotDesktopEnabled !== false
+  ) {
+    return true
+  }
+
   return enableBetaFeatures()
   // IMPORTANT: Leaving this here for now. When the feature is enabled in prod,
   // we will rely on the `desktop_enable_copilot_sdk_commit_message_generation`

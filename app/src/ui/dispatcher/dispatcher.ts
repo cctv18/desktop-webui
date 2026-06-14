@@ -72,6 +72,12 @@ import { FetchType } from '../../models/fetch'
 import { GitHubRepository } from '../../models/github-repository'
 import { ManualConflictResolution } from '../../models/manual-conflict-resolution'
 import { Popup, PopupType } from '../../models/popup'
+import type {
+  DateFormat,
+  INumberFormat,
+  TimeFormat,
+} from '../../models/formatting-preferences'
+import type { SupportedHooksEnvShell } from '../../lib/hooks/config'
 import {
   PullRequest,
   PullRequestSuggestedNextAction,
@@ -4187,6 +4193,32 @@ export class Dispatcher {
 
   public setPreferAbsoluteDates(value: boolean) {
     return this.appStore._setPreferAbsoluteDates(value)
+  }
+
+  public setGitHookPreferences(
+    enableGitHookEnv: boolean,
+    cacheGitHookEnv: boolean,
+    selectedGitHookEnvShell: SupportedHooksEnvShell
+  ) {
+    return this.appStore._setGitHookPreferences(
+      enableGitHookEnv,
+      cacheGitHookEnv,
+      selectedGitHookEnvShell
+    )
+  }
+
+  public setFormattingPreferences(
+    selectedDateFormat: DateFormat,
+    selectedTimeFormat: TimeFormat,
+    selectedNumberFormat: INumberFormat,
+    preferAbsoluteDates: boolean
+  ) {
+    return this.appStore._setFormattingPreferences(
+      selectedDateFormat,
+      selectedTimeFormat,
+      selectedNumberFormat,
+      preferAbsoluteDates
+    )
   }
 
   public testPruneBranches() {

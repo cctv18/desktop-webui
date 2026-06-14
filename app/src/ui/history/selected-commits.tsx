@@ -373,6 +373,7 @@ export class SelectedCommits extends React.Component<
     event: React.MouseEvent<HTMLDivElement>
   ) => {
     event.preventDefault()
+    event.stopPropagation()
 
     const {
       selectedCommits,

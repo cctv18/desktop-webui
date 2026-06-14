@@ -314,7 +314,9 @@ export class SideBySideDiff extends React.Component<
       : false
 
     const contents = this.state.diff.hunks
-      .flatMap(h => h.lines.filter(l => l.type !== exclude).map(l => l.content))
+      .flatMap(h =>
+        h.lines.filter(l => l.type !== exclude).map(getDiffLineContent)
+      )
       .join('\n')
 
     ev.preventDefault()
@@ -1405,6 +1407,9 @@ export class SideBySideDiff extends React.Component<
    * Handler to show a context menu when the user right-clicks on the diff text.
    */
   private onContextMenuText = (evt: React.MouseEvent | MouseEvent) => {
+    evt.preventDefault()
+    evt.stopPropagation()
+
     const selectionLength = window.getSelection()?.toString().length ?? 0
 
     if (
@@ -1858,7 +1863,7 @@ function getDiffRowsFromHunk(
 
       rows.push({
         type: DiffRowType.Context,
-        content: line.content,
+        content: getDiffLineContent(line),
         beforeLineNumber: line.oldLineNumber,
         afterLineNumber: line.newLineNumber,
         beforeTokens: [],
@@ -1912,14 +1917,16 @@ function getModifiedRows(
     for (let i = 0; i < deletedLines.length; i++) {
       const addedLine = addedLines[i]
       const deletedLine = deletedLines[i]
+      const addedContent = getDiffLineContent(addedLine.line)
+      const deletedContent = getDiffLineContent(deletedLine.line)
 
       if (
-        addedLine.line.content.length < MaxIntraLineDiffStringLength &&
-        deletedLine.line.content.length < MaxIntraLineDiffStringLength
+        addedContent.length < MaxIntraLineDiffStringLength &&
+        deletedContent.length < MaxIntraLineDiffStringLength
       ) {
         const { before, after } = getDiffTokens(
-          deletedLine.line.content,
-          addedLine.line.content
+          deletedContent,
+          addedContent
         )
         diffTokensBefore[i] = before
         diffTokensAfter[i] = after
@@ -2003,12 +2010,22 @@ function getDataFromLine(
   }
 
   return {
-    content: line.content,
+    content: getDiffLineContent(line),
     lineNumber,
     diffLineNumber: line.originalLineNumber,
     noNewLineIndicator: line.noTrailingNewLine,
     tokens,
   }
+}
+
+function getDiffLineContent(line: DiffLine): string {
+  const content = (line as any).content
+
+  if (typeof content === 'string') {
+    return content
+  }
+
+  return typeof line.text === 'string' ? line.text.substring(1) : ''
 }
 
 /**

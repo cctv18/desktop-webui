@@ -43,10 +43,19 @@ import { BaseStore } from './base-store'
 import { IRepoRulesMetadataRule } from '../../models/repo-rules'
 import { pathExists } from '../path-exists'
 import { enableCopilotSdkCommitMessageGeneration } from '../feature-flag'
+import { API } from '../api'
 
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
 const DefaultReasoningEffort: ReasoningEffort = 'low'
+const DefaultCopilotModels: ReadonlyArray<ModelInfo> = [
+  {
+    id: DefaultCopilotModel,
+    name: 'GPT-5 mini',
+    billing: { multiplier: 1 },
+    supportedReasoningEfforts: ['low', 'medium', 'high'],
+  } as ModelInfo,
+]
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -796,7 +805,21 @@ export class CopilotStore extends BaseStore {
         : DefaultReasoningEffort
     }
 
-    const client = await this.createClient(repositoryPath)
+    let client: CopilotClient
+    try {
+      client = await this.createClient(repositoryPath)
+    } catch (e) {
+      if (this.isMissingCLIError(e)) {
+        return this.generateCommitMessageWithoutSDK(
+          diff,
+          request ?? null,
+          commitMessageRules
+        )
+      }
+
+      throw e
+    }
+
     let session: Awaited<ReturnType<CopilotClient['createSession']>> | null =
       null
 
@@ -855,6 +878,242 @@ export class CopilotStore extends BaseStore {
       // Stop the client after use
       await this.stopClient(client)
     }
+  }
+
+  private isMissingCLIError(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message.includes('CLI entry point not found')
+    )
+  }
+
+  private async generateCommitMessageWithoutSDK(
+    diff: string,
+    request: CopilotModelRequest | null,
+    commitMessageRules?: ReadonlyArray<IRepoRulesMetadataRule>
+  ): Promise<ICopilotCommitMessage> {
+    if (request?.kind === 'byok') {
+      return this.generateCommitMessageWithBYOKProvider(
+        diff,
+        request,
+        commitMessageRules
+      )
+    }
+
+    if (this.currentAccount === null || !this.currentAccount.token) {
+      throw new Error(
+        'Cannot generate commit message: No GitHub.com account available'
+      )
+    }
+
+    const api = new API(
+      this.currentAccount.endpoint,
+      this.currentAccount.token,
+      this.currentAccount.copilotEndpoint ?? 'https://api.githubcopilot.com'
+    )
+
+    return api.getDiffChangesCommitMessage(diff)
+  }
+
+  private async generateCommitMessageWithBYOKProvider(
+    diff: string,
+    request: Extract<CopilotModelRequest, { readonly kind: 'byok' }>,
+    commitMessageRules?: ReadonlyArray<IRepoRulesMetadataRule>
+  ): Promise<ICopilotCommitMessage> {
+    const provider = request.provider as any
+    const tags = generateCommitMessagePromptTags()
+    const cleanedRuleDescriptions =
+      getCleanedEnforcedRuleDescriptions(commitMessageRules)
+    const systemPrompt = buildCommitMessageSystemPrompt(
+      cleanedRuleDescriptions.length > 0,
+      tags
+    )
+    const userPrompt = buildCommitMessageUserPrompt(
+      diff,
+      tags,
+      cleanedRuleDescriptions
+    )
+
+    const responseText = await this.requestBYOKProviderText(
+      provider,
+      request.modelId,
+      request.reasoningEffort,
+      systemPrompt,
+      userPrompt,
+      request.timeoutMs ?? DefaultCopilotRequestTimeoutMs
+    )
+
+    return parseCopilotCommitMessage(responseText)
+  }
+
+  private async requestBYOKProviderText(
+    provider: any,
+    modelId: string,
+    reasoningEffort: ReasoningEffort | undefined,
+    systemPrompt: string,
+    userPrompt: string,
+    timeoutMs: number
+  ): Promise<string> {
+    const type = provider?.type
+    const baseUrl = `${provider?.baseUrl ?? ''}`.replace(/\/+$/, '')
+    if (baseUrl.length === 0) {
+      throw new Error('Custom Copilot provider is missing a base URL')
+    }
+
+    const headers = this.getBYOKAuthHeaders(provider)
+    let url: string
+    let body: Record<string, unknown>
+
+    if (type === 'anthropic') {
+      url = baseUrl.endsWith('/messages') ? baseUrl : `${baseUrl}/v1/messages`
+      body = {
+        model: modelId,
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }
+      headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
+    } else if (type === 'azure') {
+      const apiVersion = provider?.azure?.apiVersion ?? '2024-10-21'
+      url = baseUrl.endsWith('/chat/completions')
+        ? `${baseUrl}?api-version=${encodeURIComponent(apiVersion)}`
+        : `${baseUrl}/openai/deployments/${encodeURIComponent(
+            modelId
+          )}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`
+      body = this.buildOpenAIChatCompletionsBody(
+        modelId,
+        reasoningEffort,
+        systemPrompt,
+        userPrompt,
+        false
+      )
+    } else if (provider?.wireApi === 'responses') {
+      url = baseUrl.endsWith('/responses') ? baseUrl : `${baseUrl}/responses`
+      body = {
+        model: modelId,
+        input: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        text: { format: { type: 'json_object' } },
+      }
+      if (reasoningEffort !== undefined) {
+        body.reasoning = { effort: reasoningEffort }
+      }
+    } else {
+      url = baseUrl.endsWith('/chat/completions')
+        ? baseUrl
+        : `${baseUrl}/chat/completions`
+      body = this.buildOpenAIChatCompletionsBody(
+        modelId,
+        reasoningEffort,
+        systemPrompt,
+        userPrompt,
+        true
+      )
+    }
+
+    const json = await this.postBYOKJSON(url, headers, body, timeoutMs)
+    return this.extractBYOKTextResponse(json)
+  }
+
+  private buildOpenAIChatCompletionsBody(
+    modelId: string,
+    reasoningEffort: ReasoningEffort | undefined,
+    systemPrompt: string,
+    userPrompt: string,
+    includeModel: boolean
+  ): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+    }
+
+    if (includeModel) {
+      body.model = modelId
+    }
+
+    if (reasoningEffort !== undefined) {
+      body.reasoning_effort = reasoningEffort
+    }
+
+    return body
+  }
+
+  private getBYOKAuthHeaders(provider: any): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+
+    if (typeof provider?.bearerToken === 'string') {
+      headers.Authorization = `Bearer ${provider.bearerToken}`
+    } else if (typeof provider?.apiKey === 'string') {
+      if (provider?.type === 'azure') {
+        headers['api-key'] = provider.apiKey
+      } else if (provider?.type === 'anthropic') {
+        headers['x-api-key'] = provider.apiKey
+      } else {
+        headers.Authorization = `Bearer ${provider.apiKey}`
+      }
+    }
+
+    return headers
+  }
+
+  private async postBYOKJSON(
+    url: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<any> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+
+      const text = await response.text()
+      if (!response.ok) {
+        throw new Error(
+          `Custom Copilot provider request failed with HTTP ${response.status}: ${text}`
+        )
+      }
+
+      return JSON.parse(text)
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  private extractBYOKTextResponse(json: any): string {
+    const chatContent = json?.choices?.[0]?.message?.content
+    if (typeof chatContent === 'string') {
+      return chatContent
+    }
+
+    if (typeof json?.output_text === 'string') {
+      return json.output_text
+    }
+
+    const outputContent = json?.output?.[0]?.content?.[0]?.text
+    if (typeof outputContent === 'string') {
+      return outputContent
+    }
+
+    const anthropicText = json?.content?.[0]?.text
+    if (typeof anthropicText === 'string') {
+      return anthropicText
+    }
+
+    throw new Error('Custom Copilot provider returned no text response')
   }
 
   /**
@@ -1249,7 +1508,18 @@ export class CopilotStore extends BaseStore {
   }
 
   private async fetchModels(): Promise<ReadonlyArray<ModelInfo> | null> {
-    const client = await this.createClient()
+    let client: CopilotClient
+    try {
+      client = await this.createClient()
+    } catch (e) {
+      if (this.isMissingCLIError(e)) {
+        this.cachedModels = DefaultCopilotModels
+        this.modelsCachedAt = Date.now()
+        return this.cachedModels
+      }
+
+      throw e
+    }
 
     try {
       await client.start()

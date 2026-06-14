@@ -20,6 +20,12 @@ import { IMenu } from '../models/app-menu'
 import { IRemote } from '../models/remote'
 import { CloneRepositoryTab } from '../models/clone-repository-tab'
 import { BranchesTab } from '../models/branches-tab'
+import type {
+  DateFormat,
+  INumberFormat,
+  TimeFormat,
+} from '../models/formatting-preferences'
+import type { SupportedHooksEnvShell } from './hooks/config'
 import {
   PullRequest,
   PullRequestSuggestedNextAction,
@@ -389,6 +395,16 @@ export interface IAppState {
 
   /** Whether the user prefers absolute dates over relative time in lists */
   readonly preferAbsoluteDates: boolean
+
+  /** Git hooks environment preferences persisted by the server runtime. */
+  readonly enableGitHookEnv: boolean
+  readonly cacheGitHookEnv: boolean
+  readonly selectedGitHookEnvShell: SupportedHooksEnvShell
+
+  /** Formatting preferences persisted by the server runtime. */
+  readonly selectedDateFormat: DateFormat
+  readonly selectedTimeFormat: TimeFormat
+  readonly selectedNumberFormat: INumberFormat
 
   /**
    * Cached repo rulesets. Used to prevent repeatedly querying the same

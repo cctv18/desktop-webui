@@ -32,8 +32,18 @@ export async function getLicenses(): Promise<ReadonlyArray<ILicense>> {
       'static',
       'available-licenses.json'
     )
-    const json = await readFile(licensesMetadataPath, 'utf8')
-    const licenses: Array<ILicense> = JSON.parse(json)
+    let licenses: Array<ILicense>
+    try {
+      const json = await readFile(licensesMetadataPath, 'utf8')
+      licenses = JSON.parse(json)
+    } catch (e) {
+      log.warn(
+        `Unable to load repository license templates from ${licensesMetadataPath}`,
+        e
+      )
+      cachedLicenses = []
+      return cachedLicenses
+    }
 
     cachedLicenses = licenses.sort((a, b) => {
       if (a.featured) {

@@ -537,7 +537,7 @@ export class SideBySideDiffRow extends React.Component<
       >
         <Button
           onClick={elementInfo.handler}
-          onContextMenu={this.props.onContextMenuExpandHunk}
+          onContextMenu={this.onContextMenuExpandHunk}
           tooltip={elementInfo.title}
           toolTipDirection={TooltipDirection.SOUTH}
           ariaLabel={elementInfo.title}
@@ -1018,6 +1018,9 @@ export class SideBySideDiffRow extends React.Component<
   }
 
   private onContextMenuLineNumber = (evt: React.MouseEvent) => {
+    evt.preventDefault()
+    evt.stopPropagation()
+
     if (this.props.hideWhitespaceInDiff) {
       const column = this.getDiffColumn(evt.currentTarget)
       if (column !== null) {
@@ -1032,7 +1035,10 @@ export class SideBySideDiffRow extends React.Component<
     }
   }
 
-  private onContextMenuHunk = () => {
+  private onContextMenuHunk = (evt: React.MouseEvent) => {
+    evt.preventDefault()
+    evt.stopPropagation()
+
     if (this.props.hideWhitespaceInDiff) {
       const { row } = this.props
       // Prefer left hand side popovers when clicking hunk except for when
@@ -1047,5 +1053,11 @@ export class SideBySideDiffRow extends React.Component<
     if ('hunkStartLine' in this.props.row) {
       this.props.onContextMenuHunk(this.props.row.hunkStartLine)
     }
+  }
+
+  private onContextMenuExpandHunk = (evt: React.MouseEvent) => {
+    evt.preventDefault()
+    evt.stopPropagation()
+    this.props.onContextMenuExpandHunk()
   }
 }

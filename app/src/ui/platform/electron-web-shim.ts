@@ -11,6 +11,8 @@ import {
 
 const noop = () => undefined
 const storagePrefix = 'gitdesk-webui:'
+const zoomStorageKey = `${storagePrefix}zoom-factor`
+const themeSourceStorageKey = `${storagePrefix}native-theme-source`
 
 type IPCListener = (event: unknown, ...args: ReadonlyArray<any>) => void
 type WebContextMenuItem = {
@@ -27,6 +29,10 @@ let lastPointer = { x: 80, y: 80 }
 let currentMenuLabels = getDefaultWebMenuLabels()
 let currentMenuState = new Map<string, IMenuItemState>()
 let currentAppMenu = getDefaultWebAppMenu(currentMenuLabels)
+let windowZoomFactor = readStoredZoomFactor()
+let nativeThemeSource = readStoredThemeSource()
+
+applyWindowZoomFactor()
 
 window.addEventListener(
   'mousedown',
@@ -70,11 +76,11 @@ async function invoke(channel: string, ...args: ReadonlyArray<any>) {
     case 'is-window-focused':
       return document.hasFocus()
     case 'should-use-dark-colors':
-      return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+      return shouldUseDarkColors()
     case 'get-current-window-state':
       return 'normal'
     case 'get-current-window-zoom-factor':
-      return 1
+      return windowZoomFactor
     case 'is-window-maximized':
       return false
     case 'get-path':
@@ -124,6 +130,12 @@ function send(channel: string, ...args: ReadonlyArray<any>) {
       break
     case 'update-preferred-app-menu-item-labels':
       updateWebMenuLabels(args[0])
+      break
+    case 'set-window-zoom-factor':
+      setWindowZoomFactor(Number(args[0]))
+      break
+    case 'set-native-theme-source':
+      setNativeThemeSource(`${args[0] ?? 'system'}`)
       break
   }
 }
@@ -202,8 +214,15 @@ export const webUtils = {
 }
 
 export const nativeTheme = {
-  shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches,
-  themeSource: 'system',
+  get shouldUseDarkColors() {
+    return shouldUseDarkColors()
+  },
+  get themeSource() {
+    return nativeThemeSource
+  },
+  set themeSource(value: string) {
+    setNativeThemeSource(value)
+  },
   on: noop,
 }
 
@@ -312,6 +331,10 @@ function rebuildWebMenu() {
 }
 
 function executeWebMenuItemById(id: string, item?: { readonly label?: string }) {
+  if (executeLocalWebMenuItem(id)) {
+    return
+  }
+
   const externalURL = getWebMenuExternalURL(id)
 
   if (externalURL !== null) {
@@ -324,6 +347,109 @@ function executeWebMenuItemById(id: string, item?: { readonly label?: string }) 
   if (menuEvent !== null) {
     emitIPC('menu-event', menuEvent)
   }
+}
+
+function executeLocalWebMenuItem(id: string): boolean {
+  switch (id) {
+    case 'reset-zoom':
+      setWindowZoomFactor(1)
+      return true
+    case 'zoom-in':
+      setWindowZoomFactor(getNextZoomFactor(1))
+      return true
+    case 'zoom-out':
+      setWindowZoomFactor(getNextZoomFactor(-1))
+      return true
+    default:
+      return false
+  }
+}
+
+function getNextZoomFactor(direction: 1 | -1) {
+  const zoomFactors =
+    direction > 0
+      ? [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
+      : [2, 1.75, 1.5, 1.25, 1.1, 1, 0.9, 0.8, 0.75, 0.67, 0.5, 0.33, 0.25]
+
+  const currentZoom = findClosestZoomFactor(windowZoomFactor, zoomFactors)
+  const nextZoom = zoomFactors.find(f =>
+    direction > 0 ? f > currentZoom : f < currentZoom
+  )
+
+  return nextZoom ?? currentZoom
+}
+
+function findClosestZoomFactor(
+  value: number,
+  candidates: ReadonlyArray<number>
+) {
+  return candidates.reduce((closest, candidate) =>
+    Math.abs(candidate - value) < Math.abs(closest - value)
+      ? candidate
+      : closest
+  )
+}
+
+function readStoredZoomFactor() {
+  const raw = window.localStorage.getItem(zoomStorageKey)
+  const parsed = raw === null ? NaN : parseFloat(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
+
+function setWindowZoomFactor(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return
+  }
+
+  const normalized = Math.max(0.25, Math.min(2, value))
+  if (normalized === windowZoomFactor) {
+    return
+  }
+
+  windowZoomFactor = normalized
+  window.localStorage.setItem(zoomStorageKey, `${normalized}`)
+  applyWindowZoomFactor()
+  emitIPC('zoom-factor-changed', normalized)
+}
+
+function applyWindowZoomFactor() {
+  const zoom = windowZoomFactor === 1 ? '' : `${windowZoomFactor}`
+  const target = document.body ?? document.documentElement
+  ;(target.style as any).zoom = zoom
+}
+
+function readStoredThemeSource() {
+  const raw = window.localStorage.getItem(themeSourceStorageKey)
+  return raw === 'light' || raw === 'dark' || raw === 'system'
+    ? raw
+    : 'system'
+}
+
+function setNativeThemeSource(value: string) {
+  const next =
+    value === 'light' || value === 'dark' || value === 'system'
+      ? value
+      : 'system'
+
+  if (next === nativeThemeSource) {
+    return
+  }
+
+  nativeThemeSource = next
+  window.localStorage.setItem(themeSourceStorageKey, next)
+  emitIPC('native-theme-updated')
+}
+
+function shouldUseDarkColors() {
+  if (nativeThemeSource === 'dark') {
+    return true
+  }
+
+  if (nativeThemeSource === 'light') {
+    return false
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
 }
 
 function showWebContextualMenu(items: unknown) {
