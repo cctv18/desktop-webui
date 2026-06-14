@@ -35,6 +35,8 @@ import { InputWarning } from '../lib/input-description/input-warning'
 import { CreateRepositoryError } from '../../lib/error-with-metadata'
 import { RepositoryPath } from '../lib/repository-path'
 import { pathExists } from '../../lib/path-exists'
+import { invokeWebUIRPC } from '../../lib/webui-rpc'
+import type { Repository } from '../../models/repository'
 
 /** URL used to provide information about submodules to the user. */
 const submoduleDocsUrl = 'https://gh.io/git-submodules'
@@ -247,6 +249,10 @@ export class CreateRepository extends React.Component<
       return
     }
 
+    if (__PROCESS_KIND__ === 'web') {
+      return this.createRepositoryOnServer(fullPath)
+    }
+
     try {
       await mkdir(fullPath, { recursive: true })
       this.setState({ isValidPath: true })
@@ -388,6 +394,59 @@ export class CreateRepository extends React.Component<
     this.props.dispatcher.selectRepository(repository)
     this.props.dispatcher.recordCreateRepository()
     this.props.onDismissed()
+  }
+
+  private async createRepositoryOnServer(fullPath: string) {
+    this.setState({ creating: true, isValidPath: true })
+
+    const license = this.getSelectedLicense()
+
+    try {
+      const repository = await invokeWebUIRPC<Repository | null>(
+        'repositoryCreation.createRepository',
+        [
+          {
+            fullPath,
+            name: this.state.name,
+            description: this.state.description,
+            createWithReadme: this.state.createWithReadme,
+            gitIgnore: this.state.gitIgnore,
+            license,
+          },
+        ]
+      )
+
+      this.setState({ creating: false })
+
+      if (repository === null) {
+        return
+      }
+
+      this.updateDefaultDirectory()
+
+      this.props.dispatcher.closeFoldout(FoldoutType.Repository)
+      this.props.dispatcher.selectRepository(repository)
+      this.props.dispatcher.recordCreateRepository()
+      this.props.onDismissed()
+    } catch (e) {
+      this.setState({ creating: false })
+      log.error(
+        `createRepository: unable to create repository at ${fullPath}`,
+        e
+      )
+      return this.props.dispatcher.postError(e)
+    }
+  }
+
+  private getSelectedLicense() {
+    const licenseName =
+      this.state.license === NoLicenseValue.name ? null : this.state.license
+
+    if (licenseName === null) {
+      return null
+    }
+
+    return (this.state.licenses || []).find(l => l.name === licenseName) ?? null
   }
 
   private updateDefaultDirectory = () => {

@@ -91,7 +91,7 @@ export const enableResizingToolbarButtons = () => true
 export const enableCommitMessageGeneration = (account: Account) => {
   if (
     (__PROCESS_KIND__ === 'web' || __PROCESS_KIND__ === 'web-server') &&
-    account.token.length > 0 &&
+    account.login.length > 0 &&
     account.isCopilotDesktopEnabled !== false
   ) {
     return true
@@ -110,7 +110,7 @@ export const enableCommitMessageGeneration = (account: Account) => {
 export const enableCopilotSdkCommitMessageGeneration = (account: Account) => {
   if (
     (__PROCESS_KIND__ === 'web' || __PROCESS_KIND__ === 'web-server') &&
-    account.token.length > 0 &&
+    account.login.length > 0 &&
     account.isCopilotDesktopEnabled !== false
   ) {
     return true

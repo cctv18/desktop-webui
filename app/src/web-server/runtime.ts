@@ -1,6 +1,7 @@
 import './node-globals'
 
 import * as Path from 'path'
+import { spawn } from 'child_process'
 import {
   access,
   lstat,
@@ -61,6 +62,12 @@ import { doMergeCommitsExistAfterCommit } from '../lib/git/rev-list'
 import { filesNotTrackedByLFS } from '../lib/git/lfs'
 import { getAuthors } from '../lib/git/log'
 import { getPartialBlobContents } from '../lib/git/show'
+import {
+  createCommit,
+  getAuthorIdentity,
+  getStatus,
+  initGitRepository,
+} from '../lib/git'
 import { readPartialFile } from '../lib/file-system'
 import { pathExists as pathExistsOnDisk } from '../lib/path-exists'
 import { configureGitEnvironment } from './git-environment'
@@ -75,6 +82,26 @@ import { TrampolineCommandIdentifier } from '../lib/trampoline/trampoline-comman
 import { createAskpassTrampolineHandler } from '../lib/trampoline/trampoline-askpass-handler'
 import { createCredentialHelperTrampolineHandler } from '../lib/trampoline/trampoline-credential-helper'
 import { setWebUIGitCredentialAccountProvider } from '../lib/webui-git-credentials'
+import { writeDefaultReadme } from '../ui/add-repository/write-default-readme'
+import { writeGitDescription } from '../lib/git/description'
+import { writeGitIgnore } from '../ui/add-repository/gitignores'
+import { writeGitAttributes } from '../ui/add-repository/git-attributes'
+import { writeLicense } from '../ui/add-repository/licenses'
+import type { ILicense } from '../ui/add-repository/licenses'
+
+interface ICreateLocalRepositoryOptions {
+  readonly fullPath: string
+  readonly name: string
+  readonly description: string
+  readonly createWithReadme: boolean
+  readonly gitIgnore: string
+  readonly license: ILicense | null
+}
+
+interface IClipboardCommand {
+  readonly command: string
+  readonly args: ReadonlyArray<string>
+}
 
 class ServerActivityMonitor implements IUiActivityMonitor {
   public onActivity() {
@@ -262,6 +289,15 @@ export class WebRuntime {
         return {
           resolveCloneInfo: (url: string) => this.resolveCloneInfo(url),
         }
+      case 'repositoryCreation':
+        return {
+          createRepository: (options: ICreateLocalRepositoryOptions) =>
+            this.createLocalRepository(options),
+        }
+      case 'clipboard':
+        return {
+          writeText: (text: string) => this.writeClipboardText(text),
+        }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
     }
@@ -300,6 +336,63 @@ export class WebRuntime {
       log.error(`Failed to look up repository clone info for '${url}'`, error)
       return { url }
     })
+  }
+
+  private async createLocalRepository(options: ICreateLocalRepositoryOptions) {
+    const fullPath = options.fullPath
+
+    if (typeof fullPath !== 'string' || fullPath.length === 0) {
+      throw new Error('Repository path is required.')
+    }
+
+    await this.pathGuard.assertAllowed(fullPath)
+    await mkdir(fullPath, { recursive: true })
+    await initGitRepository(fullPath)
+
+    const repositories = await this.dispatcher.addRepositories([fullPath])
+    if (repositories.length < 1) {
+      throw new Error(`Unable to add repository at ${fullPath}.`)
+    }
+
+    const repository = repositories[0]
+
+    if (options.createWithReadme) {
+      await writeDefaultReadme(fullPath, options.name, options.description)
+    }
+
+    if (options.gitIgnore !== 'None') {
+      await writeGitIgnore(fullPath, options.gitIgnore)
+    }
+
+    if (options.description) {
+      await writeGitDescription(fullPath, options.description)
+    }
+
+    if (options.license !== null) {
+      const author = await getAuthorIdentity(repository)
+
+      await writeLicense(fullPath, options.license, {
+        fullname: author ? author.name : '',
+        email: author ? author.email : '',
+        year: new Date().getFullYear().toString(),
+        description: '',
+        project: options.name,
+      })
+    }
+
+    const gitAttributes = Path.join(fullPath, '.gitattributes')
+    if (!(await pathExistsOnDisk(gitAttributes))) {
+      await writeGitAttributes(fullPath)
+    }
+
+    const status = await getStatus(repository, true, true)
+    const files = status.workingDirectory.files
+
+    if (files.length > 0) {
+      await createCommit(repository, 'Initial commit', files)
+    }
+
+    return repository
   }
 
   private async getAllowedRepositoryType(path: string) {
@@ -372,7 +465,9 @@ export class WebRuntime {
   }
 
   private resolveStaticPath(path: string) {
-    if (!path.startsWith('/static/')) {
+    const decodedPath = this.decodeStaticPath(path)
+
+    if (decodedPath === null || !decodedPath.startsWith('/static/')) {
       return null
     }
 
@@ -384,7 +479,7 @@ export class WebRuntime {
     const absoluteStaticRoot = Path.resolve(staticRoot)
     const absolutePath = Path.resolve(
       absoluteStaticRoot,
-      path.replace(/^\/+/, '')
+      decodedPath.replace(/^\/+/, '')
     )
     const relativePath = Path.relative(absoluteStaticRoot, absolutePath)
 
@@ -397,6 +492,14 @@ export class WebRuntime {
     }
 
     return null
+  }
+
+  private decodeStaticPath(path: string) {
+    try {
+      return decodeURIComponent(path)
+    } catch {
+      return null
+    }
   }
 
   private async readAllowedFile(path: string, encoding?: BufferEncoding) {
@@ -455,6 +558,97 @@ export class WebRuntime {
   private async pathExists(path: string) {
     await this.pathGuard.assertAllowed(path)
     return pathExistsOnDisk(path)
+  }
+
+  private async writeClipboardText(text: string) {
+    if (typeof text !== 'string') {
+      return false
+    }
+
+    let wrote = false
+
+    for (const command of this.getClipboardCommands()) {
+      try {
+        await this.writeClipboardWithCommand(command, text)
+        wrote = true
+      } catch {
+        // Clipboard helpers are optional on Linux servers. The browser
+        // clipboard write has already happened, so this bridge is best effort.
+      }
+    }
+
+    return wrote
+  }
+
+  private getClipboardCommands(): ReadonlyArray<IClipboardCommand> {
+    if (process.platform === 'win32') {
+      return [{ command: 'cmd', args: ['/c', 'clip'] }]
+    }
+
+    if (process.platform === 'darwin') {
+      return [{ command: 'pbcopy', args: [] }]
+    }
+
+    return [
+      { command: 'wl-copy', args: [] },
+      { command: 'xclip', args: ['-selection', 'clipboard'] },
+      { command: 'xclip', args: ['-selection', 'primary'] },
+      { command: 'xsel', args: ['--clipboard', '--input'] },
+      { command: 'xsel', args: ['--primary', '--input'] },
+    ]
+  }
+
+  private writeClipboardWithCommand(
+    command: IClipboardCommand,
+    text: string
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(command.command, command.args, {
+        stdio: ['pipe', 'ignore', 'pipe'],
+      })
+      let settled = false
+      let stderr = ''
+
+      const finish = (error?: Error) => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        clearTimeout(timeout)
+
+        if (error !== undefined) {
+          reject(error)
+        } else {
+          resolve()
+        }
+      }
+
+      const timeout = setTimeout(() => {
+        child.kill()
+        finish(new Error(`Clipboard command '${command.command}' timed out.`))
+      }, 2000)
+
+      child.stderr?.on('data', data => {
+        stderr += Buffer.from(data).toString('utf8')
+      })
+
+      child.on('error', finish)
+      child.on('close', code => {
+        if (code === 0) {
+          finish()
+        } else {
+          finish(
+            new Error(
+              `Clipboard command '${command.command}' exited with ${code}: ${stderr}`
+            )
+          )
+        }
+      })
+
+      child.stdin.on('error', finish)
+      child.stdin.end(text)
+    })
   }
 
   private async reviveAndGuardArgument(param: unknown): Promise<unknown> {

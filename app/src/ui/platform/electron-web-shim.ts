@@ -8,6 +8,7 @@ import {
   getWebMenuEventForItem,
   getWebMenuExternalURL,
 } from '../../lib/webui-app-menu'
+import { invokeWebUIRPC } from '../../lib/webui-rpc'
 
 const noop = () => undefined
 const storagePrefix = 'gitdesk-webui:'
@@ -188,11 +189,33 @@ export const ipcRenderer = {
 
 export const clipboard = {
   writeText(text: string) {
+    writeTextWithLegacyClipboard(text)
     navigator.clipboard?.writeText(text).catch(() => undefined)
+    invokeWebUIRPC('clipboard.writeText', [text]).catch(() => undefined)
   },
   readText() {
     return ''
   },
+}
+
+function writeTextWithLegacyClipboard(text: string) {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.top = '0'
+
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  try {
+    document.execCommand('copy')
+  } catch {
+    // navigator.clipboard and the server-side clipboard bridge still run.
+  } finally {
+    textarea.remove()
+  }
 }
 
 export const shell = {
@@ -497,11 +520,12 @@ function showWebContextualMenu(items: unknown) {
     window.addEventListener('keydown', onKeyDown)
     document.body.appendChild(overlay)
 
+    const adjustedPointer = toZoomAdjustedPoint(lastPointer)
     const rootMenu = buildWebContextMenu(
       menuItems,
       [],
-      lastPointer.x,
-      lastPointer.y,
+      adjustedPointer.x,
+      adjustedPointer.y,
       overlay,
       submenus,
       cleanup
@@ -522,12 +546,10 @@ function buildWebContextMenu(
 ) {
   const menu = document.createElement('div')
   const width = 280
-  const safeLeft = Math.max(8, Math.min(left, window.innerWidth - width - 8))
-  const safeTop = Math.max(8, Math.min(top, window.innerHeight - 24))
 
   menu.style.position = 'fixed'
-  menu.style.left = `${safeLeft}px`
-  menu.style.top = `${safeTop}px`
+  menu.style.left = `${left}px`
+  menu.style.top = `${top}px`
   menu.style.minWidth = `${width}px`
   menu.style.maxWidth = '420px'
   menu.style.padding = '4px 0'
@@ -564,11 +586,12 @@ function buildWebContextMenu(
       }
 
       const rect = row.getBoundingClientRect()
+      const point = toZoomAdjustedPoint({ x: rect.right - 2, y: rect.top })
       const submenuElement = buildWebContextMenu(
         rawItem.submenu,
         itemIndices,
-        rect.right - 2,
-        rect.top,
+        point.x,
+        point.y,
         overlay,
         submenus,
         onSelect
@@ -589,7 +612,52 @@ function buildWebContextMenu(
     })
   }
 
+  requestAnimationFrame(() => positionWebContextMenu(menu, left, top, width))
+
   return menu
+}
+
+function toZoomAdjustedPoint(point: { readonly x: number; readonly y: number }) {
+  return {
+    x: point.x / windowZoomFactor,
+    y: point.y / windowZoomFactor,
+  }
+}
+
+function getZoomAdjustedViewportSize() {
+  return {
+    width: window.innerWidth / windowZoomFactor,
+    height: window.innerHeight / windowZoomFactor,
+  }
+}
+
+function positionWebContextMenu(
+  menu: HTMLElement,
+  left: number,
+  top: number,
+  width: number
+) {
+  const viewport = getZoomAdjustedViewportSize()
+  const margin = 8
+  const menuHeight = menu.offsetHeight || 24
+  const menuWidth = Math.max(width, menu.offsetWidth || width)
+  const roomBelow = viewport.height - top - margin
+  const preferredTop =
+    roomBelow >= menuHeight || top < menuHeight + margin
+      ? top
+      : top - menuHeight
+
+  const safeLeft = Math.max(
+    margin,
+    Math.min(left, viewport.width - menuWidth - margin)
+  )
+  const safeTop = Math.max(
+    margin,
+    Math.min(preferredTop, viewport.height - menuHeight - margin)
+  )
+
+  menu.style.left = `${safeLeft}px`
+  menu.style.top = `${safeTop}px`
 }
 
 function appendMenuRow(

@@ -203,13 +203,23 @@ function broadcast(event: ServerEvent) {
 }
 
 function serveStatic(pathname: string, res: Http.ServerResponse) {
-  const requestedPath = pathname === '/' ? '/index.html' : pathname
+  const decodedPathname = decodeURLPathname(pathname)
+  if (decodedPathname === null) {
+    writeJson(res, 400, { error: 'Bad request' })
+    return
+  }
+
+  const requestedPath = decodedPathname === '/' ? '/index.html' : decodedPathname
   const absolutePath = Path.resolve(
     staticRoot,
     requestedPath.replace(/^\/+/, '')
   )
+  const absoluteStaticRoot = Path.resolve(staticRoot)
 
-  if (!absolutePath.startsWith(Path.resolve(staticRoot))) {
+  if (
+    absolutePath !== absoluteStaticRoot &&
+    !absolutePath.startsWith(`${absoluteStaticRoot}${Path.sep}`)
+  ) {
     writeJson(res, 403, { error: 'Forbidden' })
     return
   }
@@ -223,6 +233,14 @@ function serveStatic(pathname: string, res: Http.ServerResponse) {
     res.writeHead(200, { 'Content-Type': contentType(absolutePath) })
     res.end(data)
   })
+}
+
+function decodeURLPathname(pathname: string) {
+  try {
+    return decodeURIComponent(pathname)
+  } catch {
+    return null
+  }
 }
 
 function readJson(req: Http.IncomingMessage): Promise<any> {

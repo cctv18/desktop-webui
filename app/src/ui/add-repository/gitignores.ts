@@ -3,14 +3,20 @@ import { readdir, readFile, writeFile } from 'fs/promises'
 
 const GitIgnoreExtension = '.gitignore'
 
-const root = Path.join(__dirname, 'static', 'gitignore')
-
 let cachedGitIgnores: Map<string, string> | null = null
+
+function getGitIgnoreRoot() {
+  const webUIStaticRoot = process.env.GITDESK_WEBUI_STATIC_ROOT
+  return webUIStaticRoot
+    ? Path.join(webUIStaticRoot, 'static', 'gitignore')
+    : Path.join(__dirname, 'static', 'gitignore')
+}
 
 async function getCachedGitIgnores(): Promise<Map<string, string>> {
   if (cachedGitIgnores != null) {
     return cachedGitIgnores
   } else {
+    const root = getGitIgnoreRoot()
     const files = await readdir(root)
     const ignoreFiles = files.filter(file => file.endsWith(GitIgnoreExtension))
 
