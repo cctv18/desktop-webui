@@ -1868,6 +1868,13 @@ export class API {
     do {
       const response: Response = await this.ghRequest('GET', nextPath)
       if (opts.suppressErrors !== false && !response.ok) {
+        if (
+          path === 'user/orgs' &&
+          response.status === HttpStatusCode.Unauthorized
+        ) {
+          return buf
+        }
+
         log.warn(`fetchAll: '${path}' returned a ${response.status}`)
         return buf
       }

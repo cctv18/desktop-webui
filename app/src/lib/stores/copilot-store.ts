@@ -48,14 +48,6 @@ import { API } from '../api'
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
 const DefaultReasoningEffort: ReasoningEffort = 'low'
-const DefaultCopilotModels: ReadonlyArray<ModelInfo> = [
-  {
-    id: DefaultCopilotModel,
-    name: 'GPT-5 mini',
-    billing: { multiplier: 1 },
-    supportedReasoningEfforts: ['low', 'medium', 'high'],
-  } as ModelInfo,
-]
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -1513,8 +1505,7 @@ export class CopilotStore extends BaseStore {
       client = await this.createClient()
     } catch (e) {
       if (this.isMissingCLIError(e)) {
-        this.cachedModels = DefaultCopilotModels
-        this.modelsCachedAt = Date.now()
+        log.warn('CopilotStore: Cannot list models because the CLI is missing')
         return this.cachedModels
       }
 

@@ -16,7 +16,7 @@ interface ICopilotDisclaimerProps {
   readonly onAccepted: () => void
 
   /** Callback to use when the dialog gets closed. */
-  readonly onDismissed: () => void
+  readonly onDismissed: () => void | Promise<void>
 }
 
 /**
@@ -60,8 +60,8 @@ export class CopilotDisclaimer extends React.Component<ICopilotDisclaimerProps> 
     )
   }
 
-  private onSubmit = () => {
+  private onSubmit = async () => {
+    await this.props.onDismissed()
     this.props.onAccepted()
-    this.props.onDismissed()
   }
 }

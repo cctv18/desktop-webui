@@ -75,6 +75,7 @@ import {
 import { ChangesListFilterOptions } from './changes-list-filter-options'
 import { HookProgress } from '../../lib/git'
 import { formatNumber } from '../../lib/format-number'
+import type { CopilotModelSelections } from '../../lib/stores/copilot-store'
 
 export interface IChangesListItem extends IFilterListItem {
   readonly id: string
@@ -217,6 +218,7 @@ interface IFilterChangesListProps {
   readonly showCommitLengthWarning: boolean
 
   readonly accounts: ReadonlyArray<Account>
+  readonly selectedCopilotModels: CopilotModelSelections
 
   /** The file list filter state containing all filter options */
   readonly fileListFilter: IFileListFilterState
@@ -977,6 +979,7 @@ export class FilterChangesList extends React.Component<
         shouldShowGenerateCommitMessageCallOut={
           shouldShowGenerateCommitMessageCallOut
         }
+        selectedCopilotModels={this.props.selectedCopilotModels}
         commitToAmend={commitToAmend}
         showCoAuthoredBy={this.props.showCoAuthoredBy}
         coAuthors={this.props.coAuthors}

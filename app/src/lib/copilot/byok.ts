@@ -146,6 +146,15 @@ export function encodeModelKey(key: CopilotModelKey): string {
 }
 
 /**
+ * Sentinel value stored in `selectedCopilotModels` when the user chooses to
+ * hide Copilot UI for a feature instead of selecting a model.
+ */
+export const HiddenCopilotModelKey = encodeModelKey({
+  kind: 'copilot',
+  modelId: '',
+})
+
+/**
  * Parses a persisted model selection. Bare strings (without a prefix) are
  * treated as legacy Copilot model IDs so existing user settings continue
  * to work without an explicit migration step.

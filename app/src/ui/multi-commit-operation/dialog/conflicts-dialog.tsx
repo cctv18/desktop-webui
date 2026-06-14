@@ -65,6 +65,7 @@ interface IConflictsDialogProps {
    * for the first time.
    */
   readonly shouldShowCopilotConflictResolutionCallOut: boolean
+  readonly isCopilotConflictResolutionHidden: boolean
 }
 
 interface IConflictsDialogState {
@@ -256,10 +257,16 @@ export class ConflictsDialog extends React.Component<
   private renderCopilotButton(
     conflictedFilesCount: number
   ): JSX.Element | null {
-    const { onResolveWithCopilot, accounts, repository } = this.props
+    const {
+      onResolveWithCopilot,
+      accounts,
+      repository,
+      isCopilotConflictResolutionHidden,
+    } = this.props
 
     if (
       onResolveWithCopilot === undefined ||
+      isCopilotConflictResolutionHidden ||
       !enableCopilotConflictResolution() ||
       conflictedFilesCount === 0 ||
       getAccountForCopilotConflictResolution(accounts, repository) === undefined

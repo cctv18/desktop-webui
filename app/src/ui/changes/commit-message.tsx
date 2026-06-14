@@ -69,6 +69,8 @@ import {
 import { AriaLiveContainer } from '../accessibility/aria-live-container'
 import { HookProgress } from '../../lib/git'
 import { assertNever } from '../../lib/fatal-error'
+import type { CopilotModelSelections } from '../../lib/stores/copilot-store'
+import { HiddenCopilotModelKey } from '../../lib/copilot/byok'
 
 const addAuthorIcon: OcticonSymbolVariant = {
   w: 18,
@@ -197,6 +199,7 @@ interface ICommitMessageProps {
   readonly onFilesToCommitNotVisible?: (onCommitAnyway: () => {}) => void
   readonly onSuccessfulCommitCreated?: () => void
   readonly accounts: ReadonlyArray<Account>
+  readonly selectedCopilotModels?: CopilotModelSelections
 
   /** Optional to add an id to a message that should be provided as an aria
    * description of the submit button */
@@ -877,6 +880,7 @@ export class CommitMessage extends React.Component<
     } = this.props
 
     if (
+      this.isCommitMessageGenerationHidden ||
       !accounts.some(enableCommitMessageGeneration) ||
       onGenerateCommitMessage === undefined
     ) {
@@ -1186,8 +1190,16 @@ export class CommitMessage extends React.Component<
   private get isCopilotButtonEnabled() {
     const { accounts, onGenerateCommitMessage } = this.props
     return (
+      !this.isCommitMessageGenerationHidden &&
       accounts.some(enableCommitMessageGeneration) &&
       onGenerateCommitMessage !== undefined
+    )
+  }
+
+  private get isCommitMessageGenerationHidden() {
+    return (
+      this.props.selectedCopilotModels?.['commit-message-generation'] ===
+      HiddenCopilotModelKey
     )
   }
 

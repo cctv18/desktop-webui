@@ -34,6 +34,9 @@ export class MultiCommitOperation extends React.Component<IMultiCommitOperationP
             shouldShowCopilotConflictResolutionCallOut={
               this.props.shouldShowCopilotConflictResolutionCallOut
             }
+            isCopilotConflictResolutionHidden={
+              this.props.isCopilotConflictResolutionHidden
+            }
             copilotConflictResolutionModel={
               this.props.copilotConflictResolutionModel
             }
@@ -59,6 +62,9 @@ export class MultiCommitOperation extends React.Component<IMultiCommitOperationP
             shouldShowCopilotConflictResolutionCallOut={
               this.props.shouldShowCopilotConflictResolutionCallOut
             }
+            isCopilotConflictResolutionHidden={
+              this.props.isCopilotConflictResolutionHidden
+            }
             copilotConflictResolutionModel={
               this.props.copilotConflictResolutionModel
             }
@@ -83,6 +89,9 @@ export class MultiCommitOperation extends React.Component<IMultiCommitOperationP
             cachedRepoRulesets={this.props.cachedRepoRulesets}
             shouldShowCopilotConflictResolutionCallOut={
               this.props.shouldShowCopilotConflictResolutionCallOut
+            }
+            isCopilotConflictResolutionHidden={
+              this.props.isCopilotConflictResolutionHidden
             }
             copilotConflictResolutionModel={
               this.props.copilotConflictResolutionModel

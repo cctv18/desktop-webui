@@ -36,6 +36,7 @@ import { PullRequestSuggestedNextAction } from '../models/pull-request'
 import { clamp } from '../lib/clamp'
 import { Emoji } from '../lib/emoji'
 import { PopupType } from '../models/popup'
+import type { CopilotModelSelections } from '../lib/stores/copilot-store'
 
 interface IRepositoryViewProps {
   readonly repository: Repository
@@ -63,6 +64,7 @@ interface IRepositoryViewProps {
   readonly showCommitLengthWarning: boolean
   readonly accounts: ReadonlyArray<Account>
   readonly shouldShowGenerateCommitMessageCallOut: boolean
+  readonly selectedCopilotModels: CopilotModelSelections
 
   /**
    * A value indicating whether or not the application is currently presenting
@@ -298,6 +300,7 @@ export class RepositoryView extends React.Component<
         shouldShowGenerateCommitMessageCallOut={
           this.props.shouldShowGenerateCommitMessageCallOut
         }
+        selectedCopilotModels={this.props.selectedCopilotModels}
         commitToAmend={this.props.state.commitToAmend}
         isPushPullFetchInProgress={this.props.state.isPushPullFetchInProgress}
         focusCommitMessage={this.props.focusCommitMessage}

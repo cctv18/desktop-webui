@@ -162,6 +162,17 @@ function copyWebRuntimeAssets() {
   const emojiImagesDestination = path.join(webOutDir, 'emoji')
   const emojiJsonSource = path.join(projectRoot, 'gemoji', 'db', 'emoji.json')
   const emojiJsonDestination = path.join(webOutDir, 'emoji.json')
+  const faviconSource = path.join(commonStaticSource, 'favicon.ico')
+  const faviconDestination = path.join(webOutDir, 'favicon.ico')
+  const copilotSource = path.join(
+    projectRoot,
+    'app',
+    'node_modules',
+    '@github',
+    'copilot'
+  )
+  const copilotDestination = path.join(outDir, 'copilot')
+  let copiedCopilot = false
 
   fs.mkdirSync(webOutDir, { recursive: true })
 
@@ -177,6 +188,9 @@ function copyWebRuntimeAssets() {
     force: false,
     verbatimSymlinks: true,
   })
+  if (fs.existsSync(faviconSource)) {
+    fs.copyFileSync(faviconSource, faviconDestination)
+  }
   generateLicenseMetadata(webOutDir)
 
   fs.rmSync(emojiImagesDestination, { recursive: true, force: true })
@@ -186,11 +200,29 @@ function copyWebRuntimeAssets() {
   })
   fs.copyFileSync(emojiJsonSource, emojiJsonDestination)
 
+  fs.rmSync(copilotDestination, { recursive: true, force: true })
+  if (fs.existsSync(copilotSource)) {
+    fs.cpSync(copilotSource, copilotDestination, {
+      recursive: true,
+      verbatimSymlinks: true,
+    })
+    copiedCopilot = true
+  } else {
+    appendUtf8File(
+      diagnosticsLogPath,
+      `Copilot CLI source not found: ${copilotSource}\n`
+    )
+  }
+
   const text = [
     '================ WEBUI RUNTIME ASSETS ================',
     `Copied static assets to: ${staticDestination}`,
+    `Copied favicon to: ${faviconDestination}`,
     `Copied emoji images to: ${emojiImagesDestination}`,
     `Copied emoji metadata to: ${emojiJsonDestination}`,
+    copiedCopilot
+      ? `Copied Copilot CLI to: ${copilotDestination}`
+      : `Copilot CLI source not found: ${copilotSource}`,
     '============== END WEBUI RUNTIME ASSETS ==============',
     '',
   ].join('\n')

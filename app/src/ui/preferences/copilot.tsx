@@ -15,6 +15,7 @@ import {
 } from '../../lib/stores/copilot-store'
 import {
   IBYOKProvider,
+  HiddenCopilotModelKey,
   encodeModelKey,
   isLocalBaseUrl,
   parseModelKey,
@@ -187,6 +188,9 @@ export class CopilotPreferences extends React.Component<
 
     return (
       <Select label={label} value={value} onChange={onChange}>
+        <option value={HiddenCopilotModelKey}>
+          None (hide Copilot button)
+        </option>
         {copilotModels.length > 0 && (
           <optgroup label="GitHub Copilot">
             {copilotModels.map(m => (
@@ -231,10 +235,9 @@ export class CopilotPreferences extends React.Component<
         if (provider && provider.models.some(m => m.id === key.modelId)) {
           return encodeModelKey(key)
         }
-      } else if (
-        key.modelId !== '' &&
-        copilotModels.some(m => m.id === key.modelId)
-      ) {
+      } else if (key.modelId === '') {
+        return HiddenCopilotModelKey
+      } else if (copilotModels.some(m => m.id === key.modelId)) {
         return encodeModelKey({ kind: 'copilot', modelId: key.modelId })
       }
     }

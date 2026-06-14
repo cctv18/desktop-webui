@@ -22,6 +22,7 @@ import {
   deleteBYOKSecret,
   getBYOKSecret,
   parseModelKey,
+  HiddenCopilotModelKey,
 } from '../copilot/byok'
 import type {
   CopilotModelRequest,
@@ -6478,6 +6479,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     filesSelected: ReadonlyArray<WorkingDirectoryFileChange>
   ): Promise<boolean> {
+    if (
+      this.selectedCopilotModels['commit-message-generation'] ===
+      HiddenCopilotModelKey
+    ) {
+      return false
+    }
+
     const account = getAccountForCommitMessageGeneration(
       this.accounts,
       repository
@@ -6541,11 +6549,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
         this.statsStore.increment('generateCommitMessageCount')
       } catch (e) {
-        this.emitError(
-          new ErrorWithMetadata(e, {
-            repository,
-          })
-        )
+        await this._showPopup({
+          type: PopupType.Error,
+          error: getCommitMessageGenerationError(e),
+        })
         return false
       }
 
@@ -6619,6 +6626,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     readonly summary: ICopilotResolutionSummary
   } | null> {
     if (!enableCopilotConflictResolution()) {
+      return null
+    }
+
+    if (
+      this.selectedCopilotModels['conflict-resolution'] ===
+      HiddenCopilotModelKey
+    ) {
       return null
     }
 
@@ -6910,6 +6924,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
   public async _attemptCopilotConflictResolution(
     repository: Repository
   ): Promise<void> {
+    if (
+      this.selectedCopilotModels['conflict-resolution'] ===
+      HiddenCopilotModelKey
+    ) {
+      return
+    }
+
     const state = this.repositoryStateCache.get(repository)
     const { multiCommitOperationState } = state
     if (multiCommitOperationState === null) {
@@ -10753,6 +10774,34 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.updateMenuLabelsForSelectedRepository()
     this.emitUpdate()
   }
+}
+
+function getCommitMessageGenerationError(error: unknown): Error {
+  const statusCode =
+    typeof (error as any)?.statusCode === 'number'
+      ? (error as any).statusCode
+      : undefined
+  const message = error instanceof Error ? error.message : String(error)
+
+  if (statusCode === 403 || /\b403\b/.test(message)) {
+    return new Error(
+      'Copilot could not generate a commit message because this GitHub account is not authorized for Copilot in GitHub Desktop. Check the account Copilot subscription and Copilot feature settings, then try again.'
+    )
+  }
+
+  if (statusCode === 404 || /\b404\b/.test(message)) {
+    return new Error(
+      'Copilot could not generate a commit message from the configured endpoint. Make sure Copilot is enabled for this account and try again.'
+    )
+  }
+
+  if (error instanceof Error && error.message.length > 0) {
+    return error
+  }
+
+  return new Error(
+    'Copilot could not generate a commit message. Try again later.'
+  )
 }
 
 /**

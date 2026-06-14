@@ -61,8 +61,13 @@ export class PublishRepository extends React.Component<
   }
 
   private async fetchOrgs(account: Account) {
+    if (__PROCESS_KIND__ === 'web' && account.token.length === 0) {
+      this.setState({ orgs: [] })
+      return
+    }
+
     const api = API.fromAccount(account)
-    const apiOrgs = await api.fetchOrgs()
+    const apiOrgs = await api.fetchOrgs().catch(() => [])
     const orgs = [...apiOrgs]
     orgs.sort((a, b) => caseInsensitiveCompare(a.login, b.login))
     this.setState({ orgs })

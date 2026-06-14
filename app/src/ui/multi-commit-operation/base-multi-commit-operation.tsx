@@ -53,6 +53,7 @@ export interface IMultiCommitOperationProps {
    * clicked the button at least once.
    */
   readonly shouldShowCopilotConflictResolutionCallOut: boolean
+  readonly isCopilotConflictResolutionHidden: boolean
 
   /**
    * The model name and reasoning effort to display while Copilot resolves
@@ -275,6 +276,9 @@ export abstract class BaseMultiCommitOperation extends React.Component<IMultiCom
             accounts={this.props.accounts}
             shouldShowCopilotConflictResolutionCallOut={
               this.props.shouldShowCopilotConflictResolutionCallOut
+            }
+            isCopilotConflictResolutionHidden={
+              this.props.isCopilotConflictResolutionHidden
             }
             workingDirectory={workingDirectory}
             userHasResolvedConflicts={userHasResolvedConflicts}

@@ -33,6 +33,7 @@ import { IAheadBehind } from '../../models/branch'
 import { Emoji } from '../../lib/emoji'
 import { FilterChangesList } from './filter-changes-list'
 import { HookProgress } from '../../lib/git'
+import type { CopilotModelSelections } from '../../lib/stores/copilot-store'
 
 /**
  * The timeout for the animation of the enter/leave animation for Undo.
@@ -69,6 +70,7 @@ interface IChangesSidebarProps {
   readonly askForConfirmationOnDiscardChanges: boolean
   readonly askForConfirmationOnCommitFilteredChanges: boolean
   readonly accounts: ReadonlyArray<Account>
+  readonly selectedCopilotModels: CopilotModelSelections
   readonly isShowingModal: boolean
   readonly isShowingFoldout: boolean
   /** The name of the currently selected external editor */
@@ -466,6 +468,7 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
           shouldShowGenerateCommitMessageCallOut={
             this.props.shouldShowGenerateCommitMessageCallOut
           }
+          selectedCopilotModels={this.props.selectedCopilotModels}
           commitToAmend={this.props.commitToAmend}
           showCoAuthoredBy={showCoAuthoredBy}
           coAuthors={coAuthors}
