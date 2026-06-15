@@ -36,6 +36,7 @@ import {
 } from '../copilot-conflict-context'
 import * as ipcRenderer from '../ipc-renderer'
 import { startTimer } from '../../ui/lib/timing'
+import { chmod, stat } from 'fs/promises'
 import { isAbsolute, join } from 'path'
 import { pathToFileURL } from 'url'
 import { randomBytes } from 'crypto'
@@ -135,25 +136,136 @@ function getCopilotCLIDir(): string {
   return join(__dirname, 'copilot')
 }
 
-function getCopilotCLIIndexPath(): string {
-  const configuredPath = process.env.GITDESK_WEBUI_COPILOT_CLI_PATH
+async function getCopilotExecutablePath(): Promise<string | null> {
+  const configuredPath = getConfiguredCopilotCLIPath()
 
-  if (configuredPath !== undefined && configuredPath.trim().length > 0) {
+  if (configuredPath !== undefined) {
+    const resolvedPath = resolveConfiguredCopilotCLIPath(configuredPath)
+
+    if (
+      !isJavaScriptCLIPath(resolvedPath) &&
+      (await isExecutableFileCandidate(resolvedPath))
+    ) {
+      await ensureExecutablePath(resolvedPath)
+      return resolvedPath
+    }
+  }
+
+  for (const candidate of getBundledCopilotExecutableCandidates()) {
+    if (await pathExists(candidate)) {
+      await ensureExecutablePath(candidate)
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function getCopilotCLIIndexPath(): string {
+  const configuredPath = getConfiguredCopilotCLIPath()
+
+  if (configuredPath !== undefined) {
     return resolveCopilotCLIIndexPath(configuredPath)
   }
 
   return join(getCopilotCLIDir(), 'index.js')
 }
 
-function resolveCopilotCLIIndexPath(value: string): string {
+function getConfiguredCopilotCLIPath(): string | undefined {
+  const configuredPath = process.env.GITDESK_WEBUI_COPILOT_CLI_PATH
+
+  if (configuredPath === undefined || configuredPath.trim().length === 0) {
+    return undefined
+  }
+
+  return configuredPath
+}
+
+function resolveCopilotCLIPath(value: string): string {
   const trimmedValue = value.trim()
-  const resolvedPath = isAbsolute(trimmedValue)
-    ? trimmedValue
-    : join(__dirname, trimmedValue)
+  return isAbsolute(trimmedValue) ? trimmedValue : join(__dirname, trimmedValue)
+}
+
+function resolveCopilotCLIIndexPath(value: string): string {
+  const resolvedPath = resolveCopilotCLIPath(value)
 
   return resolvedPath.endsWith('.js')
     ? resolvedPath
     : join(resolvedPath, 'index.js')
+}
+
+function resolveConfiguredCopilotCLIPath(value: string): string {
+  return resolveCopilotCLIPath(value)
+}
+
+function isJavaScriptCLIPath(path: string): boolean {
+  return path.endsWith('.js')
+}
+
+async function isExecutableFileCandidate(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile()
+  } catch {
+    return false
+  }
+}
+
+function getBundledCopilotExecutableCandidates(): ReadonlyArray<string> {
+  const packagePlatforms = getCopilotPackagePlatforms()
+  const executableName = __WIN32__ ? 'copilot.exe' : 'copilot'
+  return packagePlatforms.map(packagePlatform =>
+    join(
+      __dirname,
+      'node_modules',
+      '@github',
+      `copilot-${packagePlatform}-${process.arch}`,
+      executableName
+    )
+  )
+}
+
+function getCopilotPackagePlatforms(): ReadonlyArray<string> {
+  if (process.platform === 'linux') {
+    return isMuslLinux() ? ['linuxmusl', 'linux'] : ['linux', 'linuxmusl']
+  }
+
+  if (process.platform === 'android') {
+    return ['linux', 'linuxmusl']
+  }
+
+  return [process.platform]
+}
+
+function isMuslLinux(): boolean {
+  const report = process.report?.getReport()
+  const header = report?.header as
+    | { readonly glibcVersionRuntime?: string }
+    | undefined
+
+  if (header?.glibcVersionRuntime !== undefined) {
+    return false
+  }
+
+  const sharedObjects = report?.sharedObjects
+  return Array.isArray(sharedObjects)
+    ? sharedObjects.some(x => `${x}`.includes('musl'))
+    : false
+}
+
+async function ensureExecutablePath(path: string) {
+  if (__WIN32__) {
+    return
+  }
+
+  try {
+    await chmod(path, 0o755)
+  } catch {
+    // Best effort only. The later spawn error will include the real failure.
+  }
+}
+
+function getNodeMajorVersion(): number {
+  return Number(process.versions.node.split('.')[0])
 }
 
 /**
@@ -681,6 +793,22 @@ export class CopilotStore extends BaseStore {
     // However, when trying to do this directly without the --eval flag, Copilot
     // CLI fails to parse the arguments correctly, so we ended up using --eval
     // and just importing the index.js from the CLI as a workaround.
+    const executablePath = await getCopilotExecutablePath()
+
+    if (executablePath !== null) {
+      return new CopilotClient({
+        connection: RuntimeConnection.forStdio({
+          path: executablePath,
+        }),
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          COPILOT_RUN_APP: '1',
+        },
+        workingDirectory: repositoryPath,
+        gitHubToken: this.currentAccount.token,
+      })
+    }
+
     const indexPath = getCopilotCLIIndexPath()
 
     // Make sure the import path exists before creating the client, so we don't
@@ -691,6 +819,12 @@ export class CopilotStore extends BaseStore {
       throw new Error('Cannot create Copilot client: CLI entry point not found')
     }
 
+    if (getNodeMajorVersion() < 20) {
+      throw new Error(
+        'Cannot create Copilot client: the bundled JavaScript CLI requires Node.js 20 or newer when no platform-specific Copilot executable is available. Rebuild with the matching WebUI --platform option, or run the WebUI server with Node.js 22 LTS.'
+      )
+    }
+
     // On Windows, `import` requires a valid file:// URL rather than a bare
     // absolute path.
     const importSpecifier = __WIN32__
@@ -698,7 +832,6 @@ export class CopilotStore extends BaseStore {
       : indexPath
 
     const clientOptions = {
-      cliPath: indexPath,
       connection: RuntimeConnection.forStdio({
         path: await getCopilotCLIPath(),
         args: ['--eval', `import '${importSpecifier}'`, '--'],

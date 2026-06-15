@@ -6,6 +6,9 @@ HOST_ADDRESS="127.0.0.1"
 PORT="8080"
 PUBLIC_URL=""
 ALLOWED_ROOT=""
+PLATFORM="all"
+DEBUG_BUILD=0
+DELETE_SOURCE_MAPS=0
 PRODUCTION=0
 NO_START=0
 SKIP_INSTALL=0
@@ -34,6 +37,9 @@ Options:
   --port <port>            Port to bind. Default: 8080
   --public-url <url>       Browser-visible WebUI base URL
   --allowed-root <path>    Filesystem root WebUI may access. Default: project root
+  --platform <platform>    Target runtime platform: all, current, win32/windows, linux, darwin/macos, android. Default: all
+  --debug-build            Keep raw build output and unpruned runtime files
+  --delete-source-maps     Delete generated .map files after the build
   --production             Build production WebUI bundle
   --no-start               Install and compile only
   --skip-install           Do not run yarn install; fail if local deps are missing
@@ -75,6 +81,18 @@ while [[ $# -gt 0 ]]; do
     --allowed-root)
       ALLOWED_ROOT="$2"
       shift 2
+      ;;
+    --platform)
+      PLATFORM="$2"
+      shift 2
+      ;;
+    --debug-build)
+      DEBUG_BUILD=1
+      shift
+      ;;
+    --delete-source-maps|--delete-sourcemaps)
+      DELETE_SOURCE_MAPS=1
+      shift
       ;;
     --production)
       PRODUCTION=1
@@ -162,6 +180,42 @@ step() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+normalize_platform() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    ""|all)
+      printf 'all'
+      ;;
+    current|host)
+      node -p "process.platform"
+      ;;
+    windows|win|win32)
+      printf 'win32'
+      ;;
+    mac|macos|darwin)
+      printf 'darwin'
+      ;;
+    linux)
+      printf 'linux'
+      ;;
+    android)
+      printf 'android'
+      ;;
+    *)
+      echo "Unsupported platform: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+should_ignore_yarn_platform() {
+  local normalized_platform="$1"
+  local host_platform
+
+  host_platform="$(node -p "process.platform")"
+
+  [[ "$normalized_platform" == "all" || "$normalized_platform" != "$host_platform" ]]
 }
 
 default_public_url() {
@@ -281,10 +335,15 @@ project_dependencies_present() {
 yarn_install() {
   local directory="$1"
   local ignore_scripts="$2"
+  local ignore_platform="$3"
   local args=(install --network-timeout 600000)
 
   if [[ "$ignore_scripts" -eq 1 ]]; then
     args+=(--ignore-scripts)
+  fi
+
+  if [[ "$ignore_platform" -eq 1 ]]; then
+    args+=(--ignore-platform)
   fi
 
   (cd "$directory" && yarn "${args[@]}")
@@ -318,6 +377,17 @@ if [[ -n "$LOG_FILE" ]]; then
 fi
 
 ensure_node
+PLATFORM="$(normalize_platform "$PLATFORM")"
+YARN_IGNORE_PLATFORM=0
+if should_ignore_yarn_platform "$PLATFORM"; then
+  YARN_IGNORE_PLATFORM=1
+fi
+export WEBUI_TARGET_PLATFORM="$PLATFORM"
+export WEBUI_DEBUG_BUILD="$DEBUG_BUILD"
+export WEBUI_DELETE_SOURCE_MAPS="$DELETE_SOURCE_MAPS"
+step "Target platform: $PLATFORM"
+step "Debug build: $([[ "$DEBUG_BUILD" -eq 1 ]] && printf yes || printf no)"
+step "Delete source maps: $([[ "$DELETE_SOURCE_MAPS" -eq 1 ]] && printf yes || printf no)"
 ensure_yarn
 
 if [[ "$SKIP_INSTALL" -eq 0 ]]; then
@@ -326,13 +396,13 @@ if [[ "$SKIP_INSTALL" -eq 0 ]]; then
   if [[ "$FULL_NATIVE_INSTALL" -eq 1 ]]; then
     step "Installing full Desktop dependencies with native install scripts."
     echo "Warning: Full native install requires C/C++ build tools such as build-essential, python3, and make on Linux." >&2
-    yarn_install "$PROJECT_ROOT" 0
+    yarn_install "$PROJECT_ROOT" 0 "$YARN_IGNORE_PLATFORM"
   else
     step "Installing root dependencies for WebUI with native scripts disabled."
-    yarn_install "$PROJECT_ROOT" 1
+    yarn_install "$PROJECT_ROOT" 1 "$YARN_IGNORE_PLATFORM"
 
     step "Installing app dependencies for WebUI with native scripts disabled."
-    yarn_install "$PROJECT_ROOT/app" 1
+    yarn_install "$PROJECT_ROOT/app" 1 "$YARN_IGNORE_PLATFORM"
   fi
 elif ! project_dependencies_present; then
   echo "Project dependencies are missing. Rerun without --skip-install." >&2

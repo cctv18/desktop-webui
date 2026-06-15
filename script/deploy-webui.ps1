@@ -3,6 +3,9 @@ param(
   [int]$Port = 8080,
   [string]$PublicUrl = "",
   [string]$AllowedRoot = "",
+  [string]$Platform = "all",
+  [switch]$DebugBuild,
+  [switch]$DeleteSourceMaps,
   [switch]$Production,
   [switch]$NoStart,
   [switch]$SkipInstall,
@@ -92,6 +95,35 @@ function Refresh-Path {
 function Test-Command {
   param([string]$Name)
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-NormalizedPlatform {
+  param([string]$Value)
+
+  switch ($Value.ToLowerInvariant()) {
+    "" { return "all" }
+    "all" { return "all" }
+    "current" { return (& node -p "process.platform").Trim() }
+    "host" { return (& node -p "process.platform").Trim() }
+    "windows" { return "win32" }
+    "win" { return "win32" }
+    "win32" { return "win32" }
+    "mac" { return "darwin" }
+    "macos" { return "darwin" }
+    "darwin" { return "darwin" }
+    "linux" { return "linux" }
+    "android" { return "android" }
+    default {
+      throw "Unsupported platform: $Value. Use all, current, win32/windows, linux, darwin/macos, or android."
+    }
+  }
+}
+
+function Test-ShouldIgnoreYarnPlatform {
+  param([string]$NormalizedPlatform)
+
+  $hostPlatform = (& node -p "process.platform").Trim()
+  return $NormalizedPlatform -eq "all" -or $NormalizedPlatform -ne $hostPlatform
 }
 
 function Get-DefaultPublicUrl {
@@ -209,7 +241,8 @@ function Test-ProjectDependencies {
 function Invoke-YarnInstall {
   param(
     [string]$Directory,
-    [bool]$IgnoreScripts
+    [bool]$IgnoreScripts,
+    [bool]$IgnorePlatform
   )
 
   Push-Location $Directory
@@ -217,6 +250,9 @@ function Invoke-YarnInstall {
     $arguments = @("install", "--network-timeout", "600000")
     if ($IgnoreScripts) {
       $arguments += "--ignore-scripts"
+    }
+    if ($IgnorePlatform) {
+      $arguments += "--ignore-platform"
     }
     Invoke-Step "yarn" $arguments
   } finally {
@@ -240,6 +276,16 @@ if (-not [string]::IsNullOrWhiteSpace($script:ResolvedLogFile)) {
 }
 
 Ensure-Node
+$Platform = Get-NormalizedPlatform $Platform
+$ignoreYarnPlatform = Test-ShouldIgnoreYarnPlatform $Platform
+$env:WEBUI_TARGET_PLATFORM = $Platform
+$env:WEBUI_DEBUG_BUILD = if ($DebugBuild) { "1" } else { "0" }
+$env:WEBUI_DELETE_SOURCE_MAPS = if ($DeleteSourceMaps) { "1" } else { "0" }
+$debugBuildText = if ($DebugBuild) { "yes" } else { "no" }
+$deleteSourceMapsText = if ($DeleteSourceMaps) { "yes" } else { "no" }
+Write-Step "Target platform: $Platform"
+Write-Step "Debug build: $debugBuildText"
+Write-Step "Delete source maps: $deleteSourceMapsText"
 Ensure-Yarn
 
 if (-not $SkipInstall) {
@@ -248,13 +294,13 @@ if (-not $SkipInstall) {
   if ($FullNativeInstall) {
     Write-Step "Installing full Desktop dependencies with native install scripts."
     Write-Warning "Full native install requires Visual Studio Build Tools with the Desktop development with C++ workload on Windows."
-    Invoke-YarnInstall $ProjectRoot.Path $false
+    Invoke-YarnInstall $ProjectRoot.Path $false $ignoreYarnPlatform
   } else {
     Write-Step "Installing root dependencies for WebUI with native scripts disabled."
-    Invoke-YarnInstall $ProjectRoot.Path $true
+    Invoke-YarnInstall $ProjectRoot.Path $true $ignoreYarnPlatform
 
     Write-Step "Installing app dependencies for WebUI with native scripts disabled."
-    Invoke-YarnInstall (Join-Path $ProjectRoot "app") $true
+    Invoke-YarnInstall (Join-Path $ProjectRoot "app") $true $ignoreYarnPlatform
   }
 } elseif (-not (Test-ProjectDependencies)) {
   throw "Project dependencies are missing. Rerun without -SkipInstall."

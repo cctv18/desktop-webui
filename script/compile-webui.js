@@ -3,9 +3,18 @@
 const fs = require('fs')
 const path = require('path')
 
-const mode = process.argv[2] === 'production' ? 'production' : 'development'
+const compileOptions = parseCompileOptions(process.argv.slice(2))
+const mode = compileOptions.mode
 const projectRoot = path.resolve(__dirname, '..')
 const outDir = path.join(projectRoot, 'out')
+const targetPlatform = normalizeTargetPlatform(
+  compileOptions.platform || process.env.WEBUI_TARGET_PLATFORM || 'all'
+)
+const debugBuild =
+  compileOptions.debugBuild || isTruthy(process.env.WEBUI_DEBUG_BUILD)
+const deleteSourceMaps =
+  compileOptions.deleteSourceMaps ||
+  isTruthy(process.env.WEBUI_DELETE_SOURCE_MAPS)
 const buildLogPath = resolveOutputPath(
   process.env.WEBUI_BUILD_LOG || path.join('out', 'webui-build.log')
 )
@@ -123,6 +132,101 @@ function getSummaryStatsOptions() {
   }
 }
 
+function parseCompileOptions(values) {
+  const result = {
+    mode: 'development',
+    platform: undefined,
+    debugBuild: false,
+    deleteSourceMaps: false,
+  }
+
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index]
+
+    if (value === 'production' || value === 'development') {
+      result.mode = value
+      continue
+    }
+
+    if (value === '--debug-build' || value === '--debugBuild') {
+      result.debugBuild = true
+      continue
+    }
+
+    if (
+      value === '--delete-source-maps' ||
+      value === '--deleteSourceMaps' ||
+      value === '--delete-sourcemaps'
+    ) {
+      result.deleteSourceMaps = true
+      continue
+    }
+
+    if (value === '--platform' || value === '--Platform') {
+      result.platform = values[index + 1]
+      index++
+      continue
+    }
+
+    if (value.startsWith('--platform=')) {
+      result.platform = value.slice('--platform='.length)
+      continue
+    }
+
+    if (value.startsWith('--Platform=')) {
+      result.platform = value.slice('--Platform='.length)
+    }
+  }
+
+  return result
+}
+
+function normalizeTargetPlatform(value) {
+  const normalized = `${value || 'all'}`.trim().toLowerCase()
+
+  switch (normalized) {
+    case '':
+    case 'all':
+      return 'all'
+    case 'current':
+    case 'host':
+      return normalizeNodePlatform(process.platform)
+    case 'windows':
+    case 'win':
+    case 'win32':
+      return 'win32'
+    case 'mac':
+    case 'macos':
+    case 'darwin':
+      return 'darwin'
+    case 'linux':
+      return 'linux'
+    case 'android':
+      return 'android'
+    default:
+      throw new Error(
+        `Unsupported WebUI target platform "${value}". Use all, current, win32/windows, linux, darwin/macos, or android.`
+      )
+  }
+}
+
+function normalizeNodePlatform(value) {
+  return value === 'win32' || value === 'darwin' || value === 'linux'
+    ? value
+    : value === 'android'
+      ? 'android'
+      : 'all'
+}
+
+function isTruthy(value) {
+  if (value === undefined) {
+    return false
+  }
+
+  const normalized = `${value}`.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
 function resolveOutputPath(value) {
   return path.isAbsolute(value) ? value : path.join(projectRoot, value)
 }
@@ -137,6 +241,9 @@ function initializeLogs() {
     '================ WEBUI BUILD LOG ================',
     `Started at: ${new Date().toISOString()}`,
     `Mode: ${mode}`,
+    `Target platform: ${targetPlatform}`,
+    `Debug build: ${debugBuild ? 'yes' : 'no'}`,
+    `Delete source maps: ${deleteSourceMaps ? 'yes' : 'no'}`,
     `Project root: ${projectRoot}`,
     `Working directory: ${process.cwd()}`,
     `Node.js: ${process.version}`,
@@ -168,6 +275,7 @@ function copyWebRuntimeAssets() {
   const copilotDestination = path.join(outDir, 'copilot')
   const runtimeFiles = writeRuntimeLauncherFiles()
   let copiedCopilot = false
+  let copiedCopilotExecutables = new Array()
 
   fs.mkdirSync(webOutDir, { recursive: true })
 
@@ -202,7 +310,8 @@ function copyWebRuntimeAssets() {
       verbatimSymlinks: true,
     })
     copiedCopilot = true
-    copyCopilotNodePackages()
+    copyCopilotRuntimeDependency(copilotDestination, 'detect-libc')
+    copiedCopilotExecutables = copyCopilotExecutablePackages()
   } else {
     appendUtf8File(
       diagnosticsLogPath,
@@ -222,11 +331,24 @@ function copyWebRuntimeAssets() {
     copiedCopilot
       ? `Copied Copilot CLI to: ${copilotDestination}`
       : `Copilot CLI source not found: ${copilotSource}`,
+    copiedCopilotExecutables.length > 0
+      ? `Copied Copilot executables: ${copiedCopilotExecutables.join(', ')}`
+      : 'No Copilot executable packages were copied',
+    `Runtime cleanup: ${debugBuild ? 'disabled (DebugBuild)' : 'enabled'}`,
+    `Source map cleanup: ${deleteSourceMaps ? 'enabled' : 'disabled'}`,
     '============== END WEBUI RUNTIME ASSETS ==============',
     '',
   ].join('\n')
 
   appendBuildLog(text)
+
+  if (deleteSourceMaps) {
+    removeSourceMaps(outDir)
+  }
+
+  if (!debugBuild) {
+    pruneReleaseRuntimeAssets()
+  }
 }
 
 function resolvePackageDir(packageName) {
@@ -246,7 +368,7 @@ function resolvePackageDir(packageName) {
   }
 }
 
-function copyCopilotNodePackages() {
+function copyCopilotExecutablePackages() {
   const githubSourceDir = path.join(
     projectRoot,
     'app',
@@ -254,14 +376,23 @@ function copyCopilotNodePackages() {
     '@github'
   )
   const githubDestinationDir = path.join(outDir, 'node_modules', '@github')
+  const copiedPackages = new Array()
 
   fs.rmSync(githubDestinationDir, { recursive: true, force: true })
+  fs.rmSync(path.join(outDir, 'node_modules', 'detect-libc'), {
+    recursive: true,
+    force: true,
+  })
 
   if (fs.existsSync(githubSourceDir)) {
     fs.mkdirSync(githubDestinationDir, { recursive: true })
 
     for (const entry of fs.readdirSync(githubSourceDir)) {
-      if (!entry.startsWith('copilot')) {
+      if (!isCopilotExecutablePackage(entry)) {
+        continue
+      }
+
+      if (!shouldIncludeCopilotExecutablePackage(entry)) {
         continue
       }
 
@@ -273,6 +404,7 @@ function copyCopilotNodePackages() {
           verbatimSymlinks: true,
         }
       )
+      copiedPackages.push(entry)
     }
   } else {
     appendUtf8File(
@@ -281,12 +413,17 @@ function copyCopilotNodePackages() {
     )
   }
 
-  copyPackageToRuntimeNodeModules('detect-libc')
+  appendMissingCopilotExecutableDiagnostics(copiedPackages)
+  return copiedPackages
 }
 
-function copyPackageToRuntimeNodeModules(packageName) {
+function copyCopilotRuntimeDependency(copilotDestination, packageName) {
   const source = resolvePackageDir(packageName)
-  const destination = path.join(outDir, 'node_modules', ...packageName.split('/'))
+  const destination = path.join(
+    copilotDestination,
+    'node_modules',
+    ...packageName.split('/')
+  )
 
   fs.rmSync(destination, { recursive: true, force: true })
 
@@ -303,6 +440,149 @@ function copyPackageToRuntimeNodeModules(packageName) {
     recursive: true,
     verbatimSymlinks: true,
   })
+}
+
+function isCopilotExecutablePackage(packageName) {
+  return /^copilot-(darwin|linux|linuxmusl|win32)-(x64|arm64)$/.test(
+    packageName
+  )
+}
+
+function shouldIncludeCopilotExecutablePackage(packageName) {
+  if (targetPlatform === 'all') {
+    return true
+  }
+
+  const platforms = getCopilotPackagePlatformsForTarget(targetPlatform)
+  return platforms.some(platform => packageName.startsWith(`copilot-${platform}-`))
+}
+
+function getCopilotPackagePlatformsForTarget(platform) {
+  switch (platform) {
+    case 'win32':
+      return ['win32']
+    case 'darwin':
+      return ['darwin']
+    case 'android':
+      return ['linux', 'linuxmusl']
+    case 'linux':
+      return ['linux', 'linuxmusl']
+    default:
+      return ['darwin', 'linux', 'linuxmusl', 'win32']
+  }
+}
+
+function appendMissingCopilotExecutableDiagnostics(copiedPackages) {
+  const copied = new Set(copiedPackages)
+  const expectedPlatforms = getCopilotPackagePlatformsForTarget(targetPlatform)
+  const expected =
+    targetPlatform === 'all'
+      ? [
+          'copilot-darwin-x64',
+          'copilot-darwin-arm64',
+          'copilot-linux-x64',
+          'copilot-linux-arm64',
+          'copilot-linuxmusl-x64',
+          'copilot-linuxmusl-arm64',
+          'copilot-win32-x64',
+          'copilot-win32-arm64',
+        ]
+      : expectedPlatforms.flatMap(platform => [
+          `copilot-${platform}-x64`,
+          `copilot-${platform}-arm64`,
+        ])
+  const missing = expected.filter(packageName => !copied.has(packageName))
+
+  if (missing.length === 0) {
+    return
+  }
+
+  appendUtf8File(
+    diagnosticsLogPath,
+    [
+      `Missing Copilot executable packages for target platform "${targetPlatform}": ${missing.join(', ')}`,
+      'If you are cross-building or building an all-platform package, run the deploy script without --skip-install so Yarn can install optional platform packages with --ignore-platform.',
+      '',
+    ].join('\n')
+  )
+}
+
+function pruneReleaseRuntimeAssets() {
+  pruneCopilotPlatformDirectories(path.join(outDir, 'copilot'))
+  pruneCopilotExecutablePackages()
+}
+
+function removeSourceMaps(directory) {
+  if (!fs.existsSync(directory)) {
+    return
+  }
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name)
+
+    if (entry.isDirectory()) {
+      removeSourceMaps(fullPath)
+    } else if (entry.isFile() && entry.name.endsWith('.map')) {
+      fs.rmSync(fullPath, { force: true })
+    }
+  }
+}
+
+function pruneCopilotPlatformDirectories(rootDir) {
+  if (targetPlatform === 'all' || !fs.existsSync(rootDir)) {
+    return
+  }
+
+  const allowedPlatforms = new Set(
+    getCopilotPackagePlatformsForTarget(targetPlatform)
+  )
+  const platformTokens = ['darwin', 'linux', 'linuxmusl', 'win32']
+
+  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+    const fullPath = path.join(rootDir, entry.name)
+
+    if (!entry.isDirectory()) {
+      continue
+    }
+
+    const matchedPlatform = platformTokens.find(platform =>
+      entry.name.includes(platform)
+    )
+
+    if (
+      matchedPlatform !== undefined &&
+      !allowedPlatforms.has(matchedPlatform)
+    ) {
+      fs.rmSync(fullPath, { recursive: true, force: true })
+      continue
+    }
+
+    pruneCopilotPlatformDirectories(fullPath)
+  }
+}
+
+function pruneCopilotExecutablePackages() {
+  if (targetPlatform === 'all') {
+    return
+  }
+
+  const githubDestinationDir = path.join(outDir, 'node_modules', '@github')
+
+  if (!fs.existsSync(githubDestinationDir)) {
+    return
+  }
+
+  for (const entry of fs.readdirSync(githubDestinationDir)) {
+    if (
+      isCopilotExecutablePackage(entry) &&
+      !shouldIncludeCopilotExecutablePackage(entry)
+    ) {
+      fs.rmSync(path.join(githubDestinationDir, entry), {
+        recursive: true,
+        force: true,
+      })
+    }
+  }
 }
 
 function writeRuntimeLauncherFiles() {
@@ -357,7 +637,8 @@ function getDefaultServerConfig() {
     '',
     'data-dir=.gitdesk-webui',
     'static-root=web',
-    'copilot-cli-path=copilot/index.js',
+    '# Leave commented to auto-detect the bundled platform executable first.',
+    '# copilot-cli-path=node_modules/@github/copilot-linux-x64/copilot',
     '',
   ].join('\n')
 }
