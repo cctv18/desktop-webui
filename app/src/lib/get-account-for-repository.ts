@@ -56,7 +56,7 @@ export function getAccountForCommitMessageGeneration(
 const isAccountEligibleForCopilotConflictResolution = (account: Account) =>
   enableCopilotConflictResolution() &&
   enableCopilotSdkCommitMessageGeneration(account) &&
-  account.isCopilotDesktopEnabled === true
+  account.isCopilotDesktopEnabled !== false
 
 /**
  * Get the authenticated account to use for Copilot-powered merge conflict

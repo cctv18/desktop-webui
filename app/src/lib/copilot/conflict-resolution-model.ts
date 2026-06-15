@@ -7,8 +7,8 @@ import {
 } from '../stores/copilot-store'
 import { IBYOKProvider, parseModelKey } from './byok'
 
-/** Fallback name shown for Desktop's default Copilot model. */
-const DefaultCopilotModelName = 'GPT-5 mini'
+/** Fallback name shown when the SDK will let Copilot choose the model. */
+const DefaultCopilotModelName = 'Copilot auto-selection'
 
 /** The model name and reasoning effort to display for conflict resolution. */
 export interface IConflictResolutionModelDisplay {

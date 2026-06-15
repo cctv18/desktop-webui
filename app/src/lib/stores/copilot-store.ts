@@ -105,7 +105,7 @@ export type CopilotFeature = 'commit-message-generation' | 'conflict-resolution'
 
 /** Concrete session config produced by resolving a {@link CopilotModelRequest}. */
 interface IResolvedConflictModelConfig {
-  readonly modelId: string
+  readonly modelId: string | undefined
   readonly reasoningEffort: ReasoningEffort | undefined
   readonly provider: CopilotProviderConfig | undefined
   readonly timeoutMs: number | undefined
@@ -153,6 +153,26 @@ export function getCopilotGHHost(account: Account): string | undefined {
 
 function getCopilotCLIDir(): string {
   return join(__dirname, 'copilot')
+}
+
+function getCopilotDataDir(): string {
+  return join(__dirname, 'copilot-data')
+}
+
+function getCopilotClientEnv(
+  account: Account
+): Record<string, string | undefined> {
+  const copilotDataDir = getCopilotDataDir()
+
+  return {
+    ELECTRON_RUN_AS_NODE: '1',
+    COPILOT_RUN_APP: '1',
+    COPILOT_AUTO_UPDATE: 'false',
+    COPILOT_HOME: join(copilotDataDir, 'home'),
+    COPILOT_CACHE_HOME: join(copilotDataDir, 'cache'),
+    GH_HOST: getCopilotGHHost(account),
+    GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
+  }
 }
 
 async function getCopilotExecutablePath(): Promise<string | null> {
@@ -856,12 +876,7 @@ export class CopilotStore extends BaseStore {
         connection: RuntimeConnection.forStdio({
           path: executablePath,
         }),
-        env: {
-          ELECTRON_RUN_AS_NODE: '1',
-          COPILOT_RUN_APP: '1',
-          GH_HOST: getCopilotGHHost(account),
-          GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
-        },
+        env: getCopilotClientEnv(account),
         workingDirectory: repositoryPath,
         gitHubToken: account.token,
       })
@@ -893,12 +908,7 @@ export class CopilotStore extends BaseStore {
         path: process.execPath,
         args: ['--eval', `import '${importSpecifier}'`, '--'],
       }),
-      env: {
-        ELECTRON_RUN_AS_NODE: '1',
-        COPILOT_RUN_APP: '1',
-        GH_HOST: getCopilotGHHost(account),
-        GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
-      },
+      env: getCopilotClientEnv(account),
       workingDirectory: repositoryPath,
       gitHubToken: account.token,
     }
@@ -1002,6 +1012,15 @@ export class CopilotStore extends BaseStore {
       const requestedModelId =
         request?.kind === 'copilot' ? request.modelId : null
       const cachedModels = await this.getCachedModels(account)
+      if (cachedModels.length === 0) {
+        return this.generateCommitMessageWithoutSDK(
+          account,
+          diff,
+          request ?? null,
+          commitMessageRules
+        )
+      }
+
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
@@ -1098,13 +1117,18 @@ export class CopilotStore extends BaseStore {
           this.isUnsupportedModelError(e)
         ) {
           log.warn(
-            `CopilotStore: Model '${modelId}' is not supported for this account; retrying with Desktop's default Copilot model`,
+            `CopilotStore: Model '${modelId}' is not supported for this account; retrying commit message generation without the SDK model override`,
             e
           )
           const key = getCopilotModelCacheKey(account)
           this.modelCaches.delete(key)
           this.emitUpdate()
-          return await runSession(DefaultCopilotModel, DefaultReasoningEffort)
+          return this.generateCommitMessageWithoutSDK(
+            account,
+            diff,
+            request ?? null,
+            commitMessageRules
+          )
         }
 
         throw e
@@ -1401,7 +1425,7 @@ export class CopilotStore extends BaseStore {
       : getPreferredDefaultModel(cachedModels)
 
     return {
-      modelId: resolvedModel?.id ?? requestedModelId ?? DefaultCopilotModel,
+      modelId: resolvedModel?.id ?? requestedModelId ?? undefined,
       // When the model isn't in the list we have no capability metadata, so we
       // can't confirm it supports reasoning effort. Omit it rather than send an
       // unsupported value — the SDK only accepts reasoningEffort for models

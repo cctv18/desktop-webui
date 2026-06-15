@@ -1092,7 +1092,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       account =>
         !isGHES(account.endpoint) &&
         enableCopilotSdkCommitMessageGeneration(account) &&
-        account.isCopilotDesktopEnabled
+        account.isCopilotDesktopEnabled !== false
     )
   }
 
@@ -6691,6 +6691,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         )
         return null
       }
+      const copilotAccount = account
 
       const state = this.repositoryStateCache.get(repository)
       const { conflictState } = state.changesState
@@ -6742,7 +6743,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       )
       try {
         const result = await this.copilotStore.resolveConflicts(
-          account,
+          copilotAccount,
           context,
           repository.path,
           modelRequest,

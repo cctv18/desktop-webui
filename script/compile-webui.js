@@ -274,11 +274,8 @@ function copyWebRuntimeAssets() {
   const emojiJsonDestination = path.join(webOutDir, 'emoji.json')
   const faviconSource = path.join(commonStaticSource, 'favicon.ico')
   const faviconDestination = path.join(webOutDir, 'favicon.ico')
-  const copilotSource = resolvePackageDir('@github/copilot')
   const copilotDestination = path.join(outDir, 'copilot')
   const runtimeFiles = writeRuntimeLauncherFiles()
-  let copiedCopilot = false
-  let copiedCopilotExecutables = new Array()
 
   fs.mkdirSync(webOutDir, { recursive: true })
 
@@ -307,21 +304,6 @@ function copyWebRuntimeAssets() {
   fs.copyFileSync(emojiJsonSource, emojiJsonDestination)
 
   fs.rmSync(copilotDestination, { recursive: true, force: true })
-  if (fs.existsSync(copilotSource)) {
-    fs.cpSync(copilotSource, copilotDestination, {
-      recursive: true,
-      verbatimSymlinks: true,
-    })
-    copiedCopilot = true
-    copyCopilotRuntimeDependency(copilotDestination, 'detect-libc')
-    copyCopilotRuntimeDependency(copilotDestination, 'os-theme')
-    copiedCopilotExecutables = copyCopilotExecutablePackages()
-  } else {
-    appendUtf8File(
-      diagnosticsLogPath,
-      `Copilot CLI source not found: ${copilotSource}\n`
-    )
-  }
 
   const text = [
     '================ WEBUI RUNTIME ASSETS ================',
@@ -332,12 +314,7 @@ function copyWebRuntimeAssets() {
     `Wrote runtime config to: ${runtimeFiles.serverConfigPath}`,
     `Wrote POSIX launcher to: ${runtimeFiles.shellLauncherPath}`,
     `Wrote PowerShell launcher to: ${runtimeFiles.powershellLauncherPath}`,
-    copiedCopilot
-      ? `Copied Copilot CLI to: ${copilotDestination}`
-      : `Copilot CLI source not found: ${copilotSource}`,
-    copiedCopilotExecutables.length > 0
-      ? `Copied Copilot executables: ${copiedCopilotExecutables.join(', ')}`
-      : 'No Copilot executable packages were copied',
+    `Copilot CLI will be installed by the runtime launcher when needed: ${copilotRuntimePackageSpec}`,
     `Runtime cleanup: ${debugBuild ? 'disabled (DebugBuild)' : 'enabled'}`,
     `Source map cleanup: ${deleteSourceMaps ? 'enabled' : 'disabled'}`,
     '============== END WEBUI RUNTIME ASSETS ==============',
@@ -355,130 +332,6 @@ function copyWebRuntimeAssets() {
   }
 }
 
-function resolvePackageDir(packageName) {
-  try {
-    return path.dirname(
-      require.resolve(`${packageName}/package.json`, {
-        paths: [path.join(projectRoot, 'app')],
-      })
-    )
-  } catch {
-    return path.join(
-      projectRoot,
-      'app',
-      'node_modules',
-      ...packageName.split('/')
-    )
-  }
-}
-
-function copyCopilotExecutablePackages() {
-  const githubDestinationDir = path.join(outDir, 'node_modules', '@github')
-  const copiedPackages = new Array()
-  const copiedPackageNames = new Set()
-
-  fs.rmSync(githubDestinationDir, { recursive: true, force: true })
-  fs.rmSync(path.join(outDir, 'node_modules', 'detect-libc'), {
-    recursive: true,
-    force: true,
-  })
-
-  fs.mkdirSync(githubDestinationDir, { recursive: true })
-
-  for (const githubSourceDir of getCopilotExecutablePackageSourceDirs()) {
-    if (!fs.existsSync(githubSourceDir)) {
-      appendUtf8File(
-        diagnosticsLogPath,
-        `Copilot scoped packages source not found: ${githubSourceDir}\n`
-      )
-      continue
-    }
-
-    for (const entry of fs.readdirSync(githubSourceDir)) {
-      if (!isCopilotExecutablePackage(entry)) {
-        continue
-      }
-
-      if (!shouldIncludeCopilotExecutablePackage(entry)) {
-        continue
-      }
-
-      if (copiedPackageNames.has(entry)) {
-        continue
-      }
-
-      fs.cpSync(
-        path.join(githubSourceDir, entry),
-        path.join(githubDestinationDir, entry),
-        {
-          recursive: true,
-          verbatimSymlinks: true,
-        }
-      )
-      copiedPackageNames.add(entry)
-      copiedPackages.push(entry)
-    }
-  }
-
-  appendMissingCopilotExecutableDiagnostics(copiedPackages)
-  return copiedPackages
-}
-
-function getCopilotExecutablePackageSourceDirs() {
-  return [
-    path.join(projectRoot, 'app', 'node_modules', '@github'),
-    path.join(
-      projectRoot,
-      'app',
-      'node_modules',
-      '@github',
-      'copilot',
-      'node_modules',
-      '@github'
-    ),
-  ]
-}
-
-function copyCopilotRuntimeDependency(copilotDestination, packageName) {
-  const source = resolvePackageDir(packageName)
-  const destination = path.join(
-    copilotDestination,
-    'node_modules',
-    ...packageName.split('/')
-  )
-
-  fs.rmSync(destination, { recursive: true, force: true })
-
-  if (!fs.existsSync(source)) {
-    appendUtf8File(
-      diagnosticsLogPath,
-      `Runtime package source not found: ${source}\n`
-    )
-    return
-  }
-
-  fs.mkdirSync(path.dirname(destination), { recursive: true })
-  fs.cpSync(source, destination, {
-    recursive: true,
-    verbatimSymlinks: true,
-  })
-}
-
-function isCopilotExecutablePackage(packageName) {
-  return /^copilot-(darwin|linux|linuxmusl|win32)-(x64|arm64)$/.test(
-    packageName
-  )
-}
-
-function shouldIncludeCopilotExecutablePackage(packageName) {
-  if (targetPlatform === 'all') {
-    return true
-  }
-
-  const platforms = getCopilotPackagePlatformsForTarget(targetPlatform)
-  return platforms.some(platform => packageName.startsWith(`copilot-${platform}-`))
-}
-
 function getCopilotPackagePlatformsForTarget(platform) {
   switch (platform) {
     case 'win32':
@@ -492,41 +345,6 @@ function getCopilotPackagePlatformsForTarget(platform) {
     default:
       return ['darwin', 'linux', 'linuxmusl', 'win32']
   }
-}
-
-function appendMissingCopilotExecutableDiagnostics(copiedPackages) {
-  const copied = new Set(copiedPackages)
-  const expectedPlatforms = getCopilotPackagePlatformsForTarget(targetPlatform)
-  const expected =
-    targetPlatform === 'all'
-      ? [
-          'copilot-darwin-x64',
-          'copilot-darwin-arm64',
-          'copilot-linux-x64',
-          'copilot-linux-arm64',
-          'copilot-linuxmusl-x64',
-          'copilot-linuxmusl-arm64',
-          'copilot-win32-x64',
-          'copilot-win32-arm64',
-        ]
-      : expectedPlatforms.flatMap(platform => [
-          `copilot-${platform}-x64`,
-          `copilot-${platform}-arm64`,
-        ])
-  const missing = expected.filter(packageName => !copied.has(packageName))
-
-  if (missing.length === 0) {
-    return
-  }
-
-  appendUtf8File(
-    diagnosticsLogPath,
-    [
-      `Missing Copilot executable packages for target platform "${targetPlatform}": ${missing.join(', ')}`,
-      'If you are cross-building or building an all-platform package, run the deploy script without --skip-install so Yarn can install optional platform packages with --ignore-platform.',
-      '',
-    ].join('\n')
-  )
 }
 
 function pruneReleaseRuntimeAssets() {
@@ -659,8 +477,8 @@ function getDefaultServerConfig() {
     '',
     'data-dir=.gitdesk-webui',
     'static-root=web',
-    '# Leave commented to auto-detect bundled Copilot support.',
-    '# If the bundled files are missing, run-webui will try a local npm install into this directory.',
+    '# Leave commented to auto-detect runtime-installed Copilot support.',
+    '# If the files are missing, run-webui will try a local npm install into this directory.',
     '# copilot-cli-path=copilot/index.js',
     '',
   ].join('\n')
@@ -825,12 +643,12 @@ function getRunWebUISh() {
     '  fi',
     '',
     '  if ! command_exists npm; then',
-    '    echo "Warning: Copilot CLI was not bundled and npm was not found. Copilot models will be unavailable until @github/copilot is installed." >&2',
+    '    echo "Warning: Copilot CLI is not installed and npm was not found. Copilot models will be unavailable until @github/copilot is installed." >&2',
     '    return 0',
     '  fi',
     '',
-    `  echo "Copilot CLI was not bundled. Installing ${copilotRuntimePackageSpec} into $SCRIPT_DIR."`,
-    `  if npm install --omit=dev --include=optional --no-audit --no-fund --prefix "$SCRIPT_DIR" "${copilotRuntimePackageSpec}"; then`,
+    `  echo "Copilot CLI is not installed. Installing ${copilotRuntimePackageSpec} into $SCRIPT_DIR."`,
+    `  if npm install --omit=dev --omit=optional --no-audit --no-fund --prefix "$SCRIPT_DIR" "${copilotRuntimePackageSpec}"; then`,
     '    if [ -f "$SCRIPT_DIR/node_modules/@github/copilot/index.js" ]; then',
     '      return 0',
     '    fi',
@@ -1106,12 +924,12 @@ function getRunWebUIPowerShell() {
     '',
     '  $npmCommand = Get-Command npm -ErrorAction SilentlyContinue',
     '  if ($null -eq $npmCommand) {',
-    '    Write-Warning "Copilot CLI was not bundled and npm was not found. Copilot models will be unavailable until @github/copilot is installed."',
+    '    Write-Warning "Copilot CLI is not installed and npm was not found. Copilot models will be unavailable until @github/copilot is installed."',
     '    return ""',
     '  }',
     '',
-    `  Write-Host "Copilot CLI was not bundled. Installing ${copilotRuntimePackageSpec} into $ScriptDir."`,
-    `  & $npmCommand.Source install --omit=dev --include=optional --no-audit --no-fund --prefix $ScriptDir "${copilotRuntimePackageSpec}"`,
+    `  Write-Host "Copilot CLI is not installed. Installing ${copilotRuntimePackageSpec} into $ScriptDir."`,
+    `  & $npmCommand.Source install --omit=dev --omit=optional --no-audit --no-fund --prefix $ScriptDir "${copilotRuntimePackageSpec}"`,
     '  if ($LASTEXITCODE -eq 0 -and (Test-Path $installedIndex)) {',
     '    return ""',
     '  }',
