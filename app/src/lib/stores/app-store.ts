@@ -10609,14 +10609,16 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** This shouldn't be called directly. See 'Dispatcher'. */
   public async _fetchCopilotModels(): Promise<void> {
     const models = await this.copilotStore.listModels()
-    // Only overwrite the cached model list when we actually got a list back.
-    // listModels() returns null when the result is unknown (no signed-in
-    // account or an SDK failure with no prior cache); treating that as an
-    // empty list would scrub the user's Copilot model selections.
-    if (models !== null) {
+
+    if (models === null) {
+      if (this.copilotStore.isAvailable) {
+        this.copilotModels = []
+      }
+    } else {
       this.copilotModels = [...models]
       this.scrubMissingCopilotModelSelections()
     }
+
     this.emitUpdate()
   }
 

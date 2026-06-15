@@ -24,6 +24,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$RequiredNodeMajor = 20
+$PreferredNodeMajor = 22
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
@@ -150,23 +152,40 @@ function Invoke-Step {
   }
 }
 
+function Install-NodeLTS {
+  Write-Step "Installing Node.js $PreferredNodeMajor LTS with winget."
+
+  if (-not (Test-Command "winget")) {
+    throw "Node.js $RequiredNodeMajor or newer is required, and winget was not found. Install Node.js $PreferredNodeMajor LTS, then rerun this script."
+  }
+
+  & winget upgrade -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) {
+    & winget install `
+      -e `
+      --id OpenJS.NodeJS.LTS `
+      --accept-package-agreements `
+      --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "winget could not install or upgrade Node.js LTS. The version check will continue and report a hard error if Node.js is still too old."
+    }
+  }
+
+  Refresh-Path
+}
+
 function Ensure-Node {
   if (-not (Test-Command "node")) {
-    Write-Step "Node.js was not found. Trying to install Node.js LTS with winget."
+    Install-NodeLTS
+  }
 
-    if (-not (Test-Command "winget")) {
-      throw "Node.js is required, and winget was not found. Install Node.js 22 LTS, then rerun this script."
-    }
+  if (-not (Test-Command "node")) {
+    throw "Node.js is still not available. Open a new PowerShell window and rerun this script."
+  }
 
-    Invoke-Step "winget" @(
-      "install",
-      "-e",
-      "--id",
-      "OpenJS.NodeJS.LTS",
-      "--accept-package-agreements",
-      "--accept-source-agreements"
-    )
-    Refresh-Path
+  $nodeMajor = [int](& node -p "Number(process.versions.node.split('.')[0])")
+  if ($nodeMajor -lt $RequiredNodeMajor) {
+    Install-NodeLTS
   }
 
   if (-not (Test-Command "node")) {
@@ -179,12 +198,12 @@ function Ensure-Node {
   Write-Step "Node.js version: $(& node -v)"
   Write-Step "Node.js platform/arch: $nodePlatform/$nodeArch"
 
-  if ($nodeMajor -lt 18) {
-    throw "Node.js 18 or newer is required. Node.js 22 LTS is recommended for WebUI testing."
+  if ($nodeMajor -lt $RequiredNodeMajor) {
+    throw "Node.js $RequiredNodeMajor or newer is required. Node.js $PreferredNodeMajor LTS is recommended for WebUI testing."
   }
 
-  if ($nodeMajor -gt 22) {
-    Write-Warning "Node.js 22 LTS is recommended. Newer versions such as Node.js $nodeMajor may expose dependency compatibility issues."
+  if ($nodeMajor -gt $PreferredNodeMajor) {
+    Write-Warning "Node.js $PreferredNodeMajor LTS is recommended. Newer versions such as Node.js $nodeMajor may expose dependency compatibility issues."
   }
 
   switch ($nodeArch) {

@@ -132,12 +132,11 @@ export class CopilotPreferences extends React.Component<
       return <p>Loading available models…</p>
     }
 
-    if (copilotModels.length === 0 && byokProviders.length === 0) {
-      return <p>No models available. Check your Copilot subscription.</p>
-    }
-
     return (
       <>
+        {copilotModels.length === 0 && byokProviders.length === 0 && (
+          <p>No models available. Check your Copilot subscription.</p>
+        )}
         <Row className="copilot-feature-hint">
           <p>
             Tailor how Copilot behaves by using{' '}

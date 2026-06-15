@@ -26,6 +26,52 @@ function accountMatchesRepositoryState(x: Account, y: Account) {
   )
 }
 
+const MaxRepositoryLoadRetries = __PROCESS_KIND__ === 'web-server' ? 2 : 0
+const RepositoryLoadRetryDelayMs = 1500
+
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined
+  }
+
+  const value = error as {
+    readonly code?: unknown
+    readonly cause?: { readonly code?: unknown }
+  }
+  const code = value.code ?? value.cause?.code
+
+  return typeof code === 'string' ? code : undefined
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : `${error}`
+}
+
+function isTransientRepositoryLoadError(error: unknown): boolean {
+  const code = getErrorCode(error)
+
+  if (
+    code === 'EPIPE' ||
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'UND_ERR_SOCKET'
+  ) {
+    return true
+  }
+
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('fetch failed') ||
+    message.includes('aborted') ||
+    message.includes('socket') ||
+    message.includes('timed out')
+  )
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 /**
  * Attempt to look up an existing account in the account state map based on
  * endpoint plus user id, falling back to endpoint plus login for WebUI account
@@ -196,10 +242,10 @@ export class ApiRepositoriesStore extends BaseStore {
    * Request that the store loads the list of repositories that
    * the provided account has explicit permissions to access.
    */
-  public async loadRepositories(account: Account) {
+  public async loadRepositories(account: Account, retryAttempt = 0) {
     const currentState = this.getAccountState(account)
 
-    if (currentState?.loading) {
+    if (currentState?.loading && retryAttempt === 0) {
       log.info(
         `[ApiRepositoriesStore] repository list refresh for ${account.login} is already in progress`
       )
@@ -315,7 +361,10 @@ export class ApiRepositoriesStore extends BaseStore {
         await loadByAffiliation()
       }
 
-      if (primaryError !== null && !receivedRepositoryPage) {
+      if (
+        primaryError !== null &&
+        (!receivedRepositoryPage || repositories.size === 0)
+      ) {
         throw primaryError
       }
 
@@ -330,6 +379,20 @@ export class ApiRepositoriesStore extends BaseStore {
         error instanceof Error
           ? error
           : new Error(`Failed loading repositories for ${account.login}`)
+
+      if (
+        retryAttempt < MaxRepositoryLoadRetries &&
+        repositories.size === 0 &&
+        isTransientRepositoryLoadError(loadError)
+      ) {
+        log.warn(
+          `[ApiRepositoriesStore] retrying repository list refresh for ${account.login} after transient failure (${retryAttempt + 1}/${MaxRepositoryLoadRetries})`,
+          loadError
+        )
+        await delay(RepositoryLoadRetryDelayMs)
+        return await this.loadRepositories(account, retryAttempt + 1)
+      }
+
       log.error(`Failed loading repositories for ${account.login}`, loadError)
       this.emitError(loadError)
     } finally {

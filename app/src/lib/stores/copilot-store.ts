@@ -773,11 +773,7 @@ export class CopilotStore extends BaseStore {
       this.emitUpdate()
     } else {
       log.debug(`CopilotStore: Account updated for '${dotComAccount.login}'`)
-      // Proactively fetch models so they are ready when the user opens the
-      // Copilot tab in Settings, even if they signed in without reopening
-      // the dialog.
-      const emit = () => this.emitUpdate()
-      this.getCachedModels().then(emit, emit)
+      this.emitUpdate()
     }
   }
 

@@ -24,6 +24,8 @@ COPILOT_CLI_PATH=""
 OAUTH_CLIENT_ID=""
 OAUTH_CLIENT_SECRET=""
 OAUTH_CALLBACK_URL=""
+REQUIRED_NODE_MAJOR=20
+PREFERRED_NODE_MAJOR=22
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -182,6 +184,16 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+run_as_root() {
+  if [[ "$(id -u 2>/dev/null || echo 1)" == "0" ]]; then
+    run "$@"
+  elif command_exists sudo; then
+    run sudo "$@"
+  else
+    run "$@"
+  fi
+}
+
 normalize_platform() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     ""|all)
@@ -235,25 +247,40 @@ run() {
 }
 
 install_node() {
-  step "Node.js was not found. Trying to install Node.js with the system package manager."
+  step "Installing Node.js ${PREFERRED_NODE_MAJOR} LTS for GitDesk WebUI."
 
-  if command_exists apt-get; then
-    run sudo apt-get update
-    run sudo apt-get install -y nodejs npm
+  if command_exists pkg; then
+    run pkg install -y nodejs-lts || run pkg install -y nodejs
+  elif command_exists apt-get; then
+    if command_exists curl; then
+      run_as_root sh -c "curl -fsSL https://deb.nodesource.com/setup_${PREFERRED_NODE_MAJOR}.x | bash -"
+    elif command_exists wget; then
+      run_as_root sh -c "wget -qO- https://deb.nodesource.com/setup_${PREFERRED_NODE_MAJOR}.x | bash -"
+    fi
+    run_as_root apt-get update
+    run_as_root apt-get install -y nodejs
   elif command_exists dnf; then
-    run sudo dnf install -y nodejs npm
+    if command_exists curl; then
+      run_as_root sh -c "curl -fsSL https://rpm.nodesource.com/setup_${PREFERRED_NODE_MAJOR}.x | bash -"
+    fi
+    run_as_root dnf install -y nodejs npm
   elif command_exists yum; then
-    run sudo yum install -y nodejs npm
+    if command_exists curl; then
+      run_as_root sh -c "curl -fsSL https://rpm.nodesource.com/setup_${PREFERRED_NODE_MAJOR}.x | bash -"
+    fi
+    run_as_root yum install -y nodejs npm
   elif command_exists pacman; then
-    run sudo pacman -Sy --noconfirm nodejs npm
+    run_as_root pacman -Sy --noconfirm nodejs npm
   elif command_exists zypper; then
-    run sudo zypper install -y nodejs npm
+    run_as_root zypper install -y nodejs npm
   elif command_exists apk; then
-    run sudo apk add nodejs npm
+    run_as_root apk add nodejs-current npm || run_as_root apk add nodejs npm
   else
-    echo "Node.js is required. Install Node.js 22 LTS, then rerun this script." >&2
+    echo "Node.js ${REQUIRED_NODE_MAJOR} or newer is required. Install Node.js ${PREFERRED_NODE_MAJOR} LTS, then rerun this script." >&2
     exit 1
   fi
+
+  hash -r 2>/dev/null || true
 }
 
 ensure_node() {
@@ -275,13 +302,22 @@ ensure_node() {
   step "Node.js version: $(node -v)"
   step "Node.js platform/arch: $node_platform/$node_arch"
 
-  if [[ "$node_major" -lt 18 ]]; then
-    echo "Node.js 18 or newer is required. Node.js 22 LTS is recommended for WebUI testing." >&2
+  if [[ "$node_major" -lt "$REQUIRED_NODE_MAJOR" ]]; then
+    install_node
+    node_major="$(node -p "Number(process.versions.node.split('.')[0])")"
+    node_platform="$(node -p "process.platform")"
+    node_arch="$(node -p "process.arch")"
+    step "Node.js version after install: $(node -v)"
+    step "Node.js platform/arch after install: $node_platform/$node_arch"
+  fi
+
+  if [[ "$node_major" -lt "$REQUIRED_NODE_MAJOR" ]]; then
+    echo "Node.js ${REQUIRED_NODE_MAJOR} or newer is required. Node.js ${PREFERRED_NODE_MAJOR} LTS is recommended for WebUI testing." >&2
     exit 1
   fi
 
-  if [[ "$node_major" -gt 22 ]]; then
-    echo "Warning: Node.js 22 LTS is recommended. Newer versions such as Node.js $node_major may expose dependency compatibility issues." >&2
+  if [[ "$node_major" -gt "$PREFERRED_NODE_MAJOR" ]]; then
+    echo "Warning: Node.js ${PREFERRED_NODE_MAJOR} LTS is recommended. Newer versions such as Node.js $node_major may expose dependency compatibility issues." >&2
   fi
 
   case "$node_arch" in

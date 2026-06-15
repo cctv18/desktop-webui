@@ -29,6 +29,8 @@ const shouldPrintDiagnosticsToConsole =
   process.env.WEBUI_CONSOLE_DIAGNOSTICS === '1' ||
   process.env.WEBUI_CONSOLE_DIAGNOSTICS === 'true'
 const consoleChunkSize = 1800
+const requiredRuntimeNodeMajor = 20
+const preferredRuntimeNodeMajor = 22
 
 process.env.NO_COLOR = process.env.NO_COLOR || '1'
 process.env.FORCE_COLOR = process.env.FORCE_COLOR || '0'
@@ -369,14 +371,9 @@ function resolvePackageDir(packageName) {
 }
 
 function copyCopilotExecutablePackages() {
-  const githubSourceDir = path.join(
-    projectRoot,
-    'app',
-    'node_modules',
-    '@github'
-  )
   const githubDestinationDir = path.join(outDir, 'node_modules', '@github')
   const copiedPackages = new Array()
+  const copiedPackageNames = new Set()
 
   fs.rmSync(githubDestinationDir, { recursive: true, force: true })
   fs.rmSync(path.join(outDir, 'node_modules', 'detect-libc'), {
@@ -384,8 +381,16 @@ function copyCopilotExecutablePackages() {
     force: true,
   })
 
-  if (fs.existsSync(githubSourceDir)) {
-    fs.mkdirSync(githubDestinationDir, { recursive: true })
+  fs.mkdirSync(githubDestinationDir, { recursive: true })
+
+  for (const githubSourceDir of getCopilotExecutablePackageSourceDirs()) {
+    if (!fs.existsSync(githubSourceDir)) {
+      appendUtf8File(
+        diagnosticsLogPath,
+        `Copilot scoped packages source not found: ${githubSourceDir}\n`
+      )
+      continue
+    }
 
     for (const entry of fs.readdirSync(githubSourceDir)) {
       if (!isCopilotExecutablePackage(entry)) {
@@ -393,6 +398,10 @@ function copyCopilotExecutablePackages() {
       }
 
       if (!shouldIncludeCopilotExecutablePackage(entry)) {
+        continue
+      }
+
+      if (copiedPackageNames.has(entry)) {
         continue
       }
 
@@ -404,17 +413,28 @@ function copyCopilotExecutablePackages() {
           verbatimSymlinks: true,
         }
       )
+      copiedPackageNames.add(entry)
       copiedPackages.push(entry)
     }
-  } else {
-    appendUtf8File(
-      diagnosticsLogPath,
-      `Copilot scoped packages source not found: ${githubSourceDir}\n`
-    )
   }
 
   appendMissingCopilotExecutableDiagnostics(copiedPackages)
   return copiedPackages
+}
+
+function getCopilotExecutablePackageSourceDirs() {
+  return [
+    path.join(projectRoot, 'app', 'node_modules', '@github'),
+    path.join(
+      projectRoot,
+      'app',
+      'node_modules',
+      '@github',
+      'copilot',
+      'node_modules',
+      '@github'
+    ),
+  ]
 }
 
 function copyCopilotRuntimeDependency(copilotDestination, packageName) {
@@ -714,6 +734,82 @@ function getRunWebUISh() {
     '  printf "%s" "$1" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"',
     '}',
     '',
+    'command_exists() {',
+    '  command -v "$1" >/dev/null 2>&1',
+    '}',
+    '',
+    'run_as_root() {',
+    '  if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then',
+    '    "$@"',
+    '  elif command_exists sudo; then',
+    '    sudo "$@"',
+    '  else',
+    '    "$@"',
+    '  fi',
+    '}',
+    '',
+    'install_node_lts() {',
+    `  echo "Installing Node.js ${preferredRuntimeNodeMajor} LTS for GitDesk WebUI runtime."`,
+    '  if command_exists pkg; then',
+    '    pkg install -y nodejs-lts || pkg install -y nodejs',
+    '  elif command_exists apt-get; then',
+    '    if command_exists curl; then',
+    `      run_as_root sh -c "curl -fsSL https://deb.nodesource.com/setup_${preferredRuntimeNodeMajor}.x | bash -"`,
+    '    elif command_exists wget; then',
+    `      run_as_root sh -c "wget -qO- https://deb.nodesource.com/setup_${preferredRuntimeNodeMajor}.x | bash -"`,
+    '    fi',
+    '    run_as_root apt-get update',
+    '    run_as_root apt-get install -y nodejs',
+    '  elif command_exists dnf; then',
+    '    if command_exists curl; then',
+    `      run_as_root sh -c "curl -fsSL https://rpm.nodesource.com/setup_${preferredRuntimeNodeMajor}.x | bash -"`,
+    '    fi',
+    '    run_as_root dnf install -y nodejs npm',
+    '  elif command_exists yum; then',
+    '    if command_exists curl; then',
+    `      run_as_root sh -c "curl -fsSL https://rpm.nodesource.com/setup_${preferredRuntimeNodeMajor}.x | bash -"`,
+    '    fi',
+    '    run_as_root yum install -y nodejs npm',
+    '  elif command_exists pacman; then',
+    '    run_as_root pacman -Sy --noconfirm nodejs npm',
+    '  elif command_exists zypper; then',
+    '    run_as_root zypper install -y nodejs npm',
+    '  elif command_exists apk; then',
+    '    run_as_root apk add nodejs-current npm || run_as_root apk add nodejs npm',
+    '  else',
+    `    echo "Node.js ${requiredRuntimeNodeMajor} or newer is required. Install Node.js ${preferredRuntimeNodeMajor} LTS, then rerun this script." >&2`,
+    '    exit 1',
+    '  fi',
+    '  hash -r 2>/dev/null || true',
+    '}',
+    '',
+    'ensure_node() {',
+    '  if ! command_exists node; then',
+    '    install_node_lts',
+    '  fi',
+    '',
+    '  if command_exists node; then',
+    '    NODE_MAJOR=$(node -p "Number(process.versions.node.split(\\".\\")[0])")',
+    '  else',
+    '    NODE_MAJOR=0',
+    '  fi',
+    '',
+    `  if [ "$NODE_MAJOR" -lt ${requiredRuntimeNodeMajor} ]; then`,
+    '    install_node_lts',
+    '  fi',
+    '',
+    '  if ! command_exists node; then',
+    '    echo "Node.js is still not available. Open a new shell and rerun this script." >&2',
+    '    exit 1',
+    '  fi',
+    '',
+    '  NODE_MAJOR=$(node -p "Number(process.versions.node.split(\\".\\")[0])")',
+    `  if [ "$NODE_MAJOR" -lt ${requiredRuntimeNodeMajor} ]; then`,
+    `    echo "Node.js ${requiredRuntimeNodeMajor} or newer is required. Node.js ${preferredRuntimeNodeMajor} LTS is recommended." >&2`,
+    '    exit 1',
+    '  fi',
+    '}',
+    '',
     'set_config_value() {',
     '  case "$1" in',
     '    host) HOST=$2 ;;',
@@ -792,16 +888,7 @@ function getRunWebUISh() {
     'HOST=${HOST:-127.0.0.1}',
     'PORT=${PORT:-8080}',
     '',
-    'if ! command -v node >/dev/null 2>&1; then',
-    '  echo "Node.js is required. Install Node.js 18 or newer, then rerun this script." >&2',
-    '  exit 1',
-    'fi',
-    '',
-    'NODE_MAJOR=$(node -p "Number(process.versions.node.split(\\".\\")[0])")',
-    'if [ "$NODE_MAJOR" -lt 18 ]; then',
-    '  echo "Node.js 18 or newer is required. Node.js 22 LTS is recommended." >&2',
-    '  exit 1',
-    'fi',
+    'ensure_node',
     '',
     'if [ ! -f "$SCRIPT_DIR/web-server.js" ]; then',
     '  echo "web-server.js was not found next to this launcher: $SCRIPT_DIR" >&2',
@@ -916,6 +1003,60 @@ function getRunWebUIPowerShell() {
     '  }',
     '}',
     '',
+    'function Refresh-Path {',
+    '  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")',
+    '  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")',
+    '  $env:Path = "$machinePath;$userPath"',
+    '}',
+    '',
+    'function Install-NodeLTS {',
+    '  $winget = Get-Command winget -ErrorAction SilentlyContinue',
+    '  if ($null -eq $winget) {',
+    `    throw "Node.js ${requiredRuntimeNodeMajor} or newer is required, and winget was not found. Install Node.js ${preferredRuntimeNodeMajor} LTS, then rerun this script."`,
+    '  }',
+    '',
+    `  Write-Host "Installing Node.js ${preferredRuntimeNodeMajor} LTS for GitDesk WebUI runtime."`,
+    '  & $winget.Source upgrade -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements',
+    '  if ($LASTEXITCODE -ne 0) {',
+    '    & $winget.Source install -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements',
+    '    if ($LASTEXITCODE -ne 0) {',
+    '      Write-Warning "winget could not install or upgrade Node.js LTS. The version check will continue and report a hard error if Node.js is still too old."',
+    '    }',
+    '  }',
+    '',
+    '  Refresh-Path',
+    '}',
+    '',
+    'function Ensure-Node {',
+    '  $nodeCommand = Get-Command node -ErrorAction SilentlyContinue',
+    '  if ($null -eq $nodeCommand) {',
+    '    Install-NodeLTS',
+    '    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue',
+    '  }',
+    '',
+    '  if ($null -ne $nodeCommand) {',
+    "    $nodeMajor = [int](& $nodeCommand.Source -p \"Number(process.versions.node.split('.')[0])\")",
+    '  } else {',
+    '    $nodeMajor = 0',
+    '  }',
+    '',
+    `  if ($nodeMajor -lt ${requiredRuntimeNodeMajor}) {`,
+    '    Install-NodeLTS',
+    '    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue',
+    '  }',
+    '',
+    '  if ($null -eq $nodeCommand) {',
+    '    throw "Node.js is still not available. Open a new PowerShell window and rerun this script."',
+    '  }',
+    '',
+    "  $nodeMajor = [int](& $nodeCommand.Source -p \"Number(process.versions.node.split('.')[0])\")",
+    `  if ($nodeMajor -lt ${requiredRuntimeNodeMajor}) {`,
+    `    throw "Node.js ${requiredRuntimeNodeMajor} or newer is required. Node.js ${preferredRuntimeNodeMajor} LTS is recommended."`,
+    '  }',
+    '',
+    '  return $nodeCommand',
+    '}',
+    '',
     '$configValues = Read-ServerConfig $Config',
     '$hostValue = Get-ConfigValue $configValues @("host") "127.0.0.1"',
     '$portValue = Get-ConfigValue $configValues @("port") "8080"',
@@ -947,15 +1088,7 @@ function getRunWebUIPowerShell() {
     'if ($PSBoundParameters.ContainsKey("StaticRoot")) { $staticRootValue = $StaticRoot }',
     'if ($PSBoundParameters.ContainsKey("CopilotCliPath")) { $copilotCliPathValue = $CopilotCliPath }',
     '',
-    '$nodeCommand = Get-Command node -ErrorAction SilentlyContinue',
-    'if ($null -eq $nodeCommand) {',
-    '  throw "Node.js is required. Install Node.js 18 or newer, then rerun this script."',
-    '}',
-    '',
-    '$nodeMajor = [int](& $nodeCommand.Source -p "Number(process.versions.node.split(\'.\')[0])")',
-    'if ($nodeMajor -lt 18) {',
-    '  throw "Node.js 18 or newer is required. Node.js 22 LTS is recommended."',
-    '}',
+    '$nodeCommand = Ensure-Node',
     '',
     '$serverBundle = Join-Path $ScriptDir "web-server.js"',
     'if (-not (Test-Path $serverBundle)) {',
