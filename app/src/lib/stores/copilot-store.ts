@@ -48,7 +48,8 @@ import { isGHE } from '../endpoint-capabilities'
 
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
-const getCopilotIntegrationId = () => `copilot-desktop${__DEV__ ? '-dev' : ''}`
+const getCopilotIntegrationId = () => 'copilot-desktop'
+const DefaultReasoningEffort: ReasoningEffort = 'low'
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -104,10 +105,15 @@ export type CopilotFeature = 'commit-message-generation' | 'conflict-resolution'
 
 /** Concrete session config produced by resolving a {@link CopilotModelRequest}. */
 interface IResolvedConflictModelConfig {
-  readonly modelId: string | undefined
+  readonly modelId: string
   readonly reasoningEffort: ReasoningEffort | undefined
   readonly provider: CopilotProviderConfig | undefined
   readonly timeoutMs: number | undefined
+}
+
+interface ICopilotModelCacheEntry {
+  readonly models: ReadonlyArray<ModelInfo>
+  readonly cachedAt: number
 }
 
 /**
@@ -562,6 +568,25 @@ function getSelectableCopilotModels(
   return models.filter(isSelectableCopilotModel)
 }
 
+function dedupeCopilotModel(): (model: ModelInfo) => boolean {
+  const seenIds = new Set<string>()
+  const seenNames = new Set<string>()
+
+  return model => {
+    const id = model.id.trim().toLowerCase()
+    const name = model.name.trim().toLowerCase()
+    const key = name.length > 0 ? name : id
+
+    if (seenIds.has(id) || seenNames.has(key)) {
+      return false
+    }
+
+    seenIds.add(id)
+    seenNames.add(key)
+    return true
+  }
+}
+
 /**
  * Error thrown when an in-flight Copilot conflict resolution turn is cancelled
  * by the user (via the loading dialog's "Stop" button).
@@ -757,19 +782,16 @@ export async function runConflictResolutionTurn(
 }
 
 /**
- * This store manages the Copilot client lifecycle based on the user's
- * GitHub.com account. It tracks account changes and creates the client
- * lazily when a Copilot feature is used.
- *
- * Currently, Copilot is only available for GitHub.com accounts.
+ * This store manages Copilot model metadata and creates clients lazily when a
+ * Copilot feature is used.
  */
 export class CopilotStore extends BaseStore {
-  private currentAccount: Account | null = null
-  private currentAccountKey: string | null = null
-
-  private cachedModels: ReadonlyArray<ModelInfo> | null = null
-  private modelsCachedAt: number = 0
-  private modelsInFlight: Promise<ReadonlyArray<ModelInfo> | null> | null = null
+  private readonly modelCaches = new Map<string, ICopilotModelCacheEntry>()
+  private readonly modelsInFlight = new Map<
+    string,
+    Promise<ReadonlyArray<ModelInfo> | null>
+  >()
+  private readonly signedInAccountKeys = new Set<string>()
 
   public constructor(private readonly accountsStore: AccountsStore) {
     super()
@@ -777,51 +799,51 @@ export class CopilotStore extends BaseStore {
     this.initializeFromAccounts()
   }
 
-  /**
-   * Initialize the account from the current accounts.
-   */
+  /** Initialize account-scoped cache state from the current accounts. */
   private async initializeFromAccounts(): Promise<void> {
     const accounts = await this.accountsStore.getAll()
     this.onAccountsUpdated(accounts)
   }
 
-  /**
-   * Handler for account updates. Updates the stored account reference.
-   */
+  /** Prunes account-scoped model metadata when accounts are removed. */
   private onAccountsUpdated = (accounts: ReadonlyArray<Account>): void => {
-    // Copilot is only available on GitHub.com, so we look for a dotcom account
-    const dotComAccount = accounts.find(isDotComAccount) ?? null
-    const dotComAccountKey =
-      dotComAccount === null ? null : getCopilotModelCacheKey(dotComAccount)
+    const accountKeys = new Set(accounts.map(getCopilotModelCacheKey))
+    let prunedCache = false
 
-    if (dotComAccountKey !== this.currentAccountKey) {
-      this.cachedModels = null
-      this.modelsCachedAt = 0
-      this.modelsInFlight = null
+    for (const key of this.modelCaches.keys()) {
+      if (!accountKeys.has(key)) {
+        this.modelCaches.delete(key)
+        prunedCache = true
+      }
     }
 
-    this.currentAccount = dotComAccount
-    this.currentAccountKey = dotComAccountKey
+    for (const key of this.modelsInFlight.keys()) {
+      if (!accountKeys.has(key)) {
+        this.modelsInFlight.delete(key)
+      }
+    }
 
-    if (dotComAccount === null) {
-      log.debug('CopilotStore: No GitHub.com account available')
-      this.emitUpdate()
-    } else {
-      log.debug(`CopilotStore: Account updated for '${dotComAccount.login}'`)
+    this.signedInAccountKeys.clear()
+    for (const key of accountKeys) {
+      this.signedInAccountKeys.add(key)
+    }
+
+    if (prunedCache) {
       this.emitUpdate()
     }
   }
 
   /**
-   * Creates a new Copilot client for the current account.
+   * Creates a new Copilot client for the account.
    *
-   * @throws Error if no GitHub.com account is available
+   * @throws Error if the account has no token
    */
-  private async createClient(repositoryPath?: string): Promise<CopilotClient> {
-    if (this.currentAccount === null || !this.currentAccount.token) {
-      throw new Error(
-        'Cannot create Copilot client: No GitHub.com account available'
-      )
+  private async createClient(
+    account: Account,
+    repositoryPath?: string
+  ): Promise<CopilotClient> {
+    if (!account.token) {
+      throw new Error('Cannot create Copilot client: Account has no token')
     }
 
     // Prefer the platform executable when it is bundled or installed. When it
@@ -837,11 +859,11 @@ export class CopilotStore extends BaseStore {
         env: {
           ELECTRON_RUN_AS_NODE: '1',
           COPILOT_RUN_APP: '1',
-          GH_HOST: getCopilotGHHost(this.currentAccount),
+          GH_HOST: getCopilotGHHost(account),
           GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
         },
         workingDirectory: repositoryPath,
-        gitHubToken: this.currentAccount.token,
+        gitHubToken: account.token,
       })
     }
 
@@ -874,11 +896,11 @@ export class CopilotStore extends BaseStore {
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         COPILOT_RUN_APP: '1',
-        GH_HOST: getCopilotGHHost(this.currentAccount),
+        GH_HOST: getCopilotGHHost(account),
         GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
       },
       workingDirectory: repositoryPath,
-      gitHubToken: this.currentAccount.token,
+      gitHubToken: account.token,
     }
 
     return new CopilotClient(clientOptions)
@@ -943,7 +965,7 @@ export class CopilotStore extends BaseStore {
    * @param diff The diff of changes to be committed, in git format
    * @param request Optional model request. When omitted or `{ kind: 'copilot',
    *   modelId: null }`, uses the cheapest available built-in model when the
-   *   model list is loaded, otherwise leaves model selection to Copilot.
+   *   model list is loaded, otherwise uses Desktop's default model.
    *   When `kind === 'byok'`, the supplied {@link CopilotProviderConfig} is
    *   forwarded to {@link CopilotClient.createSession} so the SDK talks to
    *   the user's own provider instead of GitHub's.
@@ -955,15 +977,16 @@ export class CopilotStore extends BaseStore {
    *   those constraints; rule text itself is never embedded in the system
    *   channel.
    * @returns Commit details (title and description) generated by Copilot
-   * @throws Error if no GitHub.com account is available or if generation fails
+   * @throws Error if the account cannot create a client or if generation fails
    */
   public async generateCommitMessage(
+    account: Account,
     diff: string,
     repositoryPath: string,
     request?: CopilotModelRequest | null,
     commitMessageRules?: ReadonlyArray<IRepoRulesMetadataRule>
   ): Promise<ICopilotCommitMessage> {
-    let modelId: string | undefined
+    let modelId: string
     let reasoningEffort: ReasoningEffort | undefined
     let provider: CopilotProviderConfig | undefined
     let timeoutMs: number = DefaultCopilotRequestTimeoutMs
@@ -978,26 +1001,26 @@ export class CopilotStore extends BaseStore {
     } else {
       const requestedModelId =
         request?.kind === 'copilot' ? request.modelId : null
-      const cachedModels = await this.getCachedModels()
+      const cachedModels = await this.getCachedModels(account)
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
 
-      // Use the resolved model's ID, or the raw string ID the caller passed.
-      // When the user chose Auto and model metadata is unavailable, omit the
-      // model and let Copilot pick a supported default for the account.
-      modelId = resolvedModel?.id ?? requestedModelId ?? undefined
+      // Use the resolved model's ID, the raw string ID the caller passed, or
+      // the default model as a last resort.
+      modelId = resolvedModel?.id ?? requestedModelId ?? DefaultCopilotModel
       reasoningEffort = resolvedModel
         ? getLowestReasoningEffort(resolvedModel)
-        : undefined
+        : DefaultReasoningEffort
     }
 
     let client: CopilotClient
     try {
-      client = await this.createClient(repositoryPath)
+      client = await this.createClient(account, repositoryPath)
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         return this.generateCommitMessageWithoutSDK(
+          account,
           diff,
           request ?? null,
           commitMessageRules
@@ -1020,7 +1043,7 @@ export class CopilotStore extends BaseStore {
       const systemPrompt = buildCommitMessageSystemPrompt(hasRules, tags)
 
       const runSession = async (
-        sessionModelId: string | undefined,
+        sessionModelId: string,
         sessionReasoningEffort: ReasoningEffort | undefined
       ): Promise<ICopilotCommitMessage> => {
         let session: Awaited<ReturnType<CopilotClient['createSession']>> | null =
@@ -1029,7 +1052,7 @@ export class CopilotStore extends BaseStore {
         try {
           // Create a session for commit message generation
           session = await client.createSession({
-            ...(sessionModelId !== undefined ? { model: sessionModelId } : {}),
+            model: sessionModelId,
             ...(sessionReasoningEffort !== undefined
               ? { reasoningEffort: sessionReasoningEffort }
               : {}),
@@ -1072,17 +1095,16 @@ export class CopilotStore extends BaseStore {
       } catch (e) {
         if (
           provider === undefined &&
-          modelId !== undefined &&
           this.isUnsupportedModelError(e)
         ) {
           log.warn(
-            `CopilotStore: Model '${modelId}' is not supported for this account; retrying with Copilot model auto-selection`,
+            `CopilotStore: Model '${modelId}' is not supported for this account; retrying with Desktop's default Copilot model`,
             e
           )
-          this.cachedModels = null
-          this.modelsCachedAt = 0
+          const key = getCopilotModelCacheKey(account)
+          this.modelCaches.delete(key)
           this.emitUpdate()
-          return await runSession(undefined, undefined)
+          return await runSession(DefaultCopilotModel, DefaultReasoningEffort)
         }
 
         throw e
@@ -1116,27 +1138,8 @@ export class CopilotStore extends BaseStore {
     )
   }
 
-  private async fetchModelsFromCopilotEndpoint(): Promise<
-    ReadonlyArray<ModelInfo> | null
-  > {
-    if (this.currentAccount === null || !this.currentAccount.token) {
-      return null
-    }
-
-    try {
-      const api = new API(
-        this.currentAccount.endpoint,
-        this.currentAccount.token,
-        this.currentAccount.copilotEndpoint ?? 'https://api.githubcopilot.com'
-      )
-      return await api.fetchCopilotModels()
-    } catch (e) {
-      log.warn('CopilotStore: Failed to fetch models from Copilot endpoint', e)
-      return null
-    }
-  }
-
   private async generateCommitMessageWithoutSDK(
+    account: Account,
     diff: string,
     request: CopilotModelRequest | null,
     commitMessageRules?: ReadonlyArray<IRepoRulesMetadataRule>
@@ -1149,16 +1152,16 @@ export class CopilotStore extends BaseStore {
       )
     }
 
-    if (this.currentAccount === null || !this.currentAccount.token) {
+    if (!account.token) {
       throw new Error(
-        'Cannot generate commit message: No GitHub.com account available'
+        'Cannot generate commit message: Account has no token'
       )
     }
 
     const api = new API(
-      this.currentAccount.endpoint,
-      this.currentAccount.token,
-      this.currentAccount.copilotEndpoint ?? 'https://api.githubcopilot.com'
+      account.endpoint,
+      account.token,
+      account.copilotEndpoint ?? 'https://api.githubcopilot.com'
     )
 
     return api.getDiffChangesCommitMessage(diff)
@@ -1373,6 +1376,7 @@ export class CopilotStore extends BaseStore {
    * unchanged.
    */
   private resolveConflictModelConfig(
+    account: Account,
     request: CopilotModelRequest | null | undefined
   ): IResolvedConflictModelConfig {
     if (request && request.kind === 'byok') {
@@ -1390,15 +1394,14 @@ export class CopilotStore extends BaseStore {
     // refresh: resolveConflicts is about to create its own client, so a cold
     // fetch here would double the startup latency. It also keeps us in sync
     // with the loading dialog, which reads the same cached list. A missing
-    // cache is treated as "metadata unavailable" (raw id for explicit
-    // selections, otherwise let Copilot choose, no effort).
-    const cachedModels = this.cachedModels ?? []
+    // cache is treated as "metadata unavailable" (raw id, no effort).
+    const cachedModels = this.getCachedModelList(account) ?? []
     const resolvedModel = requestedModelId
       ? cachedModels.find(m => m.id === requestedModelId) ?? null
       : getPreferredDefaultModel(cachedModels)
 
     return {
-      modelId: resolvedModel?.id ?? requestedModelId ?? undefined,
+      modelId: resolvedModel?.id ?? requestedModelId ?? DefaultCopilotModel,
       // When the model isn't in the list we have no capability metadata, so we
       // can't confirm it supports reasoning effort. Omit it rather than send an
       // unsupported value — the SDK only accepts reasoningEffort for models
@@ -1432,6 +1435,7 @@ export class CopilotStore extends BaseStore {
    * @throws Error if no GitHub.com account is available or if resolution fails
    */
   public async resolveConflicts(
+    account: Account,
     context: IConflictResolutionContext,
     repositoryPath: string,
     request?: CopilotModelRequest | null,
@@ -1447,10 +1451,10 @@ export class CopilotStore extends BaseStore {
 
     onProgress?.({ filesResolved: 0, filesTotal })
 
-    const modelConfig = this.resolveConflictModelConfig(request)
+    const modelConfig = this.resolveConflictModelConfig(account, request)
 
     const clientTimer = startTimer('createClient')
-    const client = await this.createClient(repositoryPath)
+    const client = await this.createClient(account, repositoryPath)
     clientTimer.done()
 
     try {
@@ -1687,53 +1691,54 @@ export class CopilotStore extends BaseStore {
   }
 
   /**
-   * Returns whether Copilot is available (i.e., a GitHub.com account is
-   * signed in).
+   * Returns whether there is at least one signed-in account that could be used
+   * for Copilot.
    */
   public get isAvailable(): boolean {
-    return this.currentAccount !== null
+    return this.signedInAccountKeys.size > 0
   }
 
   /**
-   * Returns the currently associated GitHub.com account, if any.
-   */
-  public get account(): Account | null {
-    return this.currentAccount
-  }
-
-  /**
-   * Returns the last-fetched model list without triggering a refresh.
+   * Returns the last-fetched model list for the account without triggering a
+   * refresh.
+   *
    * Null if models have never been fetched.
    */
-  public get cachedModelList(): ReadonlyArray<ModelInfo> | null {
-    return this.cachedModels
+  public getCachedModelList(account: Account): ReadonlyArray<ModelInfo> | null {
+    return (
+      this.modelCaches.get(getCopilotModelCacheKey(account))?.models ?? null
+    )
   }
 
   /**
-   * Lists the available Copilot models from the SDK, using a cached result if
-   * it is less than {@link ModelListCacheTTL} old.
+   * Lists the available Copilot models for the account from the SDK, using a
+   * cached result if it is less than {@link ModelListCacheTTL} old.
    *
    * Returns `null` when the model list is unavailable (no signed-in
    * GitHub.com account, or the SDK fetch failed and we have no prior
    * cache). Callers should distinguish this from an empty array, which
    * would mean Copilot legitimately reports no models.
    */
-  public async listModels(): Promise<ReadonlyArray<ModelInfo> | null> {
+  public async listModels(
+    account: Account
+  ): Promise<ReadonlyArray<ModelInfo> | null> {
+    const key = getCopilotModelCacheKey(account)
     if (
-      this.currentAccount === null ||
-      !enableCopilotSdkCommitMessageGeneration(this.currentAccount)
+      !this.signedInAccountKeys.has(key) ||
+      !enableCopilotSdkCommitMessageGeneration(account)
     ) {
       return null
     }
 
+    const cached = this.modelCaches.get(key)
     if (
-      this.cachedModels !== null &&
-      Date.now() - this.modelsCachedAt < ModelListCacheTTL
+      cached !== undefined &&
+      Date.now() - cached.cachedAt < ModelListCacheTTL
     ) {
-      return this.cachedModels
+      return cached.models
     }
 
-    return this.fetchAndCacheModels()
+    return this.fetchAndCacheModels(account)
   }
 
   /**
@@ -1742,22 +1747,35 @@ export class CopilotStore extends BaseStore {
    * we know about right now use this entry point and treat "unavailable"
    * the same as "empty list".
    */
-  private async getCachedModels(): Promise<ReadonlyArray<ModelInfo>> {
-    return (await this.listModels()) ?? []
+  private async getCachedModels(
+    account: Account
+  ): Promise<ReadonlyArray<ModelInfo>> {
+    return (await this.listModels(account)) ?? []
   }
 
-  private async fetchAndCacheModels(): Promise<ReadonlyArray<ModelInfo> | null> {
+  private async fetchAndCacheModels(
+    account: Account
+  ): Promise<ReadonlyArray<ModelInfo> | null> {
+    const key = getCopilotModelCacheKey(account)
+
     // Deduplicate concurrent fetches — if one is already in flight, reuse it.
-    if (this.modelsInFlight !== null) {
-      return this.modelsInFlight
+    const inFlight = this.modelsInFlight.get(key)
+    if (inFlight !== undefined) {
+      return inFlight
     }
 
-    this.modelsInFlight = this.fetchModels()
+    const fetchPromise = this.fetchModels(account)
       .then(models => {
-        if (models !== null) {
-          const selectableModels = getSelectableCopilotModels(models)
-          this.cachedModels = selectableModels
-          this.modelsCachedAt = Date.now()
+        if (
+          this.modelsInFlight.get(key) === fetchPromise &&
+          this.signedInAccountKeys.has(key)
+        ) {
+          const selectableModels =
+            getSelectableCopilotModels(models).filter(dedupeCopilotModel())
+          this.modelCaches.set(key, {
+            models: selectableModels,
+            cachedAt: Date.now(),
+          })
           log.debug(
             `CopilotStore: Cached ${selectableModels.length} model(s): ${selectableModels
               .map(m => m.id)
@@ -1766,28 +1784,33 @@ export class CopilotStore extends BaseStore {
           this.emitUpdate()
         }
 
-        return this.cachedModels
+        return this.modelCaches.get(key)?.models ?? null
       })
       .catch(e => {
         log.warn('CopilotStore: Failed to fetch and cache models', e)
-        return this.cachedModels
+        return this.modelCaches.get(key)?.models ?? null
       })
+    this.modelsInFlight.set(key, fetchPromise)
 
     try {
-      return await this.modelsInFlight
+      return await fetchPromise
     } finally {
-      this.modelsInFlight = null
+      if (this.modelsInFlight.get(key) === fetchPromise) {
+        this.modelsInFlight.delete(key)
+      }
     }
   }
 
-  private async fetchModels(): Promise<ReadonlyArray<ModelInfo> | null> {
+  private async fetchModels(
+    account: Account
+  ): Promise<ReadonlyArray<ModelInfo>> {
     let client: CopilotClient
     try {
-      client = await this.createClient()
+      client = await this.createClient(account)
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         log.warn('CopilotStore: Cannot list models because the CLI is missing')
-        return this.cachedModels ?? (await this.fetchModelsFromCopilotEndpoint())
+        return []
       }
 
       throw e
@@ -1795,17 +1818,7 @@ export class CopilotStore extends BaseStore {
 
     try {
       await client.start()
-      const models = getSelectableCopilotModels(await client.listModels())
-      if (models.length === 0) {
-        const fallbackModels = await this.fetchModelsFromCopilotEndpoint()
-        if (fallbackModels !== null && fallbackModels.length > 0) {
-          return getSelectableCopilotModels(fallbackModels)
-        }
-      }
-      return models
-    } catch (e) {
-      log.warn('CopilotStore: Failed to list models', e)
-      return this.cachedModels ?? (await this.fetchModelsFromCopilotEndpoint())
+      return await client.listModels()
     } finally {
       await this.stopClient(client)
     }

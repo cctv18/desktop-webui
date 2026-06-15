@@ -31,7 +31,7 @@ const shouldPrintDiagnosticsToConsole =
 const consoleChunkSize = 1800
 const requiredRuntimeNodeMajor = 20
 const preferredRuntimeNodeMajor = 22
-const copilotRuntimePackageSpec = '@github/copilot@^1.0.57'
+const copilotRuntimePackageSpec = '@github/copilot@^1.0.62'
 
 process.env.NO_COLOR = process.env.NO_COLOR || '1'
 process.env.FORCE_COLOR = process.env.FORCE_COLOR || '0'
@@ -314,6 +314,7 @@ function copyWebRuntimeAssets() {
     })
     copiedCopilot = true
     copyCopilotRuntimeDependency(copilotDestination, 'detect-libc')
+    copyCopilotRuntimeDependency(copilotDestination, 'os-theme')
     copiedCopilotExecutables = copyCopilotExecutablePackages()
   } else {
     appendUtf8File(

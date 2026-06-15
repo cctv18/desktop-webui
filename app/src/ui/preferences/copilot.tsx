@@ -196,7 +196,6 @@ export class CopilotPreferences extends React.Component<
 
     return (
       <Select label={label} value={value} onChange={onChange}>
-        <option value={AutoCopilotModelKey}>Auto</option>
         <option value={HiddenCopilotModelKey}>
           None (hide Copilot button)
         </option>
@@ -237,8 +236,8 @@ export class CopilotPreferences extends React.Component<
     byokProviders: ReadonlyArray<IBYOKProvider>,
     raw: string | null
   ): string {
-    if (raw === null) {
-      return AutoCopilotModelKey
+    if (raw === null || raw === AutoCopilotModelKey) {
+      return this.getFirstSelectableModelValue(copilotModels, byokProviders)
     }
 
     const key = parseModelKey(raw)
@@ -261,7 +260,7 @@ export class CopilotPreferences extends React.Component<
     byokProviders: ReadonlyArray<IBYOKProvider>
   ): string {
     if (copilotModels.length === 0 && byokProviders.length === 0) {
-      return AutoCopilotModelKey
+      return HiddenCopilotModelKey
     }
 
     const preferredCopilotModel = copilotModels.find(
@@ -279,7 +278,11 @@ export class CopilotPreferences extends React.Component<
       return encodeModelKey({ kind: 'copilot', modelId: firstCopilotModel.id })
     }
 
-    const firstProvider = byokProviders[0]
+    const firstProvider = byokProviders.find(provider => provider.models[0])
+    if (firstProvider === undefined) {
+      return HiddenCopilotModelKey
+    }
+
     const firstByokModel = firstProvider.models[0]
     return encodeModelKey({
       kind: 'byok',
