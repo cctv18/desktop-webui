@@ -6685,7 +6685,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         repository
       )
 
-      if (account === null) {
+      if (account === undefined) {
         log.warn(
           'AppStore: resolveConflictsWithCopilot called without a Copilot account'
         )
