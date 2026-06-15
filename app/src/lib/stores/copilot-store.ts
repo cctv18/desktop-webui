@@ -34,17 +34,16 @@ import {
   IFileConflictContext,
   formatConflictContextForPrompt,
 } from '../copilot-conflict-context'
-import * as ipcRenderer from '../ipc-renderer'
 import { startTimer } from '../../ui/lib/timing'
 import { chmod, stat } from 'fs/promises'
 import { isAbsolute, join } from 'path'
-import { pathToFileURL } from 'url'
 import { randomBytes } from 'crypto'
 import { BaseStore } from './base-store'
 import { IRepoRulesMetadataRule } from '../../models/repo-rules'
 import { pathExists } from '../path-exists'
 import { enableCopilotSdkCommitMessageGeneration } from '../feature-flag'
 import { API } from '../api'
+import { isGHE } from '../endpoint-capabilities'
 
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
@@ -130,13 +129,14 @@ interface IProcessReportLike {
 const ModelListCacheTTL = 10 * 60 * 1000
 
 /**
- * Returns the path of the executable (Electron/Node) used to run the Copilot CLI.
- *
- * This corresponds to the value of `process.execPath` used when launching the
- * Copilot CLI via an eval-based entry point (for example, `--eval "import './index.js'"`).
+ * Returns the Copilot CLI host override for the account, if one is needed.
  */
-export async function getCopilotCLIPath(): Promise<string> {
-  return ipcRenderer.invoke('get-exec-path')
+export function getCopilotGHHost(account: Account): string | undefined {
+  const host = isDotComAccount(account)
+    ? undefined
+    : new URL(account.endpoint).host
+
+  return isGHE(account.endpoint) && host ? host.replace(/^api\./, '') : host
 }
 
 function getCopilotCLIDir(): string {
@@ -168,14 +168,27 @@ async function getCopilotExecutablePath(): Promise<string | null> {
   return null
 }
 
-function getCopilotCLIIndexPath(): string {
+async function getCopilotCLIIndexPath(): Promise<string | null> {
   const configuredPath = getConfiguredCopilotCLIPath()
 
   if (configuredPath !== undefined) {
     return resolveCopilotCLIIndexPath(configuredPath)
   }
 
-  return join(getCopilotCLIDir(), 'index.js')
+  for (const candidate of getBundledCopilotCLIIndexCandidates()) {
+    if (await pathExists(candidate)) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function getBundledCopilotCLIIndexCandidates(): ReadonlyArray<string> {
+  return [
+    join(getCopilotCLIDir(), 'index.js'),
+    join(__dirname, 'node_modules', '@github', 'copilot', 'index.js'),
+  ]
 }
 
 function getConfiguredCopilotCLIPath(): string | undefined {
@@ -789,13 +802,9 @@ export class CopilotStore extends BaseStore {
       )
     }
 
-    // This relies on the fact that Copilot CLI is bundled with the app, but not
-    // as a "single executable application", but the files from the npm package.
-    // That means Desktop will use its own executable to run as Copilot CLI's
-    // index.js as node.
-    // However, when trying to do this directly without the --eval flag, Copilot
-    // CLI fails to parse the arguments correctly, so we ended up using --eval
-    // and just importing the index.js from the CLI as a workaround.
+    // Prefer the platform executable when it is bundled or installed. When it
+    // is not available, the SDK can run the JavaScript package entry point
+    // directly with the Node.js executable hosting the WebUI server.
     const executablePath = await getCopilotExecutablePath()
 
     if (executablePath !== null) {
@@ -806,19 +815,21 @@ export class CopilotStore extends BaseStore {
         env: {
           ELECTRON_RUN_AS_NODE: '1',
           COPILOT_RUN_APP: '1',
+          GH_HOST: getCopilotGHHost(this.currentAccount),
+          GITHUB_COPILOT_INTEGRATION_ID: `copilot-desktop${
+            __DEV__ ? '-dev' : ''
+          }`,
         },
         workingDirectory: repositoryPath,
         gitHubToken: this.currentAccount.token,
       })
     }
 
-    const indexPath = getCopilotCLIIndexPath()
+    const indexPath = await getCopilotCLIIndexPath()
 
-    // Make sure the import path exists before creating the client, so we don't
-    // end up with a half-broken client that can't start. We check the
-    // filesystem path here, before converting it to a file:// URL on Windows,
-    // because `fs.access` doesn't accept URL-form strings.
-    if (!(await pathExists(indexPath))) {
+    // Make sure the CLI entry point exists before creating the client, so we
+    // don't end up with a half-broken client that can't start.
+    if (indexPath === null || !(await pathExists(indexPath))) {
       throw new Error('Cannot create Copilot client: CLI entry point not found')
     }
 
@@ -828,20 +839,17 @@ export class CopilotStore extends BaseStore {
       )
     }
 
-    // On Windows, `import` requires a valid file:// URL rather than a bare
-    // absolute path.
-    const importSpecifier = __WIN32__
-      ? pathToFileURL(indexPath).href
-      : indexPath
-
     const clientOptions = {
       connection: RuntimeConnection.forStdio({
-        path: await getCopilotCLIPath(),
-        args: ['--eval', `import '${importSpecifier}'`, '--'],
+        path: indexPath,
       }),
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         COPILOT_RUN_APP: '1',
+        GH_HOST: getCopilotGHHost(this.currentAccount),
+        GITHUB_COPILOT_INTEGRATION_ID: `copilot-desktop${
+          __DEV__ ? '-dev' : ''
+        }`,
       },
       workingDirectory: repositoryPath,
       gitHubToken: this.currentAccount.token,
@@ -1032,9 +1040,14 @@ export class CopilotStore extends BaseStore {
   }
 
   private isMissingCLIError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false
+    }
+
     return (
-      error instanceof Error &&
-      error.message.includes('CLI entry point not found')
+      error.message.includes('CLI entry point not found') ||
+      error.message.includes('Could not find @github/copilot package') ||
+      error.message.includes('Copilot CLI not found')
     )
   }
 

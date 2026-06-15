@@ -249,10 +249,7 @@ export class CopilotPreferences extends React.Component<
     byokProviders: ReadonlyArray<IBYOKProvider>
   ): string {
     if (copilotModels.length === 0 && byokProviders.length === 0) {
-      // This should not happen because we check for this case earlier, but let's
-      // make that assumption explicit and crash if it is violated rather than
-      // returning null.
-      throw new Error('No models available')
+      return HiddenCopilotModelKey
     }
 
     const preferredCopilotModel = copilotModels.find(
