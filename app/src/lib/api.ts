@@ -78,12 +78,24 @@ type CopilotChatCompletionResponse = {
   }>
 }
 
-type CopilotModelsResponse =
-  | ReadonlyArray<unknown>
-  | {
-      readonly data?: ReadonlyArray<unknown>
-      readonly models?: ReadonlyArray<unknown>
-    }
+function getCopilotModelsPayload(response: unknown): ReadonlyArray<unknown> {
+  if (Array.isArray(response)) {
+    return response
+  }
+
+  if (typeof response !== 'object' || response === null) {
+    return []
+  }
+
+  const objectResponse = response as Record<string, unknown>
+  const data = objectResponse.data
+  if (Array.isArray(data)) {
+    return data
+  }
+
+  const models = objectResponse.models
+  return Array.isArray(models) ? models : []
+}
 
 /**
  * Optional set of configurable settings for the fetchAll method
@@ -2099,16 +2111,10 @@ export class API {
       )
     }
 
-    const json = (await response.json()) as CopilotModelsResponse
-    const rawModels = Array.isArray(json)
-      ? json
-      : Array.isArray(json.data)
-        ? json.data
-        : Array.isArray(json.models)
-          ? json.models
-          : []
+    const json = await response.json()
+    const rawModels = getCopilotModelsPayload(json)
 
-    return rawModels.flatMap(model => {
+    return rawModels.flatMap((model: unknown) => {
       if (typeof model !== 'object' || model === null) {
         return []
       }
