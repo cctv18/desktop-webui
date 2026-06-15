@@ -37,6 +37,7 @@ import {
 import { startTimer } from '../../ui/lib/timing'
 import { chmod, stat } from 'fs/promises'
 import { isAbsolute, join } from 'path'
+import { pathToFileURL } from 'url'
 import { randomBytes } from 'crypto'
 import { BaseStore } from './base-store'
 import { IRepoRulesMetadataRule } from '../../models/repo-rules'
@@ -531,11 +532,13 @@ export function getSupportedReasoningEffort(
 export function getPreferredDefaultModel(
   models: ReadonlyArray<ModelInfo>
 ): ModelInfo | null {
-  if (models.length === 0) {
+  const selectableModels = getSelectableCopilotModels(models)
+
+  if (selectableModels.length === 0) {
     return null
   }
 
-  const defaultModel = models.find(m => m.id === DefaultCopilotModel)
+  const defaultModel = selectableModels.find(m => m.id === DefaultCopilotModel)
   if (defaultModel !== undefined) {
     return defaultModel
   }
@@ -543,10 +546,20 @@ export function getPreferredDefaultModel(
   // Default model unavailable — pick the cheapest one. Models without billing
   // info are treated as most expensive (unknown cost) so we don't accidentally
   // pick a costly model.
-  return [...models].sort(
+  return [...selectableModels].sort(
     (a, b) =>
       (a.billing?.multiplier ?? Infinity) - (b.billing?.multiplier ?? Infinity)
   )[0]
+}
+
+function isSelectableCopilotModel(model: ModelInfo): boolean {
+  return model.id.trim().toLowerCase() !== 'auto'
+}
+
+function getSelectableCopilotModels(
+  models: ReadonlyArray<ModelInfo>
+): ReadonlyArray<ModelInfo> {
+  return models.filter(isSelectableCopilotModel)
 }
 
 /**
@@ -846,9 +859,17 @@ export class CopilotStore extends BaseStore {
       )
     }
 
+    // Match Desktop's CLI launch path. Running the JavaScript entry point
+    // directly makes the Copilot CLI parse RPC arguments incorrectly; importing
+    // it through Node's --eval path preserves the SDK stdio protocol.
+    const importSpecifier = __WIN32__
+      ? pathToFileURL(indexPath).href
+      : indexPath
+
     const clientOptions = {
       connection: RuntimeConnection.forStdio({
-        path: indexPath,
+        path: process.execPath,
+        args: ['--eval', `import '${importSpecifier}'`, '--'],
       }),
       env: {
         ELECTRON_RUN_AS_NODE: '1',
@@ -1734,17 +1755,18 @@ export class CopilotStore extends BaseStore {
     this.modelsInFlight = this.fetchModels()
       .then(models => {
         if (models !== null) {
-          this.cachedModels = models
+          const selectableModels = getSelectableCopilotModels(models)
+          this.cachedModels = selectableModels
           this.modelsCachedAt = Date.now()
           log.debug(
-            `CopilotStore: Cached ${models.length} model(s): ${models
+            `CopilotStore: Cached ${selectableModels.length} model(s): ${selectableModels
               .map(m => m.id)
               .join(', ')}`
           )
           this.emitUpdate()
         }
 
-        return models
+        return this.cachedModels
       })
       .catch(e => {
         log.warn('CopilotStore: Failed to fetch and cache models', e)
@@ -1773,11 +1795,11 @@ export class CopilotStore extends BaseStore {
 
     try {
       await client.start()
-      const models = await client.listModels()
+      const models = getSelectableCopilotModels(await client.listModels())
       if (models.length === 0) {
         const fallbackModels = await this.fetchModelsFromCopilotEndpoint()
         if (fallbackModels !== null && fallbackModels.length > 0) {
-          return fallbackModels
+          return getSelectableCopilotModels(fallbackModels)
         }
       }
       return models

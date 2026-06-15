@@ -2125,14 +2125,19 @@ export class API {
         return []
       }
 
+      const modelId = id.trim()
+      if (modelId.length === 0 || modelId.toLowerCase() === 'auto') {
+        return []
+      }
+
       const name =
         typeof raw.name === 'string'
           ? raw.name
           : typeof raw.label === 'string'
             ? raw.label
-            : id
+            : modelId
 
-      return [{ ...raw, id, name } as ModelInfo]
+      return [{ ...raw, id: modelId, name } as ModelInfo]
     })
   }
 
