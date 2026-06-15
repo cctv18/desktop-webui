@@ -52,6 +52,10 @@ export async function appendFile() {
   unavailable()
 }
 
+export async function chmod(path: string, mode: string | number) {
+  return invokeWebUIRPC<void>('filesystem.chmod', [path, mode])
+}
+
 export async function cp() {
   unavailable()
 }
@@ -118,6 +122,7 @@ export async function writeFile(path: string, data: string) {
 export default {
   access,
   appendFile,
+  chmod,
   constants,
   cp,
   lstat,

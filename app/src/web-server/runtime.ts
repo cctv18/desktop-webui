@@ -4,6 +4,7 @@ import * as Path from 'path'
 import { spawn } from 'child_process'
 import {
   access,
+  chmod,
   lstat,
   mkdir,
   readFile,
@@ -268,6 +269,8 @@ export class WebRuntime {
       case 'filesystem':
         return {
           access: (path: string) => this.accessAllowedPath(path),
+          chmod: (path: string, mode: string | number) =>
+            this.chmodAllowedPath(path, mode),
           lstat: (path: string) => this.statAllowedPath(path, false),
           mkdir: (
             path: string,
@@ -531,6 +534,11 @@ export class WebRuntime {
   private async accessAllowedPath(path: string) {
     await this.pathGuard.assertAllowed(path)
     await access(path)
+  }
+
+  private async chmodAllowedPath(path: string, mode: string | number) {
+    await this.pathGuard.assertAllowed(path)
+    await chmod(path, mode)
   }
 
   private async readdirAllowedPath(path: string) {

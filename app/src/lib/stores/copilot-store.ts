@@ -116,6 +116,13 @@ interface IResolvedConflictModelConfig {
  */
 export type CopilotModelSelections = Partial<Record<CopilotFeature, string>>
 
+interface IProcessReportLike {
+  readonly header?: {
+    readonly glibcVersionRuntime?: string
+  }
+  readonly sharedObjects?: ReadonlyArray<unknown>
+}
+
 /**
  * How long to cache the model list before re-fetching from the SDK.
  * Matches the MaxFetchFrequency pattern used by other stores (e.g. GitHubUserStore).
@@ -237,10 +244,10 @@ function getCopilotPackagePlatforms(): ReadonlyArray<string> {
 }
 
 function isMuslLinux(): boolean {
-  const report = process.report?.getReport()
-  const header = report?.header as
-    | { readonly glibcVersionRuntime?: string }
+  const report = process.report?.getReport() as
+    | IProcessReportLike
     | undefined
+  const header = report?.header
 
   if (header?.glibcVersionRuntime !== undefined) {
     return false
