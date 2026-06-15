@@ -242,7 +242,10 @@ export class ApiRepositoriesStore extends BaseStore {
    * Request that the store loads the list of repositories that
    * the provided account has explicit permissions to access.
    */
-  public async loadRepositories(account: Account, retryAttempt = 0) {
+  public async loadRepositories(
+    account: Account,
+    retryAttempt = 0
+  ): Promise<void> {
     const currentState = this.getAccountState(account)
 
     if (currentState?.loading && retryAttempt === 0) {
