@@ -1079,7 +1079,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     this.copilotStore.onDidUpdate(() => {
       this.copilotModels = this.copilotStore.isAvailable
-        ? this.copilotStore.cachedModelList ?? this.copilotModels
+        ? this.copilotStore.cachedModelList
         : null
       this.emitUpdate()
     })

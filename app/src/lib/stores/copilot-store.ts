@@ -47,7 +47,7 @@ import { isGHE } from '../endpoint-capabilities'
 
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
-const CopilotIntegrationId = 'copilot-desktop'
+const getCopilotIntegrationId = () => `copilot-desktop${__DEV__ ? '-dev' : ''}`
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -127,6 +127,11 @@ interface IProcessReportLike {
  * Matches the MaxFetchFrequency pattern used by other stores (e.g. GitHubUserStore).
  */
 const ModelListCacheTTL = 10 * 60 * 1000
+
+/** Returns the cache key used for account-scoped Copilot model metadata. */
+export function getCopilotModelCacheKey(account: Account): string {
+  return `${account.id}:${account.endpoint}`
+}
 
 /**
  * Returns the Copilot CLI host override for the account, if one is needed.
@@ -747,6 +752,7 @@ export async function runConflictResolutionTurn(
  */
 export class CopilotStore extends BaseStore {
   private currentAccount: Account | null = null
+  private currentAccountKey: string | null = null
 
   private cachedModels: ReadonlyArray<ModelInfo> | null = null
   private modelsCachedAt: number = 0
@@ -772,14 +778,17 @@ export class CopilotStore extends BaseStore {
   private onAccountsUpdated = (accounts: ReadonlyArray<Account>): void => {
     // Copilot is only available on GitHub.com, so we look for a dotcom account
     const dotComAccount = accounts.find(isDotComAccount) ?? null
+    const dotComAccountKey =
+      dotComAccount === null ? null : getCopilotModelCacheKey(dotComAccount)
 
-    if (dotComAccount?.login !== this.currentAccount?.login) {
+    if (dotComAccountKey !== this.currentAccountKey) {
       this.cachedModels = null
       this.modelsCachedAt = 0
       this.modelsInFlight = null
     }
 
     this.currentAccount = dotComAccount
+    this.currentAccountKey = dotComAccountKey
 
     if (dotComAccount === null) {
       log.debug('CopilotStore: No GitHub.com account available')
@@ -816,7 +825,7 @@ export class CopilotStore extends BaseStore {
           ELECTRON_RUN_AS_NODE: '1',
           COPILOT_RUN_APP: '1',
           GH_HOST: getCopilotGHHost(this.currentAccount),
-          GITHUB_COPILOT_INTEGRATION_ID: CopilotIntegrationId,
+          GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
         },
         workingDirectory: repositoryPath,
         gitHubToken: this.currentAccount.token,
@@ -845,7 +854,7 @@ export class CopilotStore extends BaseStore {
         ELECTRON_RUN_AS_NODE: '1',
         COPILOT_RUN_APP: '1',
         GH_HOST: getCopilotGHHost(this.currentAccount),
-        GITHUB_COPILOT_INTEGRATION_ID: CopilotIntegrationId,
+        GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
       },
       workingDirectory: repositoryPath,
       gitHubToken: this.currentAccount.token,
@@ -977,64 +986,101 @@ export class CopilotStore extends BaseStore {
       throw e
     }
 
-    let session: Awaited<ReturnType<CopilotClient['createSession']>> | null =
-      null
-
     try {
       const tags = generateCommitMessagePromptTags()
       const cleanedRuleDescriptions =
         getCleanedEnforcedRuleDescriptions(commitMessageRules)
       const hasRules = cleanedRuleDescriptions.length > 0
-
-      // Create a session for commit message generation
-      session = await client.createSession({
-        ...(modelId !== undefined ? { model: modelId } : {}),
-        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
-        ...(provider !== undefined ? { provider } : {}),
-        systemMessage: {
-          // It's important to 'append' the system prompt so that it doesn't
-          // override any instructions, like copilot-instructions.md (in which
-          // we rely for custom commit message generation instructions).
-          mode: 'append',
-          content: buildCommitMessageSystemPrompt(hasRules, tags),
-        },
-        availableTools: [],
-        onPermissionRequest: async () => ({
-          kind: 'reject',
-        }),
-      })
-
-      // Send the diff (and any repo-rule constraints) and wait for response.
-      // Both are wrapped in per-request tagged blocks so the model can
-      // distinguish data from instructions even if either contains literal
-      // tag-like text.
       const userPrompt = buildCommitMessageUserPrompt(
         diff,
         tags,
         cleanedRuleDescriptions
       )
+      const systemPrompt = buildCommitMessageSystemPrompt(hasRules, tags)
 
-      const response = await this.sendAndWait(
-        session,
-        { prompt: userPrompt },
-        timeoutMs
-      )
+      const runSession = async (
+        sessionModelId: string | undefined,
+        sessionReasoningEffort: ReasoningEffort | undefined
+      ): Promise<ICopilotCommitMessage> => {
+        let session: Awaited<ReturnType<CopilotClient['createSession']>> | null =
+          null
 
-      if (!response || !response.data.content) {
-        throw new Error('No response from Copilot')
+        try {
+          // Create a session for commit message generation
+          session = await client.createSession({
+            ...(sessionModelId !== undefined ? { model: sessionModelId } : {}),
+            ...(sessionReasoningEffort !== undefined
+              ? { reasoningEffort: sessionReasoningEffort }
+              : {}),
+            ...(provider !== undefined ? { provider } : {}),
+            systemMessage: {
+              // It's important to 'append' the system prompt so that it doesn't
+              // override any instructions, like copilot-instructions.md (in which
+              // we rely for custom commit message generation instructions).
+              mode: 'append',
+              content: systemPrompt,
+            },
+            availableTools: [],
+            onPermissionRequest: async () => ({
+              kind: 'reject',
+            }),
+          })
+
+          // Send the diff (and any repo-rule constraints) and wait for response.
+          // Both are wrapped in per-request tagged blocks so the model can
+          // distinguish data from instructions even if either contains literal
+          // tag-like text.
+          const response = await this.sendAndWait(
+            session,
+            { prompt: userPrompt },
+            timeoutMs
+          )
+
+          if (!response || !response.data.content) {
+            throw new Error('No response from Copilot')
+          }
+
+          return parseCopilotCommitMessage(response.data.content)
+        } finally {
+          await session?.disconnect().catch(() => {})
+        }
       }
 
-      return parseCopilotCommitMessage(response.data.content)
+      try {
+        return await runSession(modelId, reasoningEffort)
+      } catch (e) {
+        if (
+          provider === undefined &&
+          modelId !== undefined &&
+          this.isUnsupportedModelError(e)
+        ) {
+          log.warn(
+            `CopilotStore: Model '${modelId}' is not supported for this account; retrying with Copilot model auto-selection`,
+            e
+          )
+          this.cachedModels = null
+          this.modelsCachedAt = 0
+          this.emitUpdate()
+          return await runSession(undefined, undefined)
+        }
+
+        throw e
+      }
     } catch (e) {
       log.warn('CopilotStore: Failed to generate commit message', e)
       throw e
     } finally {
-      // Clean up the session
-      await session?.disconnect().catch(() => {})
-
       // Stop the client after use
       await this.stopClient(client)
     }
+  }
+
+  private isUnsupportedModelError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false
+    }
+
+    return /requested model is not supported/i.test(error.message)
   }
 
   private isMissingCLIError(error: unknown): boolean {
@@ -1047,6 +1093,26 @@ export class CopilotStore extends BaseStore {
       error.message.includes('Could not find @github/copilot package') ||
       error.message.includes('Copilot CLI not found')
     )
+  }
+
+  private async fetchModelsFromCopilotEndpoint(): Promise<
+    ReadonlyArray<ModelInfo> | null
+  > {
+    if (this.currentAccount === null || !this.currentAccount.token) {
+      return null
+    }
+
+    try {
+      const api = new API(
+        this.currentAccount.endpoint,
+        this.currentAccount.token,
+        this.currentAccount.copilotEndpoint ?? 'https://api.githubcopilot.com'
+      )
+      return await api.fetchCopilotModels()
+    } catch (e) {
+      log.warn('CopilotStore: Failed to fetch models from Copilot endpoint', e)
+      return null
+    }
   }
 
   private async generateCommitMessageWithoutSDK(
@@ -1665,10 +1731,25 @@ export class CopilotStore extends BaseStore {
       return this.modelsInFlight
     }
 
-    this.modelsInFlight = this.fetchModels().catch(e => {
-      log.warn('CopilotStore: Failed to fetch and cache models', e)
-      return null
-    })
+    this.modelsInFlight = this.fetchModels()
+      .then(models => {
+        if (models !== null) {
+          this.cachedModels = models
+          this.modelsCachedAt = Date.now()
+          log.debug(
+            `CopilotStore: Cached ${models.length} model(s): ${models
+              .map(m => m.id)
+              .join(', ')}`
+          )
+          this.emitUpdate()
+        }
+
+        return models
+      })
+      .catch(e => {
+        log.warn('CopilotStore: Failed to fetch and cache models', e)
+        return this.cachedModels
+      })
 
     try {
       return await this.modelsInFlight
@@ -1684,7 +1765,7 @@ export class CopilotStore extends BaseStore {
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         log.warn('CopilotStore: Cannot list models because the CLI is missing')
-        return this.cachedModels
+        return this.cachedModels ?? (await this.fetchModelsFromCopilotEndpoint())
       }
 
       throw e
@@ -1693,12 +1774,16 @@ export class CopilotStore extends BaseStore {
     try {
       await client.start()
       const models = await client.listModels()
-      this.cachedModels = models
-      this.modelsCachedAt = Date.now()
+      if (models.length === 0) {
+        const fallbackModels = await this.fetchModelsFromCopilotEndpoint()
+        if (fallbackModels !== null && fallbackModels.length > 0) {
+          return fallbackModels
+        }
+      }
       return models
     } catch (e) {
       log.warn('CopilotStore: Failed to list models', e)
-      return this.cachedModels
+      return this.cachedModels ?? (await this.fetchModelsFromCopilotEndpoint())
     } finally {
       await this.stopClient(client)
     }

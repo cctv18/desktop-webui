@@ -587,7 +587,8 @@ function reviveAccount(value: SerializedObject, context: ReviveContext) {
     value.plan as any,
     value.copilotEndpoint as any,
     value.isCopilotDesktopEnabled as any,
-    reviveValue(value.features, context) as any
+    reviveValue(value.features, context) as any,
+    value.copilotLicenseType as any
   )
 
   context.accounts.set(key, account)
@@ -607,6 +608,7 @@ function serializeAccount(account: Account) {
     copilotEndpoint: account.copilotEndpoint,
     isCopilotDesktopEnabled: account.isCopilotDesktopEnabled,
     features: serializeValue(account.features, new WeakSet<object>()),
+    copilotLicenseType: account.copilotLicenseType,
   })
 }
 

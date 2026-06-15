@@ -60,6 +60,10 @@ interface IAccount {
   readonly id: number
   readonly name: string
   readonly plan?: string
+  readonly copilotEndpoint?: string
+  readonly isCopilotDesktopEnabled?: boolean
+  readonly features?: ReadonlyArray<string>
+  readonly copilotLicenseType?: string
 }
 
 /** The store for logged in accounts. */
@@ -225,7 +229,11 @@ export class AccountsStore extends TypedBaseStore<ReadonlyArray<Account>> {
         account.avatarURL,
         account.id,
         account.name,
-        account.plan
+        account.plan,
+        account.copilotEndpoint,
+        account.isCopilotDesktopEnabled,
+        account.features,
+        account.copilotLicenseType
       )
 
       const key = getKeyForAccount(accountWithoutToken)

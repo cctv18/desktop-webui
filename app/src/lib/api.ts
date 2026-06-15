@@ -4,6 +4,7 @@ import {
   ICopilotCommitMessage,
   parseCopilotCommitMessage,
 } from './copilot-commit-message'
+import type { ModelInfo } from '@github/copilot-sdk'
 
 import {
   request,
@@ -54,6 +55,7 @@ type ViewerCopilotResponse = {
       readonly copilotEndpoints?: {
         readonly api: string
       }
+      readonly copilotLicenseType?: string
       readonly isCopilotDesktopEnabled?: boolean
     } | null
   }
@@ -63,6 +65,7 @@ type ViewerCopilotResponse = {
 type UserCopilotInfo = {
   readonly isCopilotDesktopEnabled?: boolean
   readonly copilotEndpoint: string
+  readonly copilotLicenseType?: string
 }
 
 /** Response type Copilot chat completions response API */
@@ -74,6 +77,13 @@ type CopilotChatCompletionResponse = {
     }
   }>
 }
+
+type CopilotModelsResponse =
+  | ReadonlyArray<unknown>
+  | {
+      readonly data?: ReadonlyArray<unknown>
+      readonly models?: ReadonlyArray<unknown>
+    }
 
 /**
  * Optional set of configurable settings for the fetchAll method
@@ -2065,6 +2075,62 @@ export class API {
   }
 
   /**
+   * Fetches the model list exposed by the user's Copilot endpoint. The SDK is
+   * still the preferred source of model metadata; this is used by WebUI as a
+   * fallback when the bundled CLI starts but its model RPC returns no entries.
+   */
+  public async fetchCopilotModels(): Promise<ReadonlyArray<ModelInfo>> {
+    if (!this.copilotEndpoint) {
+      throw new Error('No Copilot endpoint available')
+    }
+
+    const response = await this.request(this.copilotEndpoint, 'GET', '/models', {
+      customHeaders: {
+        'X-Initiator': 'user',
+        'X-Interaction-ID': crypto.randomUUID(),
+        'X-Interaction-Type': 'listModels',
+      },
+    })
+
+    if (response.status >= HttpStatusCode.BadRequest) {
+      throw new CopilotError(
+        `Copilot model request failed with status ${response.status}.`,
+        response.status
+      )
+    }
+
+    const json = (await response.json()) as CopilotModelsResponse
+    const rawModels = Array.isArray(json)
+      ? json
+      : Array.isArray(json.data)
+        ? json.data
+        : Array.isArray(json.models)
+          ? json.models
+          : []
+
+    return rawModels.flatMap(model => {
+      if (typeof model !== 'object' || model === null) {
+        return []
+      }
+
+      const raw = model as Record<string, unknown>
+      const id = raw.id
+      if (typeof id !== 'string' || id.length === 0) {
+        return []
+      }
+
+      const name =
+        typeof raw.name === 'string'
+          ? raw.name
+          : typeof raw.label === 'string'
+            ? raw.label
+            : id
+
+      return [{ ...raw, id, name } as ModelInfo]
+    })
+  }
+
+  /**
    * Leverages Copilot to generate the commit details (title and description)
    * for a given diff.
    *
@@ -2222,6 +2288,7 @@ export class API {
           api
         }
 
+        copilotLicenseType
         isCopilotDesktopEnabled
       }
     }
@@ -2250,6 +2317,7 @@ export class API {
       return {
         copilotEndpoint,
         isCopilotDesktopEnabled: viewer.isCopilotDesktopEnabled,
+        copilotLicenseType: viewer.copilotLicenseType,
       }
     } catch (e) {
       log.warn(`fetchUserCopilotInfo: failed with endpoint ${this.endpoint}`, e)
@@ -2354,7 +2422,8 @@ export async function fetchUser(
       user.plan?.name,
       copilotInfo?.copilotEndpoint,
       copilotInfo?.isCopilotDesktopEnabled,
-      features
+      features,
+      copilotInfo?.copilotLicenseType
     )
   } catch (e) {
     log.warn(`fetchUser: failed with endpoint ${endpoint}`, e)
