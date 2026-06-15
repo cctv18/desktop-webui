@@ -7,8 +7,8 @@ import {
 } from '../stores/copilot-store'
 import { IBYOKProvider, parseModelKey } from './byok'
 
-/** Fallback name shown before the Copilot model list has loaded. */
-const DefaultCopilotModelName = 'GPT-5 mini'
+/** Fallback name shown when Copilot will choose the model. */
+const AutoCopilotModelName = 'Auto'
 
 /** The model name and reasoning effort to display for conflict resolution. */
 export interface IConflictResolutionModelDisplay {
@@ -20,8 +20,8 @@ export interface IConflictResolutionModelDisplay {
  * Resolves the stored `conflict-resolution` selection into the model name and
  * reasoning effort the engine will actually use, so the loading dialog header
  * matches. Mirrors `resolveConflictModelConfig`/`resolveCopilotModelRequest`:
- * BYOK passes through, built-in clamps the effort and falls back to the default
- * model, and the name is normalized for display.
+ * BYOK passes through, built-in clamps the effort and falls back to Auto when
+ * no model metadata is available, and the name is normalized for display.
  */
 export function getConflictResolutionModelDisplay(
   selection: string | null,
@@ -58,10 +58,11 @@ export function getConflictResolutionModelDisplay(
   }
 
   // Metadata unavailable (list not loaded, or selection no longer offered):
-  // mirror the engine — fall back to the requested id or default model, and
-  // omit the effort since we can't confirm the model supports it.
+  // mirror the engine — use the requested id for explicit selections, or Auto
+  // when the user did not choose a model, and omit the effort since we can't
+  // confirm the model supports it.
   return {
-    modelName: requestedModelId ?? DefaultCopilotModelName,
+    modelName: requestedModelId ?? AutoCopilotModelName,
     reasoningEffort: undefined,
   }
 }

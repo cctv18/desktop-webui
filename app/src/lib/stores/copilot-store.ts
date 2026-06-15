@@ -47,7 +47,7 @@ import { isGHE } from '../endpoint-capabilities'
 
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
-const DefaultReasoningEffort: ReasoningEffort = 'low'
+const CopilotIntegrationId = 'copilot-desktop'
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -103,7 +103,7 @@ export type CopilotFeature = 'commit-message-generation' | 'conflict-resolution'
 
 /** Concrete session config produced by resolving a {@link CopilotModelRequest}. */
 interface IResolvedConflictModelConfig {
-  readonly modelId: string
+  readonly modelId: string | undefined
   readonly reasoningEffort: ReasoningEffort | undefined
   readonly provider: CopilotProviderConfig | undefined
   readonly timeoutMs: number | undefined
@@ -816,9 +816,7 @@ export class CopilotStore extends BaseStore {
           ELECTRON_RUN_AS_NODE: '1',
           COPILOT_RUN_APP: '1',
           GH_HOST: getCopilotGHHost(this.currentAccount),
-          GITHUB_COPILOT_INTEGRATION_ID: `copilot-desktop${
-            __DEV__ ? '-dev' : ''
-          }`,
+          GITHUB_COPILOT_INTEGRATION_ID: CopilotIntegrationId,
         },
         workingDirectory: repositoryPath,
         gitHubToken: this.currentAccount.token,
@@ -847,9 +845,7 @@ export class CopilotStore extends BaseStore {
         ELECTRON_RUN_AS_NODE: '1',
         COPILOT_RUN_APP: '1',
         GH_HOST: getCopilotGHHost(this.currentAccount),
-        GITHUB_COPILOT_INTEGRATION_ID: `copilot-desktop${
-          __DEV__ ? '-dev' : ''
-        }`,
+        GITHUB_COPILOT_INTEGRATION_ID: CopilotIntegrationId,
       },
       workingDirectory: repositoryPath,
       gitHubToken: this.currentAccount.token,
@@ -916,7 +912,8 @@ export class CopilotStore extends BaseStore {
    *
    * @param diff The diff of changes to be committed, in git format
    * @param request Optional model request. When omitted or `{ kind: 'copilot',
-   *   modelId: null }`, falls back to the cheapest available built-in model.
+   *   modelId: null }`, uses the cheapest available built-in model when the
+   *   model list is loaded, otherwise leaves model selection to Copilot.
    *   When `kind === 'byok'`, the supplied {@link CopilotProviderConfig} is
    *   forwarded to {@link CopilotClient.createSession} so the SDK talks to
    *   the user's own provider instead of GitHub's.
@@ -936,7 +933,7 @@ export class CopilotStore extends BaseStore {
     request?: CopilotModelRequest | null,
     commitMessageRules?: ReadonlyArray<IRepoRulesMetadataRule>
   ): Promise<ICopilotCommitMessage> {
-    let modelId: string
+    let modelId: string | undefined
     let reasoningEffort: ReasoningEffort | undefined
     let provider: CopilotProviderConfig | undefined
     let timeoutMs: number = DefaultCopilotRequestTimeoutMs
@@ -956,12 +953,13 @@ export class CopilotStore extends BaseStore {
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
 
-      // Use the resolved model's ID, the raw string ID the caller passed, or
-      // the default model as a last resort.
-      modelId = resolvedModel?.id ?? requestedModelId ?? DefaultCopilotModel
+      // Use the resolved model's ID, or the raw string ID the caller passed.
+      // When the user chose Auto and model metadata is unavailable, omit the
+      // model and let Copilot pick a supported default for the account.
+      modelId = resolvedModel?.id ?? requestedModelId ?? undefined
       reasoningEffort = resolvedModel
         ? getLowestReasoningEffort(resolvedModel)
-        : DefaultReasoningEffort
+        : undefined
     }
 
     let client: CopilotClient
@@ -990,9 +988,9 @@ export class CopilotStore extends BaseStore {
 
       // Create a session for commit message generation
       session = await client.createSession({
-        model: modelId,
-        reasoningEffort,
-        provider,
+        ...(modelId !== undefined ? { model: modelId } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        ...(provider !== undefined ? { provider } : {}),
         systemMessage: {
           // It's important to 'append' the system prompt so that it doesn't
           // override any instructions, like copilot-instructions.md (in which
@@ -1305,14 +1303,15 @@ export class CopilotStore extends BaseStore {
     // refresh: resolveConflicts is about to create its own client, so a cold
     // fetch here would double the startup latency. It also keeps us in sync
     // with the loading dialog, which reads the same cached list. A missing
-    // cache is treated as "metadata unavailable" (raw id, no effort).
+    // cache is treated as "metadata unavailable" (raw id for explicit
+    // selections, otherwise let Copilot choose, no effort).
     const cachedModels = this.cachedModels ?? []
     const resolvedModel = requestedModelId
       ? cachedModels.find(m => m.id === requestedModelId) ?? null
       : getPreferredDefaultModel(cachedModels)
 
     return {
-      modelId: resolvedModel?.id ?? requestedModelId ?? DefaultCopilotModel,
+      modelId: resolvedModel?.id ?? requestedModelId ?? undefined,
       // When the model isn't in the list we have no capability metadata, so we
       // can't confirm it supports reasoning effort. Omit it rather than send an
       // unsupported value — the SDK only accepts reasoningEffort for models
@@ -1339,7 +1338,8 @@ export class CopilotStore extends BaseStore {
    *                  commits, and pull requests from both sides)
    * @param repositoryPath - Path to the repository working directory
    * @param request - Optional model selection (built-in or BYOK). When omitted
-   *   the default conflict-resolution model is used.
+   *   Copilot chooses a supported model unless cached model metadata gives us
+   *   a preferred default.
    * @param onProgress - Optional callback for streaming progress to the UI
    * @returns The parsed conflict resolution response
    * @throws Error if no GitHub.com account is available or if resolution fails
@@ -1515,9 +1515,15 @@ export class CopilotStore extends BaseStore {
 
       const sessionTimer = startTimer(`createSession (attempt ${attempt + 1})`)
       const session = await client.createSession({
-        model: modelConfig.modelId,
-        reasoningEffort: modelConfig.reasoningEffort,
-        provider: modelConfig.provider,
+        ...(modelConfig.modelId !== undefined
+          ? { model: modelConfig.modelId }
+          : {}),
+        ...(modelConfig.reasoningEffort !== undefined
+          ? { reasoningEffort: modelConfig.reasoningEffort }
+          : {}),
+        ...(modelConfig.provider !== undefined
+          ? { provider: modelConfig.provider }
+          : {}),
         streaming: true,
         availableTools: [],
         systemMessage: {

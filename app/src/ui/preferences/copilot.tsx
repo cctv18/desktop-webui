@@ -22,6 +22,8 @@ import {
 } from '../../lib/copilot/byok'
 import { enableCopilotConflictResolution } from '../../lib/feature-flag'
 
+const AutoCopilotModelKey = '__copilot_auto__'
+
 interface ICopilotPreferencesProps {
   readonly selectedCopilotModels: CopilotModelSelections
   readonly copilotModels: ReadonlyArray<ModelInfo> | null
@@ -59,7 +61,7 @@ export class CopilotPreferences extends React.Component<
   ) => {
     this.props.onSelectedCopilotModelChanged(
       'commit-message-generation',
-      event.currentTarget.value
+      this.getSelectedModelValue(event)
     )
   }
 
@@ -68,8 +70,15 @@ export class CopilotPreferences extends React.Component<
   ) => {
     this.props.onSelectedCopilotModelChanged(
       'conflict-resolution',
-      event.currentTarget.value
+      this.getSelectedModelValue(event)
     )
+  }
+
+  private getSelectedModelValue(
+    event: React.FormEvent<HTMLSelectElement>
+  ): string | null {
+    const value = event.currentTarget.value
+    return value === AutoCopilotModelKey ? null : value
   }
 
   private onAddBYOKProviderClick = () => this.props.onAddBYOKProvider()
@@ -187,6 +196,7 @@ export class CopilotPreferences extends React.Component<
 
     return (
       <Select label={label} value={value} onChange={onChange}>
+        <option value={AutoCopilotModelKey}>Auto</option>
         <option value={HiddenCopilotModelKey}>
           None (hide Copilot button)
         </option>
@@ -227,18 +237,20 @@ export class CopilotPreferences extends React.Component<
     byokProviders: ReadonlyArray<IBYOKProvider>,
     raw: string | null
   ): string {
-    if (raw !== null) {
-      const key = parseModelKey(raw)
-      if (key.kind === 'byok') {
-        const provider = byokProviders.find(p => p.id === key.providerId)
-        if (provider && provider.models.some(m => m.id === key.modelId)) {
-          return encodeModelKey(key)
-        }
-      } else if (key.modelId === '') {
-        return HiddenCopilotModelKey
-      } else if (copilotModels.some(m => m.id === key.modelId)) {
-        return encodeModelKey({ kind: 'copilot', modelId: key.modelId })
+    if (raw === null) {
+      return AutoCopilotModelKey
+    }
+
+    const key = parseModelKey(raw)
+    if (key.kind === 'byok') {
+      const provider = byokProviders.find(p => p.id === key.providerId)
+      if (provider && provider.models.some(m => m.id === key.modelId)) {
+        return encodeModelKey(key)
       }
+    } else if (key.modelId === '') {
+      return HiddenCopilotModelKey
+    } else if (copilotModels.some(m => m.id === key.modelId)) {
+      return encodeModelKey({ kind: 'copilot', modelId: key.modelId })
     }
 
     return this.getFirstSelectableModelValue(copilotModels, byokProviders)
@@ -249,7 +261,7 @@ export class CopilotPreferences extends React.Component<
     byokProviders: ReadonlyArray<IBYOKProvider>
   ): string {
     if (copilotModels.length === 0 && byokProviders.length === 0) {
-      return HiddenCopilotModelKey
+      return AutoCopilotModelKey
     }
 
     const preferredCopilotModel = copilotModels.find(
