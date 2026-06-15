@@ -49,7 +49,6 @@ import { isGHE } from '../endpoint-capabilities'
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
 const getCopilotIntegrationId = () => 'copilot-desktop'
-const DefaultReasoningEffort: ReasoningEffort = 'low'
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -134,6 +133,7 @@ interface IProcessReportLike {
  * Matches the MaxFetchFrequency pattern used by other stores (e.g. GitHubUserStore).
  */
 const ModelListCacheTTL = 10 * 60 * 1000
+const ModelListFetchTimeoutMs = 15 * 1000
 
 /** Returns the cache key used for account-scoped Copilot model metadata. */
 export function getCopilotModelCacheKey(account: Account): string {
@@ -996,7 +996,7 @@ export class CopilotStore extends BaseStore {
     request?: CopilotModelRequest | null,
     commitMessageRules?: ReadonlyArray<IRepoRulesMetadataRule>
   ): Promise<ICopilotCommitMessage> {
-    let modelId: string
+    let modelId: string | undefined
     let reasoningEffort: ReasoningEffort | undefined
     let provider: CopilotProviderConfig | undefined
     let timeoutMs: number = DefaultCopilotRequestTimeoutMs
@@ -1012,25 +1012,19 @@ export class CopilotStore extends BaseStore {
       const requestedModelId =
         request?.kind === 'copilot' ? request.modelId : null
       const cachedModels = await this.getCachedModels(account)
-      if (cachedModels.length === 0) {
-        return this.generateCommitMessageWithoutSDK(
-          account,
-          diff,
-          request ?? null,
-          commitMessageRules
-        )
-      }
-
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
 
-      // Use the resolved model's ID, the raw string ID the caller passed, or
-      // the default model as a last resort.
-      modelId = resolvedModel?.id ?? requestedModelId ?? DefaultCopilotModel
+      // Use the resolved model's ID or the raw string ID the caller passed.
+      // When model discovery returns no entries we deliberately omit the model
+      // field and let the Copilot runtime choose for the account. Falling back
+      // to Desktop's old HTTP endpoint can produce 404s for accounts that only
+      // work through the SDK/CAPI path.
+      modelId = resolvedModel?.id ?? requestedModelId ?? undefined
       reasoningEffort = resolvedModel
         ? getLowestReasoningEffort(resolvedModel)
-        : DefaultReasoningEffort
+        : undefined
     }
 
     let client: CopilotClient
@@ -1062,7 +1056,7 @@ export class CopilotStore extends BaseStore {
       const systemPrompt = buildCommitMessageSystemPrompt(hasRules, tags)
 
       const runSession = async (
-        sessionModelId: string,
+        sessionModelId: string | undefined,
         sessionReasoningEffort: ReasoningEffort | undefined
       ): Promise<ICopilotCommitMessage> => {
         let session: Awaited<ReturnType<CopilotClient['createSession']>> | null =
@@ -1071,7 +1065,7 @@ export class CopilotStore extends BaseStore {
         try {
           // Create a session for commit message generation
           session = await client.createSession({
-            model: sessionModelId,
+            ...(sessionModelId !== undefined ? { model: sessionModelId } : {}),
             ...(sessionReasoningEffort !== undefined
               ? { reasoningEffort: sessionReasoningEffort }
               : {}),
@@ -1114,6 +1108,7 @@ export class CopilotStore extends BaseStore {
       } catch (e) {
         if (
           provider === undefined &&
+          modelId !== undefined &&
           this.isUnsupportedModelError(e)
         ) {
           log.warn(
@@ -1123,12 +1118,7 @@ export class CopilotStore extends BaseStore {
           const key = getCopilotModelCacheKey(account)
           this.modelCaches.delete(key)
           this.emitUpdate()
-          return this.generateCommitMessageWithoutSDK(
-            account,
-            diff,
-            request ?? null,
-            commitMessageRules
-          )
+          return await runSession(undefined, undefined)
         }
 
         throw e
@@ -1796,16 +1786,22 @@ export class CopilotStore extends BaseStore {
         ) {
           const selectableModels =
             getSelectableCopilotModels(models).filter(dedupeCopilotModel())
-          this.modelCaches.set(key, {
-            models: selectableModels,
-            cachedAt: Date.now(),
-          })
-          log.debug(
-            `CopilotStore: Cached ${selectableModels.length} model(s): ${selectableModels
-              .map(m => m.id)
-              .join(', ')}`
-          )
-          this.emitUpdate()
+          if (selectableModels.length > 0) {
+            this.modelCaches.set(key, {
+              models: selectableModels,
+              cachedAt: Date.now(),
+            })
+            log.debug(
+              `CopilotStore: Cached ${selectableModels.length} model(s): ${selectableModels
+                .map(m => m.id)
+                .join(', ')}`
+            )
+            this.emitUpdate()
+          } else {
+            log.warn(
+              'CopilotStore: Model list request returned no selectable models; keeping previous cache'
+            )
+          }
         }
 
         return this.modelCaches.get(key)?.models ?? null
@@ -1842,9 +1838,33 @@ export class CopilotStore extends BaseStore {
 
     try {
       await client.start()
-      return await client.listModels()
+      return await withTimeout(
+        client.listModels(),
+        ModelListFetchTimeoutMs,
+        'Copilot model list request timed out'
+      )
     } finally {
       await this.stopClient(client)
     }
   }
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 }

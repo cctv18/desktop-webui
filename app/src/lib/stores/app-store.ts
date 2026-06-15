@@ -752,6 +752,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private selectedCopilotModels: CopilotModelSelections = {}
   private copilotModels: ReadonlyArray<ModelInfo> | null = null
+  private copilotModelFetchTimer: ReturnType<typeof setTimeout> | null = null
   private byokProviders: ReadonlyArray<IBYOKProvider> = []
 
   public constructor(
@@ -1043,7 +1044,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.accountsStore.onDidUpdate(accounts => {
       this.accounts = accounts
       this.syncCopilotModelsFromCache()
-      this.updateCopilotModelsForCurrentAccount()
       const endpointTokens = accounts.map<EndpointToken>(
         ({ endpoint, token }) => ({ endpoint, token })
       )
@@ -1053,6 +1053,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.refreshSelectedRepositoryAfterAccountChange()
 
       this.emitUpdate()
+      this.updateCopilotModelsForCurrentAccount()
     })
     this.accountsStore.onDidError(error => this.emitError(error))
 
@@ -1110,6 +1111,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private updateCopilotModelsForCurrentAccount(): void {
     const account = this.getCopilotModelsAccount()
 
+    if (this.copilotModelFetchTimer !== null) {
+      clearTimeout(this.copilotModelFetchTimer)
+      this.copilotModelFetchTimer = null
+    }
+
     if (
       account === undefined ||
       this.copilotStore.getCachedModelList(account) !== null
@@ -1117,12 +1123,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return
     }
 
-    this.fetchCopilotModelsForCurrentAccount().catch(e => {
-      log.warn(
-        'AppStore: Failed to fetch Copilot models after account update',
-        e
-      )
-    })
+    this.copilotModelFetchTimer = setTimeout(() => {
+      this.copilotModelFetchTimer = null
+      this.fetchCopilotModelsForCurrentAccount().catch(e => {
+        log.warn(
+          'AppStore: Failed to fetch Copilot models after account update',
+          e
+        )
+      })
+    }, 1000)
   }
 
   /** Load the emoji from disk. */

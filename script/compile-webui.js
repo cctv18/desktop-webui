@@ -31,7 +31,8 @@ const shouldPrintDiagnosticsToConsole =
 const consoleChunkSize = 1800
 const requiredRuntimeNodeMajor = 20
 const preferredRuntimeNodeMajor = 22
-const copilotRuntimePackageSpec = '@github/copilot@^1.0.62'
+const copilotRuntimePackageVersion = '1.0.45'
+const copilotRuntimePackageSpec = `@github/copilot@${copilotRuntimePackageVersion}`
 
 process.env.NO_COLOR = process.env.NO_COLOR || '1'
 process.env.FORCE_COLOR = process.env.FORCE_COLOR || '0'
@@ -479,7 +480,7 @@ function getDefaultServerConfig() {
     'static-root=web',
     '# Leave commented to auto-detect runtime-installed Copilot support.',
     '# If the files are missing, run-webui will try a local npm install into this directory.',
-    '# copilot-cli-path=copilot/index.js',
+    '# copilot-cli-path=node_modules/@github/copilot/index.js',
     '',
   ].join('\n')
 }
@@ -634,11 +635,18 @@ function getRunWebUISh() {
     'ensure_copilot_runtime() {',
     '  [ -n "$COPILOT_CLI_PATH" ] && return 0',
     '',
-    '  if [ -f "$SCRIPT_DIR/copilot/index.js" ]; then',
-    '    return 0',
+    '  managed_copilot_dir="$SCRIPT_DIR/node_modules/@github/copilot"',
+    '  managed_copilot_index="$managed_copilot_dir/index.js"',
+    '  managed_copilot_package="$managed_copilot_dir/package.json"',
+    `  required_copilot_version="${copilotRuntimePackageVersion}"`,
+    '  installed_copilot_version=',
+    '',
+    '  if [ -f "$managed_copilot_package" ]; then',
+    '    installed_copilot_version=$(node -e "try { const pkg = require(process.argv[1]); console.log(pkg.version || \'\') } catch { process.exit(1) }" "$managed_copilot_package" 2>/dev/null || true)',
     '  fi',
     '',
-    '  if [ -f "$SCRIPT_DIR/node_modules/@github/copilot/index.js" ]; then',
+    '  if [ -f "$managed_copilot_index" ] && [ "$installed_copilot_version" = "$required_copilot_version" ]; then',
+    '    COPILOT_CLI_PATH=$managed_copilot_index',
     '    return 0',
     '  fi',
     '',
@@ -649,7 +657,8 @@ function getRunWebUISh() {
     '',
     `  echo "Copilot CLI is not installed. Installing ${copilotRuntimePackageSpec} into $SCRIPT_DIR."`,
     `  if npm install --omit=dev --omit=optional --no-audit --no-fund --prefix "$SCRIPT_DIR" "${copilotRuntimePackageSpec}"; then`,
-    '    if [ -f "$SCRIPT_DIR/node_modules/@github/copilot/index.js" ]; then',
+    '    if [ -f "$managed_copilot_index" ]; then',
+    '      COPILOT_CLI_PATH=$managed_copilot_index',
     '      return 0',
     '    fi',
     '  fi',
@@ -912,14 +921,21 @@ function getRunWebUIPowerShell() {
     '    return $CurrentValue',
     '  }',
     '',
-    '  $bundledIndex = Join-Path $ScriptDir "copilot\\index.js"',
-    '  if (Test-Path $bundledIndex) {',
-    '    return ""',
+    `  $requiredCopilotVersion = "${copilotRuntimePackageVersion}"`,
+    '  $installedDir = Join-Path $ScriptDir "node_modules\\@github\\copilot"',
+    '  $installedIndex = Join-Path $installedDir "index.js"',
+    '  $installedPackage = Join-Path $installedDir "package.json"',
+    '  $installedVersion = ""',
+    '  if (Test-Path $installedPackage) {',
+    '    try {',
+    '      $installedVersion = (Get-Content -LiteralPath $installedPackage -Raw | ConvertFrom-Json).version',
+    '    } catch {',
+    '      $installedVersion = ""',
+    '    }',
     '  }',
     '',
-    '  $installedIndex = Join-Path $ScriptDir "node_modules\\@github\\copilot\\index.js"',
-    '  if (Test-Path $installedIndex) {',
-    '    return ""',
+    '  if ((Test-Path $installedIndex) -and $installedVersion -eq $requiredCopilotVersion) {',
+    '    return $installedIndex',
     '  }',
     '',
     '  $npmCommand = Get-Command npm -ErrorAction SilentlyContinue',
@@ -931,7 +947,7 @@ function getRunWebUIPowerShell() {
     `  Write-Host "Copilot CLI is not installed. Installing ${copilotRuntimePackageSpec} into $ScriptDir."`,
     `  & $npmCommand.Source install --omit=dev --omit=optional --no-audit --no-fund --prefix $ScriptDir "${copilotRuntimePackageSpec}"`,
     '  if ($LASTEXITCODE -eq 0 -and (Test-Path $installedIndex)) {',
-    '    return ""',
+    '    return $installedIndex',
     '  }',
     '',
     '  Write-Warning "Unable to install Copilot CLI runtime. Copilot models will be unavailable until @github/copilot is installed."',
