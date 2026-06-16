@@ -40,6 +40,7 @@ interface IConfigureGitUserState {
   readonly gitHubEmail: string
 
   readonly useGitHubAuthorInfo: boolean
+  readonly isSaving: boolean
 
   /**
    * If unable to save Git configuration values (name, email)
@@ -70,6 +71,7 @@ export class ConfigureGitUser extends React.Component<
       manualName: props.globalUserName || account?.name || account?.login || '',
       manualEmail: props.globalUserEmail || preferredEmail,
       useGitHubAuthorInfo: this.account !== null,
+      isSaving: false,
       gitHubName: account?.name || account?.login || '',
       gitHubEmail: preferredEmail,
     }
@@ -293,7 +295,9 @@ export class ConfigureGitUser extends React.Component<
             : this.renderGitConfigForm()}
         </div>
         <Row>
-          <Button type="submit">{this.props.saveLabel || 'Save'}</Button>
+          <Button type="submit" disabled={this.state.isSaving}>
+            {this.state.isSaving ? 'Saving...' : this.props.saveLabel || 'Save'}
+          </Button>
           {this.props.children}
         </Row>
       </Form>
@@ -335,6 +339,10 @@ export class ConfigureGitUser extends React.Component<
   }
 
   private save = async () => {
+    if (this.state.isSaving) {
+      return
+    }
+
     const {
       manualName,
       manualEmail,
@@ -345,6 +353,8 @@ export class ConfigureGitUser extends React.Component<
 
     const name = useGitHubAuthorInfo ? gitHubName : manualName
     const email = useGitHubAuthorInfo ? gitHubEmail : manualEmail
+
+    this.setState({ isSaving: true })
 
     try {
       if (name.length > 0 && name !== this.props.globalUserName) {
@@ -359,14 +369,19 @@ export class ConfigureGitUser extends React.Component<
         const lockFilePath = parseConfigLockFilePathFromError(e.result)
 
         if (lockFilePath !== null) {
-          this.setState({ existingLockFilePath: lockFilePath })
+          this.setState({ existingLockFilePath: lockFilePath, isSaving: false })
           return
         }
       }
+
+      this.setState({ isSaving: false })
+      return
     }
 
     if (this.props.onSave) {
       this.props.onSave()
+    } else {
+      this.setState({ isSaving: false })
     }
   }
 }

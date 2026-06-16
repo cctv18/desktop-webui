@@ -28,6 +28,8 @@ function accountMatchesRepositoryState(x: Account, y: Account) {
 
 const MaxRepositoryLoadRetries = __PROCESS_KIND__ === 'web-server' ? 2 : 0
 const RepositoryLoadRetryDelayMs = 1500
+const RepositoryLoadRequestTimeoutMs =
+  __PROCESS_KIND__ === 'web-server' ? 30_000 : 0
 
 function getErrorCode(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null) {
@@ -70,6 +72,38 @@ function isTransientRepositoryLoadError(error: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withRepositoryLoadTimeout<T>(
+  promise: Promise<T>,
+  description: string
+): Promise<T> {
+  if (RepositoryLoadRequestTimeoutMs <= 0) {
+    return promise
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${description} timed out after ${RepositoryLoadRequestTimeoutMs}ms`
+          )
+        ),
+      RepositoryLoadRequestTimeoutMs
+    )
+
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 }
 
 /**
@@ -306,7 +340,10 @@ export class ApiRepositoriesStore extends BaseStore {
           const countBefore = repositories.size
 
           try {
-            await api.streamUserRepositories(addPage, affiliation)
+            await withRepositoryLoadTimeout(
+              api.streamUserRepositories(addPage, affiliation),
+              `Repository listing for ${account.login} (${affiliation})`
+            )
             loadedAny = loadedAny || repositories.size > countBefore
           } catch (error) {
             const loadError =
@@ -336,16 +373,19 @@ export class ApiRepositoriesStore extends BaseStore {
       // of users while still improving the user experience for those users who
       // have access to a lot of repositories and orgs.
       try {
-        await api.streamUserRepositories(addPage, undefined, {
-          async continue() {
-            // If the continue callback is called we know that the first request
-            // wasn't enough to load all repositories.
-            await loadByAffiliation()
+        await withRepositoryLoadTimeout(
+          api.streamUserRepositories(addPage, undefined, {
+            async continue() {
+              // If the continue callback is called we know that the first
+              // request wasn't enough to load all repositories.
+              await loadByAffiliation()
 
-            // Don't load more than one page in the initial stream request.
-            return false
-          },
-        })
+              // Don't load more than one page in the initial stream request.
+              return false
+            },
+          }),
+          `Primary repository listing for ${account.login}`
+        )
       } catch (error) {
         primaryError =
           error instanceof Error

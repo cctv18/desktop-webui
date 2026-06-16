@@ -752,7 +752,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private selectedCopilotModels: CopilotModelSelections = {}
   private copilotModels: ReadonlyArray<ModelInfo> | null = null
-  private copilotModelFetchTimer: ReturnType<typeof setTimeout> | null = null
   private byokProviders: ReadonlyArray<IBYOKProvider> = []
 
   public constructor(
@@ -1053,7 +1052,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.refreshSelectedRepositoryAfterAccountChange()
 
       this.emitUpdate()
-      this.updateCopilotModelsForCurrentAccount()
     })
     this.accountsStore.onDidError(error => this.emitError(error))
 
@@ -1106,32 +1104,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     this.copilotModels = this.copilotStore.getCachedModelList(account)
-  }
-
-  private updateCopilotModelsForCurrentAccount(): void {
-    const account = this.getCopilotModelsAccount()
-
-    if (this.copilotModelFetchTimer !== null) {
-      clearTimeout(this.copilotModelFetchTimer)
-      this.copilotModelFetchTimer = null
-    }
-
-    if (
-      account === undefined ||
-      this.copilotStore.getCachedModelList(account) !== null
-    ) {
-      return
-    }
-
-    this.copilotModelFetchTimer = setTimeout(() => {
-      this.copilotModelFetchTimer = null
-      this.fetchCopilotModelsForCurrentAccount().catch(e => {
-        log.warn(
-          'AppStore: Failed to fetch Copilot models after account update',
-          e
-        )
-      })
-    }, 1000)
   }
 
   /** Load the emoji from disk. */
@@ -10664,6 +10636,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         key.kind === 'copilot' &&
         key.modelId !== '' &&
         copilotModels !== null &&
+        copilotModels.length > 0 &&
         !copilotModels.some(m => m.id === key.modelId)
       ) {
         changed = true

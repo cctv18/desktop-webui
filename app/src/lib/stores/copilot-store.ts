@@ -894,9 +894,43 @@ export class CopilotStore extends BaseStore {
         ? { gitHubToken: account.token, useLoggedInUser: false }
         : { useLoggedInUser: true }
 
-    // Prefer the platform executable when it is bundled or installed. When it
-    // is not available, the SDK can run the JavaScript package entry point
-    // directly with the Node.js executable hosting the WebUI server.
+    const indexPath = await getCopilotCLIIndexPath()
+
+    if (indexPath !== null && (await pathExists(indexPath))) {
+      if (getNodeMajorVersion() < 20) {
+        throw new Error(
+          'Cannot create Copilot client: the bundled JavaScript CLI requires Node.js 20 or newer when no platform-specific Copilot executable is available. Rebuild with the matching WebUI --platform option, or run the WebUI server with Node.js 22 LTS.'
+        )
+      }
+
+      // Match Desktop's CLI launch path. Running the JavaScript entry point
+      // directly makes the Copilot CLI parse RPC arguments incorrectly;
+      // importing it through Node's --eval path preserves the SDK stdio
+      // protocol.
+      const importSpecifier = __WIN32__
+        ? pathToFileURL(indexPath).href
+        : indexPath
+
+      this.logCopilotClientLaunch(
+        account,
+        authMode,
+        'javascript',
+        indexPath,
+        repositoryPath,
+        env
+      )
+
+      return new CopilotClient({
+        connection: RuntimeConnection.forStdio({
+          path: process.execPath,
+          args: ['--eval', `import '${importSpecifier}'`, '--'],
+        }),
+        env,
+        workingDirectory: repositoryPath,
+        ...authOptions,
+      })
+    }
+
     const executablePath = await getCopilotExecutablePath()
 
     if (executablePath !== null) {
@@ -918,47 +952,7 @@ export class CopilotStore extends BaseStore {
       })
     }
 
-    const indexPath = await getCopilotCLIIndexPath()
-
-    // Make sure the CLI entry point exists before creating the client, so we
-    // don't end up with a half-broken client that can't start.
-    if (indexPath === null || !(await pathExists(indexPath))) {
-      throw new Error('Cannot create Copilot client: CLI entry point not found')
-    }
-
-    if (getNodeMajorVersion() < 20) {
-      throw new Error(
-        'Cannot create Copilot client: the bundled JavaScript CLI requires Node.js 20 or newer when no platform-specific Copilot executable is available. Rebuild with the matching WebUI --platform option, or run the WebUI server with Node.js 22 LTS.'
-      )
-    }
-
-    // Match Desktop's CLI launch path. Running the JavaScript entry point
-    // directly makes the Copilot CLI parse RPC arguments incorrectly; importing
-    // it through Node's --eval path preserves the SDK stdio protocol.
-    const importSpecifier = __WIN32__
-      ? pathToFileURL(indexPath).href
-      : indexPath
-
-    this.logCopilotClientLaunch(
-      account,
-      authMode,
-      'javascript',
-      indexPath,
-      repositoryPath,
-      env
-    )
-
-    const clientOptions = {
-      connection: RuntimeConnection.forStdio({
-        path: process.execPath,
-        args: ['--eval', `import '${importSpecifier}'`, '--'],
-      }),
-      env,
-      workingDirectory: repositoryPath,
-      ...authOptions,
-    }
-
-    return new CopilotClient(clientOptions)
+    throw new Error('Cannot create Copilot client: CLI entry point not found')
   }
 
   private logCopilotClientLaunch(

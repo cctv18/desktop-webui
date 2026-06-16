@@ -313,6 +313,7 @@ function copyWebRuntimeAssets() {
     `Copied emoji images to: ${emojiImagesDestination}`,
     `Copied emoji metadata to: ${emojiJsonDestination}`,
     `Wrote runtime config to: ${runtimeFiles.serverConfigPath}`,
+    `Wrote log timestamp hook to: ${runtimeFiles.timestampHookPath}`,
     `Wrote POSIX launcher to: ${runtimeFiles.shellLauncherPath}`,
     `Wrote PowerShell launcher to: ${runtimeFiles.powershellLauncherPath}`,
     `Copilot CLI will be installed by the runtime launcher when needed: ${copilotRuntimePackageSpec}`,
@@ -430,8 +431,10 @@ function writeRuntimeLauncherFiles() {
   const serverConfigPath = path.join(outDir, 'server.conf')
   const shellLauncherPath = path.join(outDir, 'run-webui.sh')
   const powershellLauncherPath = path.join(outDir, 'run-webui.ps1')
+  const timestampHookPath = path.join(outDir, 'webui-log-timestamps.js')
 
   fs.writeFileSync(serverConfigPath, getDefaultServerConfig(), 'utf8')
+  fs.writeFileSync(timestampHookPath, getWebUILogTimestampHook(), 'utf8')
   fs.writeFileSync(shellLauncherPath, getRunWebUISh(), 'utf8')
   fs.writeFileSync(powershellLauncherPath, getRunWebUIPowerShell(), 'utf8')
 
@@ -446,9 +449,33 @@ function writeRuntimeLauncherFiles() {
 
   return {
     serverConfigPath,
+    timestampHookPath,
     shellLauncherPath,
     powershellLauncherPath,
   }
+}
+
+function getWebUILogTimestampHook() {
+  return [
+    "'use strict'",
+    '',
+    'function pad(value, length) {',
+    '  return String(value).padStart(length, "0")',
+    '}',
+    '',
+    'function timestamp() {',
+    '  const now = new Date()',
+    '  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1, 2)}-${pad(now.getDate(), 2)}`',
+    '  const time = `${pad(now.getHours(), 2)}:${pad(now.getMinutes(), 2)}:${pad(now.getSeconds(), 2)}.${pad(now.getMilliseconds(), 3)}000`',
+    '  return `[${date} ${time}]`',
+    '}',
+    '',
+    'for (const method of ["log", "info", "warn", "error", "debug"]) {',
+    '  const original = console[method].bind(console)',
+    '  console[method] = (...args) => original(timestamp(), ...args)',
+    '}',
+    '',
+  ].join('\n')
 }
 
 function getDefaultServerConfig() {
@@ -758,7 +785,10 @@ function getRunWebUISh() {
     '',
     'cd "$SCRIPT_DIR"',
     '',
-    'set -- web-server.js',
+    'TIMESTAMP_HOOK=$SCRIPT_DIR/webui-log-timestamps.js',
+    'set --',
+    '[ -f "$TIMESTAMP_HOOK" ] && set -- "$@" --require "$TIMESTAMP_HOOK"',
+    'set -- "$@" web-server.js',
     '[ -n "$HOST" ] && set -- "$@" --host "$HOST"',
     '[ -n "$PORT" ] && set -- "$@" --port "$PORT"',
     '[ -n "$PUBLIC_URL" ] && set -- "$@" --public-url "$PUBLIC_URL"',
@@ -774,7 +804,7 @@ function getRunWebUISh() {
     '[ -n "$STATIC_ROOT" ] && set -- "$@" --static-root "$STATIC_ROOT"',
     '[ -n "$COPILOT_CLI_PATH" ] && set -- "$@" --copilot-cli-path "$COPILOT_CLI_PATH"',
     '',
-    'echo "Starting GitDesk WebUI on http://$HOST:$PORT"',
+    'echo "[$(date "+%Y-%m-%d %H:%M:%S.%3N000" 2>/dev/null || date)] Starting GitDesk WebUI on http://$HOST:$PORT"',
     'exec node "$@"',
     '',
   ].join('\n')
@@ -998,7 +1028,12 @@ function getRunWebUIPowerShell() {
     '}',
     '',
     'Set-Location $ScriptDir',
-    '$script:NodeArguments = @("web-server.js")',
+    '$timestampHook = Join-Path $ScriptDir "webui-log-timestamps.js"',
+    '$script:NodeArguments = @()',
+    'if (Test-Path $timestampHook) {',
+    '  $script:NodeArguments += @("--require", $timestampHook)',
+    '}',
+    '$script:NodeArguments += "web-server.js"',
     'Add-ServerArgument "--host" $hostValue',
     'Add-ServerArgument "--port" $portValue',
     'Add-ServerArgument "--public-url" $publicUrlValue',
@@ -1014,7 +1049,7 @@ function getRunWebUIPowerShell() {
     'Add-ServerArgument "--static-root" $staticRootValue',
     'Add-ServerArgument "--copilot-cli-path" $copilotCliPathValue',
     '',
-    'Write-Host "Starting GitDesk WebUI on http://$hostValue`:$portValue"',
+    'Write-Host "[$((Get-Date).ToString(\'yyyy-MM-dd HH:mm:ss.ffffff\'))] Starting GitDesk WebUI on http://$hostValue`:$portValue"',
     '& $nodeCommand.Source @script:NodeArguments',
     'exit $LASTEXITCODE',
     '',
