@@ -108,11 +108,20 @@ interface IResolvedConflictModelConfig {
   readonly reasoningEffort: ReasoningEffort | undefined
   readonly provider: CopilotProviderConfig | undefined
   readonly timeoutMs: number | undefined
+  readonly authMode: CopilotAuthMode
 }
+
+type CopilotAuthMode = 'account-token' | 'logged-in-user'
 
 interface ICopilotModelCacheEntry {
   readonly models: ReadonlyArray<ModelInfo>
   readonly cachedAt: number
+  readonly authMode: CopilotAuthMode
+}
+
+interface ICopilotModelFetchResult {
+  readonly models: ReadonlyArray<ModelInfo>
+  readonly authMode: CopilotAuthMode
 }
 
 /**
@@ -149,6 +158,18 @@ export function getCopilotGHHost(account: Account): string | undefined {
     : new URL(account.endpoint).host
 
   return isGHE(account.endpoint) && host ? host.replace(/^api\./, '') : host
+}
+
+function getCopilotAuthModeDescription(authMode: CopilotAuthMode): string {
+  return authMode === 'account-token'
+    ? 'WebUI account token'
+    : 'logged-in Copilot user'
+}
+
+function getAccountTokenLogState(account: Account): string {
+  return account.token === ''
+    ? 'missing'
+    : `present(length=${account.token.length})`
 }
 
 function getCopilotCLIDir(): string {
@@ -860,11 +881,18 @@ export class CopilotStore extends BaseStore {
    */
   private async createClient(
     account: Account,
-    repositoryPath?: string
+    repositoryPath?: string,
+    authMode: CopilotAuthMode = 'account-token'
   ): Promise<CopilotClient> {
-    if (!account.token) {
+    if (authMode === 'account-token' && !account.token) {
       throw new Error('Cannot create Copilot client: Account has no token')
     }
+
+    const env = getCopilotClientEnv(account)
+    const authOptions =
+      authMode === 'account-token'
+        ? { gitHubToken: account.token, useLoggedInUser: false }
+        : { useLoggedInUser: true }
 
     // Prefer the platform executable when it is bundled or installed. When it
     // is not available, the SDK can run the JavaScript package entry point
@@ -872,13 +900,21 @@ export class CopilotStore extends BaseStore {
     const executablePath = await getCopilotExecutablePath()
 
     if (executablePath !== null) {
+      this.logCopilotClientLaunch(
+        account,
+        authMode,
+        'executable',
+        executablePath,
+        repositoryPath,
+        env
+      )
       return new CopilotClient({
         connection: RuntimeConnection.forStdio({
           path: executablePath,
         }),
-        env: getCopilotClientEnv(account),
+        env,
         workingDirectory: repositoryPath,
-        gitHubToken: account.token,
+        ...authOptions,
       })
     }
 
@@ -903,17 +939,45 @@ export class CopilotStore extends BaseStore {
       ? pathToFileURL(indexPath).href
       : indexPath
 
+    this.logCopilotClientLaunch(
+      account,
+      authMode,
+      'javascript',
+      indexPath,
+      repositoryPath,
+      env
+    )
+
     const clientOptions = {
       connection: RuntimeConnection.forStdio({
         path: process.execPath,
         args: ['--eval', `import '${importSpecifier}'`, '--'],
       }),
-      env: getCopilotClientEnv(account),
+      env,
       workingDirectory: repositoryPath,
-      gitHubToken: account.token,
+      ...authOptions,
     }
 
     return new CopilotClient(clientOptions)
+  }
+
+  private logCopilotClientLaunch(
+    account: Account,
+    authMode: CopilotAuthMode,
+    runtimeKind: 'executable' | 'javascript',
+    runtimePath: string,
+    repositoryPath: string | undefined,
+    env: Record<string, string | undefined>
+  ): void {
+    log.info(
+      `CopilotStore: Starting Copilot CLI (${runtimeKind}) for ${
+        account.login
+      } using ${getCopilotAuthModeDescription(authMode)}; token=${getAccountTokenLogState(
+        account
+      )}; runtime=${runtimePath}; workdir=${repositoryPath ?? '<none>'}; COPILOT_HOME=${
+        env.COPILOT_HOME ?? '<unset>'
+      }; COPILOT_CACHE_HOME=${env.COPILOT_CACHE_HOME ?? '<unset>'}`
+    )
   }
 
   /**
@@ -1000,6 +1064,7 @@ export class CopilotStore extends BaseStore {
     let reasoningEffort: ReasoningEffort | undefined
     let provider: CopilotProviderConfig | undefined
     let timeoutMs: number = DefaultCopilotRequestTimeoutMs
+    let authMode: CopilotAuthMode = 'account-token'
 
     if (request && request.kind === 'byok') {
       modelId = request.modelId
@@ -1011,7 +1076,9 @@ export class CopilotStore extends BaseStore {
     } else {
       const requestedModelId =
         request?.kind === 'copilot' ? request.modelId : null
-      const cachedModels = await this.getCachedModels(account)
+      const cachedEntry = await this.getCachedModelEntry(account)
+      const cachedModels = cachedEntry?.models ?? []
+      authMode = cachedEntry?.authMode ?? authMode
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
@@ -1029,7 +1096,14 @@ export class CopilotStore extends BaseStore {
 
     let client: CopilotClient
     try {
-      client = await this.createClient(account, repositoryPath)
+      log.info(
+        `CopilotStore: Generating commit message using ${getCopilotAuthModeDescription(
+          authMode
+        )}; model=${modelId ?? '<runtime-default>'}; provider=${
+          provider === undefined ? 'github-copilot' : 'byok'
+        }`
+      )
+      client = await this.createClient(account, repositoryPath, authMode)
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         return this.generateCommitMessageWithoutSDK(
@@ -1111,13 +1185,42 @@ export class CopilotStore extends BaseStore {
           modelId !== undefined &&
           this.isUnsupportedModelError(e)
         ) {
+          const key = getCopilotModelCacheKey(account)
+          this.modelCaches.delete(key)
+          this.emitUpdate()
+
+          if (authMode !== 'logged-in-user') {
+            log.warn(
+              `CopilotStore: Model '${modelId}' is not supported with ${getCopilotAuthModeDescription(
+                authMode
+              )}; retrying commit message generation with logged-in Copilot user`,
+              e
+            )
+            await this.stopClient(client)
+            authMode = 'logged-in-user'
+            const fallback = await this.fetchModelsForAuthMode(
+              account,
+              authMode
+            )
+            const fallbackModel = getPreferredDefaultModel(fallback.models)
+            modelId = fallbackModel?.id
+            reasoningEffort = fallbackModel
+              ? getLowestReasoningEffort(fallbackModel)
+              : undefined
+            this.modelCaches.set(key, {
+              models: fallback.models,
+              cachedAt: Date.now(),
+              authMode,
+            })
+            this.emitUpdate()
+            client = await this.createClient(account, repositoryPath, authMode)
+            return await runSession(modelId, reasoningEffort)
+          }
+
           log.warn(
             `CopilotStore: Model '${modelId}' is not supported for this account; retrying commit message generation without the SDK model override`,
             e
           )
-          const key = getCopilotModelCacheKey(account)
-          this.modelCaches.delete(key)
-          this.emitUpdate()
           return await runSession(undefined, undefined)
         }
 
@@ -1399,6 +1502,7 @@ export class CopilotStore extends BaseStore {
         reasoningEffort: request.reasoningEffort,
         provider: request.provider,
         timeoutMs: request.timeoutMs,
+        authMode: 'account-token',
       }
     }
 
@@ -1409,7 +1513,8 @@ export class CopilotStore extends BaseStore {
     // fetch here would double the startup latency. It also keeps us in sync
     // with the loading dialog, which reads the same cached list. A missing
     // cache is treated as "metadata unavailable" (raw id, no effort).
-    const cachedModels = this.getCachedModelList(account) ?? []
+    const cachedEntry = this.getCachedModelEntryFromCache(account)
+    const cachedModels = cachedEntry?.models ?? []
     const resolvedModel = requestedModelId
       ? cachedModels.find(m => m.id === requestedModelId) ?? null
       : getPreferredDefaultModel(cachedModels)
@@ -1428,6 +1533,7 @@ export class CopilotStore extends BaseStore {
         : undefined,
       provider: undefined,
       timeoutMs: undefined,
+      authMode: cachedEntry?.authMode ?? 'account-token',
     }
   }
 
@@ -1467,8 +1573,17 @@ export class CopilotStore extends BaseStore {
 
     const modelConfig = this.resolveConflictModelConfig(account, request)
 
+    log.info(
+      `CopilotStore: Resolving conflicts using ${getCopilotAuthModeDescription(
+        modelConfig.authMode
+      )}; model=${modelConfig.modelId ?? '<runtime-default>'}; files=${filesTotal}`
+    )
     const clientTimer = startTimer('createClient')
-    const client = await this.createClient(account, repositoryPath)
+    const client = await this.createClient(
+      account,
+      repositoryPath,
+      modelConfig.authMode
+    )
     clientTimer.done()
 
     try {
@@ -1724,6 +1839,12 @@ export class CopilotStore extends BaseStore {
     )
   }
 
+  private getCachedModelEntryFromCache(
+    account: Account
+  ): ICopilotModelCacheEntry | null {
+    return this.modelCaches.get(getCopilotModelCacheKey(account)) ?? null
+  }
+
   /**
    * Lists the available Copilot models for the account from the SDK, using a
    * cached result if it is less than {@link ModelListCacheTTL} old.
@@ -1756,15 +1877,15 @@ export class CopilotStore extends BaseStore {
   }
 
   /**
-   * Returns the cached model list, refreshing it from the SDK if the cache
-   * has expired. Internal callers that need to pick a model from whatever
-   * we know about right now use this entry point and treat "unavailable"
-   * the same as "empty list".
+   * Returns the cached model list entry, refreshing it from the SDK if the
+   * cache has expired. The entry records the auth mode that produced the
+   * models, which must also be used for subsequent SDK calls.
    */
-  private async getCachedModels(
+  private async getCachedModelEntry(
     account: Account
-  ): Promise<ReadonlyArray<ModelInfo>> {
-    return (await this.listModels(account)) ?? []
+  ): Promise<ICopilotModelCacheEntry | null> {
+    await this.listModels(account)
+    return this.getCachedModelEntryFromCache(account)
   }
 
   private async fetchAndCacheModels(
@@ -1778,30 +1899,35 @@ export class CopilotStore extends BaseStore {
       return inFlight
     }
 
-    const fetchPromise = this.fetchModels(account)
-      .then(models => {
+    const fetchPromise = this.fetchModelsWithFallback(account)
+      .then(result => {
         if (
           this.modelsInFlight.get(key) === fetchPromise &&
           this.signedInAccountKeys.has(key)
         ) {
-          const selectableModels =
-            getSelectableCopilotModels(models).filter(dedupeCopilotModel())
-          if (selectableModels.length > 0) {
-            this.modelCaches.set(key, {
-              models: selectableModels,
-              cachedAt: Date.now(),
-            })
-            log.debug(
-              `CopilotStore: Cached ${selectableModels.length} model(s): ${selectableModels
-                .map(m => m.id)
-                .join(', ')}`
+          this.modelCaches.set(key, {
+            models: result.models,
+            cachedAt: Date.now(),
+            authMode: result.authMode,
+          })
+
+          if (result.models.length > 0) {
+            log.info(
+              `CopilotStore: Cached ${
+                result.models.length
+              } model(s) using ${getCopilotAuthModeDescription(
+                result.authMode
+              )}: ${result.models.map(m => m.id).join(', ')}`
             )
-            this.emitUpdate()
           } else {
             log.warn(
-              'CopilotStore: Model list request returned no selectable models; keeping previous cache'
+              `CopilotStore: Model list request returned no selectable models using ${getCopilotAuthModeDescription(
+                result.authMode
+              )}; caching empty list`
             )
           }
+
+          this.emitUpdate()
         }
 
         return this.modelCaches.get(key)?.models ?? null
@@ -1821,12 +1947,81 @@ export class CopilotStore extends BaseStore {
     }
   }
 
-  private async fetchModels(
+  private async fetchModelsWithFallback(
     account: Account
+  ): Promise<ICopilotModelFetchResult> {
+    const authModes: ReadonlyArray<CopilotAuthMode> = account.token
+      ? ['account-token', 'logged-in-user']
+      : ['logged-in-user']
+    let lastResult: ICopilotModelFetchResult = {
+      models: [],
+      authMode: authModes[authModes.length - 1],
+    }
+    let lastError: Error | undefined
+
+    for (const authMode of authModes) {
+      try {
+        const result = await this.fetchModelsForAuthMode(account, authMode)
+        lastResult = result
+
+        if (result.models.length > 0) {
+          return result
+        }
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e))
+        log.warn(
+          `CopilotStore: Model list request failed using ${getCopilotAuthModeDescription(
+            authMode
+          )}`,
+          lastError
+        )
+      }
+    }
+
+    if (lastError !== undefined) {
+      log.warn(
+        'CopilotStore: All Copilot model list auth modes failed or returned no selectable models',
+        lastError
+      )
+    }
+
+    return lastResult
+  }
+
+  private async fetchModelsForAuthMode(
+    account: Account,
+    authMode: CopilotAuthMode
+  ): Promise<ICopilotModelFetchResult> {
+    const rawModels = await this.fetchModels(account, authMode)
+    const selectableModels =
+      getSelectableCopilotModels(rawModels).filter(dedupeCopilotModel())
+
+    log.info(
+      `CopilotStore: Model list response using ${getCopilotAuthModeDescription(
+        authMode
+      )}: raw=${rawModels.length}; selectable=${
+        selectableModels.length
+      }; ids=${rawModels.map(m => m.id).join(', ')}`
+    )
+
+    return {
+      models: selectableModels,
+      authMode,
+    }
+  }
+
+  private async fetchModels(
+    account: Account,
+    authMode: CopilotAuthMode
   ): Promise<ReadonlyArray<ModelInfo>> {
     let client: CopilotClient
     try {
-      client = await this.createClient(account)
+      log.info(
+        `CopilotStore: Fetching Copilot model list using ${getCopilotAuthModeDescription(
+          authMode
+        )}`
+      )
+      client = await this.createClient(account, undefined, authMode)
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         log.warn('CopilotStore: Cannot list models because the CLI is missing')
@@ -1838,11 +2033,17 @@ export class CopilotStore extends BaseStore {
 
     try {
       await client.start()
-      return await withTimeout(
+      const models = await withTimeout(
         client.listModels(),
         ModelListFetchTimeoutMs,
         'Copilot model list request timed out'
       )
+      log.info(
+        `CopilotStore: Copilot model list request completed using ${getCopilotAuthModeDescription(
+          authMode
+        )}`
+      )
+      return models
     } finally {
       await this.stopClient(client)
     }

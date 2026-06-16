@@ -2298,9 +2298,6 @@ export class API {
         copilotEndpoints {
           api
         }
-
-        copilotLicenseType
-        isCopilotDesktopEnabled
       }
     }
     `

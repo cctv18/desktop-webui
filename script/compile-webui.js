@@ -31,7 +31,7 @@ const shouldPrintDiagnosticsToConsole =
 const consoleChunkSize = 1800
 const requiredRuntimeNodeMajor = 20
 const preferredRuntimeNodeMajor = 22
-const copilotRuntimePackageVersion = '1.0.45'
+const copilotRuntimePackageVersion = '1.0.62'
 const copilotRuntimePackageSpec = `@github/copilot@${copilotRuntimePackageVersion}`
 
 process.env.NO_COLOR = process.env.NO_COLOR || '1'
