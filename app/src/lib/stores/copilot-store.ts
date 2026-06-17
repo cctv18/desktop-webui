@@ -275,6 +275,10 @@ function isJavaScriptCLIPath(path: string): boolean {
   return path.endsWith('.js')
 }
 
+function isRuntimeWindows(): boolean {
+  return process.platform === 'win32'
+}
+
 async function isExecutableFileCandidate(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isFile()
@@ -285,7 +289,7 @@ async function isExecutableFileCandidate(path: string): Promise<boolean> {
 
 function getBundledCopilotExecutableCandidates(): ReadonlyArray<string> {
   const packagePlatforms = getCopilotPackagePlatforms()
-  const executableName = __WIN32__ ? 'copilot.exe' : 'copilot'
+  const executableName = isRuntimeWindows() ? 'copilot.exe' : 'copilot'
   return packagePlatforms.map(packagePlatform =>
     join(
       __dirname,
@@ -326,7 +330,7 @@ function isMuslLinux(): boolean {
 }
 
 async function ensureExecutablePath(path: string) {
-  if (__WIN32__) {
+  if (isRuntimeWindows()) {
     return
   }
 
@@ -907,7 +911,7 @@ export class CopilotStore extends BaseStore {
       // directly makes the Copilot CLI parse RPC arguments incorrectly;
       // importing it through Node's --eval path preserves the SDK stdio
       // protocol.
-      const importSpecifier = __WIN32__
+      const importSpecifier = isRuntimeWindows()
         ? pathToFileURL(indexPath).href
         : indexPath
 
@@ -2018,7 +2022,7 @@ export class CopilotStore extends BaseStore {
       client = await this.createClient(account, undefined, authMode)
     } catch (e) {
       if (this.isMissingCLIError(e)) {
-        log.warn('CopilotStore: Cannot list models because the CLI is missing')
+        log.warn('CopilotStore: Cannot list models because the CLI is missing', e)
         return []
       }
 

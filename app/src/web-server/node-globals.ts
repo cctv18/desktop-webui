@@ -88,6 +88,21 @@ const g = globalThis as any
 
 installArrayPolyfills()
 
+function isStorageLike(value: unknown): value is Storage {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+
+  const storage = value as Partial<Storage>
+  return (
+    typeof storage.getItem === 'function' &&
+    typeof storage.setItem === 'function' &&
+    typeof storage.removeItem === 'function' &&
+    typeof storage.clear === 'function' &&
+    typeof storage.key === 'function'
+  )
+}
+
 function setIfMissing(target: any, key: string, value: unknown) {
   if (target[key] === undefined) {
     target[key] = value
@@ -280,7 +295,7 @@ if (g.location === undefined) {
   g.location = createLocationShim(defaultLocationHref)
 }
 
-if (g.localStorage === undefined) {
+if (!isStorageLike(g.localStorage)) {
   g.localStorage = new PersistentStorage(
     Path.join(dataDirectory, 'local-storage.json')
   )
@@ -309,6 +324,9 @@ setIfMissing(g.window, 'requestAnimationFrame', requestAnimationFrameShim)
 setIfMissing(g.window, 'cancelAnimationFrame', cancelAnimationFrameShim)
 setIfMissing(g.window, 'crypto', g.crypto)
 setIfMissing(g.window, 'location', g.location)
+if (!isStorageLike(g.window.localStorage)) {
+  g.window.localStorage = g.localStorage
+}
 setIfMissing(g.window, 'URL', URL)
 setIfMissing(g.window, 'URLSearchParams', URLSearchParams)
 setIfMissing(g.window, 'innerWidth', 1280)

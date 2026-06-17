@@ -2577,6 +2577,74 @@ export function getOAuthAuthorizationURL(
   return url.toString()
 }
 
+const OAuthNetworkRetryDelaysMs = [1500, 4000, 8000]
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') {
+    return undefined
+  }
+
+  const errorLike = error as { code?: unknown; cause?: unknown; name?: unknown }
+  if (typeof errorLike.code === 'string') {
+    return errorLike.code
+  }
+
+  if (typeof errorLike.name === 'string') {
+    return errorLike.name
+  }
+
+  return getErrorCode(errorLike.cause)
+}
+
+function isTransientOAuthNetworkError(error: unknown): boolean {
+  if (error instanceof APIError) {
+    return false
+  }
+
+  const code = getErrorCode(error)
+  return (
+    code === 'AbortError' ||
+    code === 'ConnectTimeoutError' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT' ||
+    code === 'UND_ERR_SOCKET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'EPIPE' ||
+    (error instanceof TypeError && error.message === 'fetch failed')
+  )
+}
+
+async function retryOAuthNetworkRequest<T>(
+  label: string,
+  endpoint: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  let attempt = 0
+
+  while (true) {
+    try {
+      return await operation()
+    } catch (e) {
+      const retryDelay = OAuthNetworkRetryDelaysMs[attempt]
+      if (!isTransientOAuthNetworkError(e) || retryDelay === undefined) {
+        throw e
+      }
+
+      attempt++
+      log.warn(
+        `${label}: transient network failure with endpoint ${endpoint}; retrying (${attempt}/${OAuthNetworkRetryDelaysMs.length})`,
+        e
+      )
+      await delay(retryDelay)
+    }
+  }
+}
+
 export async function requestOAuthDeviceCode(
   endpoint: string
 ): Promise<IOAuthDeviceCode | null> {
@@ -2589,15 +2657,14 @@ export async function requestOAuthDeviceCode(
     }
 
     const urlBase = getHTMLURL(endpoint)
-    const response = await request(
-      urlBase,
-      null,
-      'POST',
-      'login/device/code',
-      {
-        client_id: clientID,
-        scope: oauthScopes.join(' '),
-      }
+    const response = await retryOAuthNetworkRequest(
+      'requestOAuthDeviceCode',
+      endpoint,
+      () =>
+        request(urlBase, null, 'POST', 'login/device/code', {
+          client_id: clientID,
+          scope: oauthScopes.join(' '),
+        })
     )
     const result = await parsedResponse<IAPIOAuthDeviceCode>(response)
 
@@ -2630,16 +2697,15 @@ export async function requestOAuthDeviceToken(
     }
 
     const urlBase = getHTMLURL(endpoint)
-    const response = await request(
-      urlBase,
-      null,
-      'POST',
-      'login/oauth/access_token',
-      {
-        client_id: clientID,
-        device_code: deviceCode,
-        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      }
+    const response = await retryOAuthNetworkRequest(
+      'requestOAuthDeviceToken',
+      endpoint,
+      () =>
+        request(urlBase, null, 'POST', 'login/oauth/access_token', {
+          client_id: clientID,
+          device_code: deviceCode,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        })
     )
     const result = await parsedResponse<IAPIOAuthDeviceToken>(response)
 
@@ -2675,6 +2741,10 @@ export async function requestOAuthDeviceToken(
     }
   } catch (e) {
     log.warn(`requestOAuthDeviceToken: failed with endpoint ${endpoint}`, e)
+    if (isTransientOAuthNetworkError(e)) {
+      return { kind: 'pending' }
+    }
+
     return {
       kind: 'failed',
       error: e instanceof Error ? e : new Error(`${e}`),
