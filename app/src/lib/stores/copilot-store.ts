@@ -207,23 +207,15 @@ function getCopilotClientEnv(
     ELECTRON_RUN_AS_NODE: '1',
     COPILOT_RUN_APP: '1',
     COPILOT_AUTO_UPDATE: 'false',
+    COPILOT_DISABLE_KEYTAR: '1',
     COPILOT_HOME: join(copilotDataDir, 'home'),
     COPILOT_CACHE_HOME: join(copilotDataDir, 'cache'),
+    GH_CONFIG_DIR: join(copilotDataDir, 'gh'),
     GH_HOST: getCopilotGHHost(account),
     GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
   }
 
   clearInheritedCopilotAuthEnv(env)
-
-  if (account.token.length > 0) {
-    // These variables are scoped to the spawned Copilot runtime only. They let
-    // `useLoggedInUser` mode authenticate without writing WebUI credentials to
-    // the user's global gh/copilot auth stores.
-    env.COPILOT_GITHUB_TOKEN = account.token
-    env.GH_TOKEN = account.token
-    env.GITHUB_TOKEN = account.token
-    env.GITHUB_COPILOT_GITHUB_TOKEN = account.token
-  }
 
   return env
 }
@@ -257,7 +249,14 @@ async function getCopilotCLIIndexPath(): Promise<string | null> {
   const configuredPath = getConfiguredCopilotCLIPath()
 
   if (configuredPath !== undefined) {
-    return resolveCopilotCLIIndexPath(configuredPath)
+    const configuredIndexPath = resolveCopilotCLIIndexPath(configuredPath)
+    if (await pathExists(configuredIndexPath)) {
+      return configuredIndexPath
+    }
+
+    log.warn(
+      `CopilotStore: configured Copilot CLI entry point was not found at ${configuredIndexPath}; trying runtime candidates`
+    )
   }
 
   for (const candidate of getBundledCopilotCLIIndexCandidates()) {
@@ -273,6 +272,7 @@ function getBundledCopilotCLIIndexCandidates(): ReadonlyArray<string> {
   return [
     join(getCopilotCLIDir(), 'index.js'),
     join(__dirname, 'node_modules', '@github', 'copilot', 'index.js'),
+    join(process.cwd(), 'node_modules', '@github', 'copilot', 'index.js'),
   ]
 }
 
@@ -1981,11 +1981,11 @@ export class CopilotStore extends BaseStore {
     account: Account
   ): Promise<ICopilotModelFetchResult> {
     const authModes: ReadonlyArray<CopilotAuthMode> = account.token
-      ? ['account-token', 'logged-in-user']
-      : ['logged-in-user']
+      ? ['account-token']
+      : []
     let lastResult: ICopilotModelFetchResult = {
       models: [],
-      authMode: authModes[authModes.length - 1],
+      authMode: account.token ? 'account-token' : 'logged-in-user',
     }
     let lastError: Error | undefined
 
@@ -2008,6 +2008,40 @@ export class CopilotStore extends BaseStore {
       }
     }
 
+    if (account.token) {
+      try {
+        const result = await this.fetchModelsFromCopilotEndpoint(account)
+        lastResult = result
+
+        if (result.models.length > 0) {
+          return result
+        }
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e))
+        log.warn(
+          'CopilotStore: Model list request failed using WebUI Copilot endpoint',
+          lastError
+        )
+      }
+    }
+
+    try {
+      const result = await this.fetchModelsForAuthMode(account, 'logged-in-user')
+      lastResult = result
+
+      if (result.models.length > 0) {
+        return result
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e))
+      log.warn(
+        `CopilotStore: Model list request failed using ${getCopilotAuthModeDescription(
+          'logged-in-user'
+        )}`,
+        lastError
+      )
+    }
+
     if (lastError !== undefined) {
       log.warn(
         'CopilotStore: All Copilot model list auth modes failed or returned no selectable models',
@@ -2016,6 +2050,44 @@ export class CopilotStore extends BaseStore {
     }
 
     return lastResult
+  }
+
+  private async fetchModelsFromCopilotEndpoint(
+    account: Account
+  ): Promise<ICopilotModelFetchResult> {
+    if (!account.token) {
+      return { models: [], authMode: 'account-token' }
+    }
+
+    log.info(
+      'CopilotStore: Fetching Copilot model list using WebUI Copilot endpoint'
+    )
+
+    const api = new API(
+      account.endpoint,
+      account.token,
+      account.copilotEndpoint ?? 'https://api.githubcopilot.com'
+    )
+    const rawModels = await withTimeout(
+      api.fetchCopilotModels(),
+      ModelListFetchTimeoutMs,
+      'Copilot endpoint model list request timed out'
+    )
+    const selectableModels =
+      getSelectableCopilotModels(rawModels).filter(dedupeCopilotModel())
+
+    log.info(
+      `CopilotStore: Model list response using WebUI Copilot endpoint: raw=${
+        rawModels.length
+      }; selectable=${selectableModels.length}; ids=${rawModels
+        .map(m => m.id)
+        .join(', ')}`
+    )
+
+    return {
+      models: selectableModels,
+      authMode: 'account-token',
+    }
   }
 
   private async fetchModelsForAuthMode(
