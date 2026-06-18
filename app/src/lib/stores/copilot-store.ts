@@ -635,6 +635,132 @@ export function getPreferredDefaultModel(
   )[0]
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function getBooleanProperty(
+  record: Record<string, unknown>,
+  key: string
+): boolean {
+  return record[key] === true
+}
+
+function getNumberProperty(
+  record: Record<string, unknown>,
+  key: string
+): number | undefined {
+  const value = record[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  return typeof value === 'string' &&
+    ReasoningEffortOrder.includes(value as ReasoningEffort)
+    ? (value as ReasoningEffort)
+    : undefined
+}
+
+function normalizeReasoningEfforts(
+  value: unknown
+): ReadonlyArray<ReasoningEffort> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const efforts = value.flatMap(x => {
+    const effort = normalizeReasoningEffort(x)
+    return effort === undefined ? [] : [effort]
+  })
+
+  return efforts.length > 0 ? efforts : undefined
+}
+
+function normalizeCopilotModelInfo(model: unknown): ModelInfo | null {
+  if (!isRecord(model)) {
+    return null
+  }
+
+  const rawId = model.id
+  if (typeof rawId !== 'string') {
+    return null
+  }
+
+  const id = rawId.trim()
+  if (id.length === 0) {
+    return null
+  }
+
+  const name =
+    typeof model.name === 'string' && model.name.trim().length > 0
+      ? model.name.trim()
+      : id
+
+  const capabilities = isRecord(model.capabilities) ? model.capabilities : {}
+  const supports = isRecord(capabilities.supports)
+    ? capabilities.supports
+    : {}
+  const limits = isRecord(capabilities.limits) ? capabilities.limits : {}
+  const limitsVision = isRecord(limits.vision) ? limits.vision : undefined
+  const supportedReasoningEfforts = normalizeReasoningEfforts(
+    model.supportedReasoningEfforts
+  )
+  const defaultReasoningEffort = normalizeReasoningEffort(
+    model.defaultReasoningEffort
+  )
+
+  return {
+    id,
+    name,
+    capabilities: {
+      supports: {
+        vision: getBooleanProperty(supports, 'vision'),
+        reasoningEffort:
+          getBooleanProperty(supports, 'reasoningEffort') ||
+          supportedReasoningEfforts !== undefined,
+      },
+      limits: {
+        max_prompt_tokens: getNumberProperty(limits, 'max_prompt_tokens'),
+        max_context_window_tokens:
+          getNumberProperty(limits, 'max_context_window_tokens') ?? 0,
+        ...(limitsVision !== undefined
+          ? {
+              vision: {
+                supported_media_types: Array.isArray(
+                  limitsVision.supported_media_types
+                )
+                  ? limitsVision.supported_media_types.filter(
+                      (x): x is string => typeof x === 'string'
+                    )
+                  : [],
+                max_prompt_images:
+                  getNumberProperty(limitsVision, 'max_prompt_images') ?? 0,
+                max_prompt_image_size:
+                  getNumberProperty(limitsVision, 'max_prompt_image_size') ??
+                  0,
+              },
+            }
+          : {}),
+      },
+    },
+    ...(isRecord(model.policy) ? { policy: model.policy as any } : {}),
+    ...(isRecord(model.billing) ? { billing: model.billing as any } : {}),
+    ...(supportedReasoningEfforts !== undefined
+      ? { supportedReasoningEfforts: [...supportedReasoningEfforts] }
+      : {}),
+    ...(defaultReasoningEffort !== undefined ? { defaultReasoningEffort } : {}),
+  }
+}
+
+function normalizeCopilotModelInfos(
+  models: ReadonlyArray<unknown>
+): ReadonlyArray<ModelInfo> {
+  return models.flatMap(model => {
+    const normalized = normalizeCopilotModelInfo(model)
+    return normalized === null ? [] : [normalized]
+  })
+}
+
 function isSelectableCopilotModel(model: ModelInfo): boolean {
   return model.id.trim().toLowerCase() !== 'auto'
 }
@@ -1112,15 +1238,23 @@ export class CopilotStore extends BaseStore {
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
+      const defaultModel =
+        resolvedModel === null && requestedModelId
+          ? getPreferredDefaultModel(cachedModels)
+          : null
 
-      // Use the resolved model's ID or the raw string ID the caller passed.
+      // Use a model ID only when it is present in the current account's model
+      // list. Persisted selections can outlive account or runtime changes; do
+      // not send stale IDs to the SDK, because that turns model-list bugs into
+      // generation failures.
       // When model discovery returns no entries we deliberately omit the model
       // field and let the Copilot runtime choose for the account. Falling back
       // to Desktop's old HTTP endpoint can produce 404s for accounts that only
       // work through the SDK/CAPI path.
-      modelId = resolvedModel?.id ?? requestedModelId ?? undefined
-      reasoningEffort = resolvedModel
-        ? getLowestReasoningEffort(resolvedModel)
+      const modelForRequest = resolvedModel ?? defaultModel
+      modelId = modelForRequest?.id
+      reasoningEffort = modelForRequest
+        ? getLowestReasoningEffort(modelForRequest)
         : undefined
     }
 
@@ -1218,34 +1352,6 @@ export class CopilotStore extends BaseStore {
           const key = getCopilotModelCacheKey(account)
           this.modelCaches.delete(key)
           this.emitUpdate()
-
-          if (authMode !== 'logged-in-user') {
-            log.warn(
-              `CopilotStore: Model '${modelId}' is not supported with ${getCopilotAuthModeDescription(
-                authMode
-              )}; retrying commit message generation with logged-in Copilot user`,
-              e
-            )
-            await this.stopClient(client)
-            authMode = 'logged-in-user'
-            const fallback = await this.fetchModelsForAuthMode(
-              account,
-              authMode
-            )
-            const fallbackModel = getPreferredDefaultModel(fallback.models)
-            modelId = fallbackModel?.id
-            reasoningEffort = fallbackModel
-              ? getLowestReasoningEffort(fallbackModel)
-              : undefined
-            this.modelCaches.set(key, {
-              models: fallback.models,
-              cachedAt: Date.now(),
-              authMode,
-            })
-            this.emitUpdate()
-            client = await this.createClient(account, repositoryPath, authMode)
-            return await runSession(modelId, reasoningEffort)
-          }
 
           log.warn(
             `CopilotStore: Model '${modelId}' is not supported for this account; retrying commit message generation without the SDK model override`,
@@ -2008,23 +2114,6 @@ export class CopilotStore extends BaseStore {
       }
     }
 
-    if (account.token) {
-      try {
-        const result = await this.fetchModelsFromCopilotEndpoint(account)
-        lastResult = result
-
-        if (result.models.length > 0) {
-          return result
-        }
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e))
-        log.warn(
-          'CopilotStore: Model list request failed using WebUI Copilot endpoint',
-          lastError
-        )
-      }
-    }
-
     try {
       const result = await this.fetchModelsForAuthMode(account, 'logged-in-user')
       lastResult = result
@@ -2050,44 +2139,6 @@ export class CopilotStore extends BaseStore {
     }
 
     return lastResult
-  }
-
-  private async fetchModelsFromCopilotEndpoint(
-    account: Account
-  ): Promise<ICopilotModelFetchResult> {
-    if (!account.token) {
-      return { models: [], authMode: 'account-token' }
-    }
-
-    log.info(
-      'CopilotStore: Fetching Copilot model list using WebUI Copilot endpoint'
-    )
-
-    const api = new API(
-      account.endpoint,
-      account.token,
-      account.copilotEndpoint ?? 'https://api.githubcopilot.com'
-    )
-    const rawModels = await withTimeout(
-      api.fetchCopilotModels(),
-      ModelListFetchTimeoutMs,
-      'Copilot endpoint model list request timed out'
-    )
-    const selectableModels =
-      getSelectableCopilotModels(rawModels).filter(dedupeCopilotModel())
-
-    log.info(
-      `CopilotStore: Model list response using WebUI Copilot endpoint: raw=${
-        rawModels.length
-      }; selectable=${selectableModels.length}; ids=${rawModels
-        .map(m => m.id)
-        .join(', ')}`
-    )
-
-    return {
-      models: selectableModels,
-      authMode: 'account-token',
-    }
   }
 
   private async fetchModelsForAuthMode(
@@ -2136,7 +2187,11 @@ export class CopilotStore extends BaseStore {
     try {
       await client.start()
       const models = await withTimeout(
-        client.listModels(),
+        authMode === 'account-token' && account.token
+          ? client.rpc.models
+              .list({ gitHubToken: account.token })
+              .then(x => normalizeCopilotModelInfos(x.models))
+          : client.listModels().then(normalizeCopilotModelInfos),
         ModelListFetchTimeoutMs,
         'Copilot model list request timed out'
       )
