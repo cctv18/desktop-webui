@@ -48,7 +48,11 @@ import { isGHE } from '../endpoint-capabilities'
 
 /** The default model ID used for Copilot commit message generation. */
 export const DefaultCopilotModel = 'gpt-5-mini'
-const getCopilotIntegrationId = () => 'copilot-desktop'
+
+// This WebUI talks to the bundled Copilot CLI runtime. CAPI model availability
+// is integration-scoped; using Desktop's legacy integration returns old,
+// picker-disabled models that the CLI cannot invoke.
+const getCopilotIntegrationId = () => 'copilot-developer-cli'
 
 /**
  * The reasoning effort used for Copilot conflict resolution when the selected
@@ -1191,7 +1195,7 @@ export class CopilotStore extends BaseStore {
         env.GH_CONFIG_DIR ?? '<unset>'
       }; keytarDisabled=${env.COPILOT_DISABLE_KEYTAR ?? '<unset>'}; providerEndpointRpc=${
         env.COPILOT_ALLOW_GET_PROVIDER_ENDPOINT ?? '<unset>'
-      }`
+      }; integrationId=${env.GITHUB_COPILOT_INTEGRATION_ID ?? '<unset>'}`
     )
   }
 
@@ -2196,28 +2200,6 @@ export class CopilotStore extends BaseStore {
         )
       }
 
-      try {
-        const rawModels = await this.fetchModelsFromAccountEndpoint(account)
-        const result = this.createModelFetchResult(
-          rawModels,
-          'account-token',
-          'account Copilot endpoint'
-        )
-        lastResult = result
-
-        if (result.models.length > 0) {
-          return result
-        }
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e))
-        log.warn(
-          `CopilotStore: Model list request failed using ${getCopilotAuthModeDescription(
-            'account-token'
-          )}`,
-          lastError
-        )
-      }
-
       if (lastError !== undefined) {
         log.warn(
           'CopilotStore: WebUI account token model discovery failed or returned no selectable models; not falling back to global Copilot login state',
@@ -2317,37 +2299,6 @@ export class CopilotStore extends BaseStore {
       await session?.disconnect().catch(() => {})
       await this.stopClient(client)
     }
-  }
-
-  private async fetchModelsFromAccountEndpoint(
-    account: Account
-  ): Promise<ReadonlyArray<ModelInfo>> {
-    if (!account.token) {
-      throw new Error('Cannot fetch Copilot models: Account has no token')
-    }
-
-    log.info(
-      `CopilotStore: Fetching Copilot model list using account Copilot endpoint; account=${getAccountLogDescription(
-        account
-      )}; endpoint=${account.copilotEndpoint ?? '<unset>'}; tokenSource=WebUI account token ${getAccountTokenLogState(
-        account
-      )}`
-    )
-
-    const api = API.fromAccount(account)
-    const models = await withTimeout(
-      api.fetchCopilotModels().then(normalizeCopilotModelInfos),
-      ModelListFetchTimeoutMs,
-      'Copilot account endpoint model list request timed out'
-    )
-
-    log.info(
-      `CopilotStore: Account Copilot endpoint model list request completed; raw=${models.length}; account=${getAccountLogDescription(
-        account
-      )}`
-    )
-
-    return models
   }
 }
 

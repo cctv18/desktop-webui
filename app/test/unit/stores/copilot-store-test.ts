@@ -206,7 +206,7 @@ describe('getPreferredDefaultModel', () => {
 })
 
 describe('CopilotStore model discovery', () => {
-  it('uses the account Copilot endpoint when SDK model RPCs return no selectable models', async () => {
+  it('does not use the account Copilot endpoint when the session RPC returns no selectable models', async () => {
     const account = makeCopilotAccount()
     const store = new CopilotStore({
       onDidUpdate() {},
@@ -217,13 +217,6 @@ describe('CopilotStore model discovery', () => {
     ;(store as any).fetchModelsFromSession = async () => {
       calls.push('session.model.list')
       return []
-    }
-    ;(store as any).fetchModelsForAuthMode = async (
-      _account: Account,
-      authMode: string
-    ) => {
-      calls.push(`models.list:${authMode}`)
-      return { models: [], authMode }
     }
     ;(store as any).fetchModelsFromAccountEndpoint = async () => {
       calls.push('account-endpoint')
@@ -242,14 +235,8 @@ describe('CopilotStore model discovery', () => {
     const result = await (store as any).fetchModelsWithFallback(account)
 
     assert.strictEqual(result.authMode, 'account-token')
-    assert.deepStrictEqual(
-      result.models.map((model: ModelInfo) => model.id),
-      ['gpt-5-mini']
-    )
-    assert.deepStrictEqual(calls, [
-      'session.model.list',
-      'account-endpoint',
-    ])
+    assert.deepStrictEqual(result.models, [])
+    assert.deepStrictEqual(calls, ['session.model.list'])
   })
 
   it('does not fall back to global Copilot login state when the account token is missing', async () => {
@@ -258,10 +245,6 @@ describe('CopilotStore model discovery', () => {
       onDidUpdate() {},
       getAll: async () => [account],
     } as any)
-
-    ;(store as any).fetchModelsForAuthMode = async () => {
-      throw new Error('unexpected global Copilot login fallback')
-    }
 
     const result = await (store as any).fetchModelsWithFallback(account)
 
