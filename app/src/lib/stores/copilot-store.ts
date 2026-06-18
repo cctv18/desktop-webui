@@ -38,7 +38,7 @@ import { startTimer } from '../../ui/lib/timing'
 import { chmod, stat } from 'fs/promises'
 import { isAbsolute, join } from 'path'
 import { pathToFileURL } from 'url'
-import { randomBytes } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 import { BaseStore } from './base-store'
 import { IRepoRulesMetadataRule } from '../../models/repo-rules'
 import { pathExists } from '../path-exists'
@@ -109,6 +109,7 @@ interface IResolvedConflictModelConfig {
   readonly provider: CopilotProviderConfig | undefined
   readonly timeoutMs: number | undefined
   readonly authMode: CopilotAuthMode
+  readonly gitHubToken: string | undefined
 }
 
 type CopilotAuthMode = 'account-token' | 'logged-in-user'
@@ -166,10 +167,34 @@ function getCopilotAuthModeDescription(authMode: CopilotAuthMode): string {
     : 'logged-in Copilot user'
 }
 
-function getAccountTokenLogState(account: Account): string {
-  return account.token === ''
+function getTokenLogState(token: string | undefined): string {
+  return !token
     ? 'missing'
-    : `present(length=${account.token.length})`
+    : `present(length=${token.length}, sha256=${createHash('sha256')
+        .update(token)
+        .digest('hex')
+        .slice(0, 8)})`
+}
+
+function getAccountTokenLogState(account: Account): string {
+  return getTokenLogState(account.token)
+}
+
+function getAccountLogDescription(account: Account): string {
+  const primaryEmail =
+    account.emails.find(email => email.primary)?.email ??
+    account.emails[0]?.email ??
+    '<none>'
+
+  return `login=${account.login}; name=${account.friendlyName}; email=${primaryEmail}; endpoint=${account.endpoint}`
+}
+
+function getProviderLogDescription(
+  provider: CopilotProviderConfig | undefined
+): string {
+  return provider === undefined
+    ? 'github-copilot'
+    : `byok(type=${provider.type ?? 'openai'}; baseUrl=${provider.baseUrl})`
 }
 
 function getCopilotCLIDir(): string {
@@ -212,6 +237,7 @@ function getCopilotClientEnv(
     COPILOT_CACHE_HOME: join(copilotDataDir, 'cache'),
     GH_CONFIG_DIR: join(copilotDataDir, 'gh'),
     GH_HOST: getCopilotGHHost(account),
+    COPILOT_ALLOW_GET_PROVIDER_ENDPOINT: 'true',
     GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
   }
 
@@ -761,6 +787,105 @@ function normalizeCopilotModelInfos(
   })
 }
 
+function getCopilotModelsPayload(response: unknown): ReadonlyArray<unknown> {
+  if (Array.isArray(response)) {
+    return response
+  }
+
+  if (!isRecord(response)) {
+    return []
+  }
+
+  const data = response.data
+  if (Array.isArray(data)) {
+    return data
+  }
+
+  const models = response.models
+  return Array.isArray(models) ? models : []
+}
+
+function getProviderModelsURL(baseUrl: string): string {
+  const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`
+  return new URL('models', normalizedBaseUrl).toString()
+}
+
+interface ICopilotProviderEndpoint {
+  readonly type: string
+  readonly wireApi?: string
+  readonly baseUrl: string
+  readonly apiKey?: string
+  readonly headers?: Record<string, string | undefined>
+  readonly sessionToken?: {
+    readonly header: string
+    readonly token: string
+  }
+}
+
+interface ICopilotSessionProviderRpc {
+  readonly provider?: {
+    readonly getEndpoint?: (
+      params?: Readonly<{ readonly modelId?: string }>
+    ) => Promise<ICopilotProviderEndpoint>
+  }
+}
+
+function getSessionProviderEndpoint(
+  session: CopilotSession
+): Promise<ICopilotProviderEndpoint> {
+  const rpc = session.rpc as unknown as ICopilotSessionProviderRpc
+  const getEndpoint = rpc.provider?.getEndpoint
+
+  if (getEndpoint === undefined) {
+    throw new Error(
+      'Copilot runtime does not expose session.provider.getEndpoint'
+    )
+  }
+
+  return getEndpoint({})
+}
+
+function getProviderEndpointHeaders(
+  endpoint: ICopilotProviderEndpoint
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Initiator': 'user',
+    'X-Interaction-ID': randomBytes(16).toString('hex'),
+    'X-Interaction-Type': 'listModels',
+  }
+
+  for (const [key, value] of Object.entries(endpoint.headers ?? {})) {
+    if (value !== undefined) {
+      headers[key] = value
+    }
+  }
+
+  if (endpoint.apiKey && headers.Authorization === undefined) {
+    headers.Authorization = `Bearer ${endpoint.apiKey}`
+  }
+
+  if (endpoint.sessionToken !== undefined) {
+    headers[endpoint.sessionToken.header] = endpoint.sessionToken.token
+  }
+
+  return headers
+}
+
+function getHeaderLogDescription(headers: Record<string, string>): string {
+  return Object.keys(headers)
+    .sort((a, b) => a.localeCompare(b))
+    .join(', ')
+}
+
+async function getErrorResponseBody(response: Response): Promise<string> {
+  try {
+    return (await response.text()).slice(0, 500)
+  } catch {
+    return '<unreadable>'
+  }
+}
+
 function isSelectableCopilotModel(model: ModelInfo): boolean {
   return model.id.trim().toLowerCase() !== 'auto'
 }
@@ -1132,7 +1257,11 @@ export class CopilotStore extends BaseStore {
         account
       )}; runtime=${runtimePath}; workdir=${repositoryPath ?? '<none>'}; COPILOT_HOME=${
         env.COPILOT_HOME ?? '<unset>'
-      }; COPILOT_CACHE_HOME=${env.COPILOT_CACHE_HOME ?? '<unset>'}`
+      }; COPILOT_CACHE_HOME=${env.COPILOT_CACHE_HOME ?? '<unset>'}; GH_CONFIG_DIR=${
+        env.GH_CONFIG_DIR ?? '<unset>'
+      }; keytarDisabled=${env.COPILOT_DISABLE_KEYTAR ?? '<unset>'}; providerEndpointRpc=${
+        env.COPILOT_ALLOW_GET_PROVIDER_ENDPOINT ?? '<unset>'
+      }`
     )
   }
 
@@ -1234,7 +1363,7 @@ export class CopilotStore extends BaseStore {
         request?.kind === 'copilot' ? request.modelId : null
       const cachedEntry = await this.getCachedModelEntry(account)
       const cachedModels = cachedEntry?.models ?? []
-      authMode = cachedEntry?.authMode ?? authMode
+      authMode = account.token ? 'account-token' : cachedEntry?.authMode ?? authMode
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
@@ -1264,8 +1393,16 @@ export class CopilotStore extends BaseStore {
         `CopilotStore: Generating commit message using ${getCopilotAuthModeDescription(
           authMode
         )}; model=${modelId ?? '<runtime-default>'}; provider=${
-          provider === undefined ? 'github-copilot' : 'byok'
-        }`
+          getProviderLogDescription(provider)
+        }; account=${getAccountLogDescription(
+          account
+        )}; tokenSource=${
+          provider === undefined ? `session gitHubToken ${getAccountTokenLogState(account)}` : 'byok provider'
+        }; request=createSession{model=${
+          modelId ?? '<runtime-default>'
+        }, reasoningEffort=${reasoningEffort ?? '<unset>'}, promptBytes=${
+          Buffer.byteLength(diff, 'utf8')
+        }}`
       )
       client = await this.createClient(account, repositoryPath, authMode)
     } catch (e) {
@@ -1308,6 +1445,9 @@ export class CopilotStore extends BaseStore {
               ? { reasoningEffort: sessionReasoningEffort }
               : {}),
             ...(provider !== undefined ? { provider } : {}),
+            ...(provider === undefined && account.token
+              ? { gitHubToken: account.token }
+              : {}),
             systemMessage: {
               // It's important to 'append' the system prompt so that it doesn't
               // override any instructions, like copilot-instructions.md (in which
@@ -1639,6 +1779,7 @@ export class CopilotStore extends BaseStore {
         provider: request.provider,
         timeoutMs: request.timeoutMs,
         authMode: 'account-token',
+        gitHubToken: undefined,
       }
     }
 
@@ -1669,7 +1810,10 @@ export class CopilotStore extends BaseStore {
         : undefined,
       provider: undefined,
       timeoutMs: undefined,
-      authMode: cachedEntry?.authMode ?? 'account-token',
+      authMode: account.token
+        ? 'account-token'
+        : cachedEntry?.authMode ?? 'account-token',
+      gitHubToken: account.token || undefined,
     }
   }
 
@@ -1712,7 +1856,13 @@ export class CopilotStore extends BaseStore {
     log.info(
       `CopilotStore: Resolving conflicts using ${getCopilotAuthModeDescription(
         modelConfig.authMode
-      )}; model=${modelConfig.modelId ?? '<runtime-default>'}; files=${filesTotal}`
+      )}; model=${modelConfig.modelId ?? '<runtime-default>'}; files=${filesTotal}; account=${getAccountLogDescription(
+        account
+      )}; tokenSource=${
+        modelConfig.provider === undefined
+          ? `session gitHubToken ${getTokenLogState(modelConfig.gitHubToken)}`
+          : 'byok provider'
+      }; provider=${getProviderLogDescription(modelConfig.provider)}`
     )
     const clientTimer = startTimer('createClient')
     const client = await this.createClient(
@@ -1879,6 +2029,9 @@ export class CopilotStore extends BaseStore {
           : {}),
         ...(modelConfig.provider !== undefined
           ? { provider: modelConfig.provider }
+          : {}),
+        ...(modelConfig.provider === undefined && modelConfig.gitHubToken
+          ? { gitHubToken: modelConfig.gitHubToken }
           : {}),
         streaming: true,
         availableTools: [],
@@ -2086,18 +2239,37 @@ export class CopilotStore extends BaseStore {
   private async fetchModelsWithFallback(
     account: Account
   ): Promise<ICopilotModelFetchResult> {
-    const authModes: ReadonlyArray<CopilotAuthMode> = account.token
-      ? ['account-token']
-      : []
     let lastResult: ICopilotModelFetchResult = {
       models: [],
       authMode: account.token ? 'account-token' : 'logged-in-user',
     }
     let lastError: Error | undefined
 
-    for (const authMode of authModes) {
+    if (account.token) {
       try {
-        const result = await this.fetchModelsForAuthMode(account, authMode)
+        const rawModels = await this.fetchModelsFromSessionProviderEndpoint(
+          account
+        )
+        const result = this.createModelFetchResult(
+          rawModels,
+          'account-token',
+          'session provider endpoint'
+        )
+        lastResult = result
+
+        if (result.models.length > 0) {
+          return result
+        }
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e))
+        log.warn(
+          'CopilotStore: Session-scoped Copilot model list request failed',
+          lastError
+        )
+      }
+
+      try {
+        const result = await this.fetchModelsForAuthMode(account, 'account-token')
         lastResult = result
 
         if (result.models.length > 0) {
@@ -2107,20 +2279,25 @@ export class CopilotStore extends BaseStore {
         lastError = e instanceof Error ? e : new Error(String(e))
         log.warn(
           `CopilotStore: Model list request failed using ${getCopilotAuthModeDescription(
-            authMode
+            'account-token'
           )}`,
           lastError
         )
       }
+
+      if (lastError !== undefined) {
+        log.warn(
+          'CopilotStore: WebUI account token model discovery failed or returned no selectable models; not falling back to global Copilot login state',
+          lastError
+        )
+      }
+
+      return lastResult
     }
 
     try {
       const result = await this.fetchModelsForAuthMode(account, 'logged-in-user')
-      lastResult = result
-
-      if (result.models.length > 0) {
-        return result
-      }
+      return result
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e))
       log.warn(
@@ -2129,30 +2306,22 @@ export class CopilotStore extends BaseStore {
         )}`,
         lastError
       )
+      return lastResult
     }
-
-    if (lastError !== undefined) {
-      log.warn(
-        'CopilotStore: All Copilot model list auth modes failed or returned no selectable models',
-        lastError
-      )
-    }
-
-    return lastResult
   }
 
-  private async fetchModelsForAuthMode(
-    account: Account,
-    authMode: CopilotAuthMode
-  ): Promise<ICopilotModelFetchResult> {
-    const rawModels = await this.fetchModels(account, authMode)
+  private createModelFetchResult(
+    rawModels: ReadonlyArray<ModelInfo>,
+    authMode: CopilotAuthMode,
+    source: string
+  ): ICopilotModelFetchResult {
     const selectableModels =
       getSelectableCopilotModels(rawModels).filter(dedupeCopilotModel())
 
     log.info(
       `CopilotStore: Model list response using ${getCopilotAuthModeDescription(
         authMode
-      )}: raw=${rawModels.length}; selectable=${
+      )} via ${source}: raw=${rawModels.length}; selectable=${
         selectableModels.length
       }; ids=${rawModels.map(m => m.id).join(', ')}`
     )
@@ -2160,6 +2329,129 @@ export class CopilotStore extends BaseStore {
     return {
       models: selectableModels,
       authMode,
+    }
+  }
+
+  private async fetchModelsForAuthMode(
+    account: Account,
+    authMode: CopilotAuthMode
+  ): Promise<ICopilotModelFetchResult> {
+    const rawModels = await this.fetchModels(account, authMode)
+    return this.createModelFetchResult(rawModels, authMode, 'models.list RPC')
+  }
+
+  private async fetchModelsFromSessionProviderEndpoint(
+    account: Account
+  ): Promise<ReadonlyArray<ModelInfo>> {
+    let client: CopilotClient
+    try {
+      log.info(
+        `CopilotStore: Fetching Copilot model list using session provider endpoint; account=${getAccountLogDescription(
+          account
+        )}; tokenSource=session gitHubToken ${getAccountTokenLogState(account)}`
+      )
+      client = await this.createClient(account, undefined, 'account-token')
+    } catch (e) {
+      if (this.isMissingCLIError(e)) {
+        log.warn('CopilotStore: Cannot list models because the CLI is missing', e)
+        return []
+      }
+
+      throw e
+    }
+
+    let session: CopilotSession | null = null
+    try {
+      await client.start()
+      session = await client.createSession({
+        gitHubToken: account.token,
+        availableTools: [],
+        onPermissionRequest: async () => ({
+          kind: 'reject',
+        }),
+      })
+
+      const authStatus = await session.rpc.auth.getStatus().catch(e => {
+        log.warn('CopilotStore: Session auth status request failed', e)
+        return null
+      })
+
+      if (authStatus !== null) {
+        log.info(
+          `CopilotStore: Session auth status for model list: authenticated=${
+            authStatus.isAuthenticated
+          }; login=${authStatus.login ?? '<none>'}; plan=${
+            authStatus.copilotPlan ?? '<none>'
+          }; account=${getAccountLogDescription(account)}`
+        )
+      }
+
+      const endpoint = await withTimeout(
+        getSessionProviderEndpoint(session),
+        ModelListFetchTimeoutMs,
+        'Copilot provider endpoint request timed out'
+      )
+      const modelUrls = [
+        getProviderModelsURL(endpoint.baseUrl),
+        ...(account.copilotEndpoint
+          ? [getProviderModelsURL(account.copilotEndpoint)]
+          : []),
+      ].filter((value, index, values) => values.indexOf(value) === index)
+      const headers = getProviderEndpointHeaders(endpoint)
+
+      let lastError: Error | undefined
+      for (const modelsUrl of modelUrls) {
+        try {
+          log.info(
+            `CopilotStore: Requesting Copilot models from session provider endpoint; method=GET; url=${modelsUrl}; endpointType=${
+              endpoint.type
+            }; wireApi=${endpoint.wireApi ?? '<unset>'}; account=${getAccountLogDescription(
+              account
+            )}; apiKey=${getTokenLogState(endpoint.apiKey)}; sessionToken=${getTokenLogState(
+              endpoint.sessionToken?.token
+            )}; headers=${getHeaderLogDescription(headers)}`
+          )
+
+          const response = await withTimeout(
+            fetch(modelsUrl, {
+              method: 'GET',
+              headers,
+            }),
+            ModelListFetchTimeoutMs,
+            'Copilot provider endpoint model request timed out'
+          )
+
+          if (!response.ok) {
+            throw new Error(
+              `Copilot provider endpoint model request failed with status ${
+                response.status
+              }: ${await getErrorResponseBody(response)}`
+            )
+          }
+
+          const payload = await response.json()
+          log.info(
+            `CopilotStore: Session provider endpoint model request completed from ${modelsUrl}`
+          )
+          return normalizeCopilotModelInfos(getCopilotModelsPayload(payload))
+        } catch (e) {
+          lastError = e instanceof Error ? e : new Error(String(e))
+          log.warn(
+            `CopilotStore: Session provider endpoint model request failed for ${modelsUrl}`,
+            lastError
+          )
+        }
+      }
+
+      throw (
+        lastError ??
+        new Error(
+          'Copilot provider endpoint did not provide a model-list URL to query'
+        )
+      )
+    } finally {
+      await session?.disconnect().catch(() => {})
+      await this.stopClient(client)
     }
   }
 
@@ -2172,7 +2464,13 @@ export class CopilotStore extends BaseStore {
       log.info(
         `CopilotStore: Fetching Copilot model list using ${getCopilotAuthModeDescription(
           authMode
-        )}`
+        )}; account=${getAccountLogDescription(
+          account
+        )}; request=models.list{gitHubToken=${
+          authMode === 'account-token'
+            ? getAccountTokenLogState(account)
+            : '<none>'
+        }}`
       )
       client = await this.createClient(account, undefined, authMode)
     } catch (e) {
