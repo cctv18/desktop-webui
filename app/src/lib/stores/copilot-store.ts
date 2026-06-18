@@ -817,7 +817,14 @@ function listSessionCopilotModels(
 }
 
 function isSelectableCopilotModel(model: ModelInfo): boolean {
-  return model.id.trim().toLowerCase() !== 'auto'
+  if (model.id.trim().toLowerCase() === 'auto') {
+    return false
+  }
+
+  // session.model.list should already be picker-scoped, but direct CAPI model
+  // payloads can include disabled preview models. Keep this guard here so a
+  // future fallback cannot cache models the runtime will reject.
+  return model.policy?.state !== 'disabled'
 }
 
 function getSelectableCopilotModels(

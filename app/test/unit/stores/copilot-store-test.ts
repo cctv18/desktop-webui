@@ -251,6 +251,34 @@ describe('CopilotStore model discovery', () => {
     assert.strictEqual(result.authMode, 'account-token')
     assert.deepStrictEqual(result.models, [])
   })
+
+  it('does not cache policy-disabled models as selectable', async () => {
+    const account = makeCopilotAccount()
+    const store = new CopilotStore({
+      onDidUpdate() {},
+      getAll: async () => [account],
+    } as any)
+
+    ;(store as any).fetchModelsFromSession = async () => [
+      makeModel({
+        id: 'gpt-5-mini',
+        name: 'GPT-5 mini',
+        policy: { state: 'enabled' } as any,
+      }),
+      makeModel({
+        id: 'gemini-3.5-flash',
+        name: 'Gemini 3.5 Flash',
+        policy: { state: 'disabled' } as any,
+      }),
+    ]
+
+    const result = await (store as any).fetchModelsWithFallback(account)
+
+    assert.deepStrictEqual(
+      result.models.map((model: ModelInfo) => model.id),
+      ['gpt-5-mini']
+    )
+  })
 })
 
 /**
