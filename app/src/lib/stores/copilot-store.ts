@@ -35,7 +35,7 @@ import {
   formatConflictContextForPrompt,
 } from '../copilot-conflict-context'
 import { startTimer } from '../../ui/lib/timing'
-import { chmod, stat } from 'fs/promises'
+import { chmod, mkdir, stat } from 'fs/promises'
 import { isAbsolute, join } from 'path'
 import { pathToFileURL } from 'url'
 import { createHash, randomBytes } from 'crypto'
@@ -193,6 +193,37 @@ function getAccountLogDescription(account: Account): string {
   return `login=${account.login}; name=${account.friendlyName}; email=${primaryEmail}; endpoint=${account.endpoint}`
 }
 
+interface ICopilotAuthStatusLike {
+  readonly isAuthenticated?: boolean
+  readonly login?: string | null
+  readonly copilotPlan?: string | null
+  readonly authType?: string | null
+}
+
+export function validateCopilotSessionAccountAuthStatus(
+  authStatus: ICopilotAuthStatusLike | null,
+  account: Account,
+  operation: string
+): void {
+  if (authStatus === null) {
+    throw new Error(
+      `Copilot ${operation} authentication could not be verified for WebUI account ${account.login}; refusing to use any global Copilot credentials.`
+    )
+  }
+
+  if (authStatus.isAuthenticated !== true || !authStatus.login) {
+    throw new Error(
+      `Copilot ${operation} is not authenticated for WebUI account ${account.login}; refusing to use any global Copilot credentials.`
+    )
+  }
+
+  if (authStatus.login.toLowerCase() !== account.login.toLowerCase()) {
+    throw new Error(
+      `Copilot ${operation} authenticated as ${authStatus.login}, but the current WebUI account is ${account.login}; refusing to use mismatched Copilot credentials.`
+    )
+  }
+}
+
 function getProviderLogDescription(
   provider: CopilotProviderConfig | undefined
 ): string {
@@ -207,6 +238,14 @@ function getCopilotCLIDir(): string {
 
 function getCopilotDataDir(): string {
   return join(__dirname, 'copilot-data')
+}
+
+function getCopilotPrivateHomeDir(): string {
+  return join(getCopilotDataDir(), 'private-home')
+}
+
+function getCopilotPrivateProfileDir(): string {
+  return join(getCopilotDataDir(), 'private-profile')
 }
 
 function clearInheritedCopilotAuthEnv(env: Record<string, string | undefined>) {
@@ -231,6 +270,8 @@ function getCopilotClientEnv(
   account: Account
 ): Record<string, string | undefined> {
   const copilotDataDir = getCopilotDataDir()
+  const privateHomeDir = getCopilotPrivateHomeDir()
+  const privateProfileDir = getCopilotPrivateProfileDir()
   const env: Record<string, string | undefined> = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
@@ -240,6 +281,13 @@ function getCopilotClientEnv(
     COPILOT_HOME: join(copilotDataDir, 'home'),
     COPILOT_CACHE_HOME: join(copilotDataDir, 'cache'),
     GH_CONFIG_DIR: join(copilotDataDir, 'gh'),
+    HOME: privateHomeDir,
+    USERPROFILE: privateProfileDir,
+    XDG_CONFIG_HOME: join(privateHomeDir, '.config'),
+    XDG_CACHE_HOME: join(privateHomeDir, '.cache'),
+    XDG_DATA_HOME: join(privateHomeDir, '.local', 'share'),
+    APPDATA: join(privateProfileDir, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(privateProfileDir, 'AppData', 'Local'),
     GH_HOST: getCopilotGHHost(account),
     COPILOT_ALLOW_GET_PROVIDER_ENDPOINT: 'true',
     GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
@@ -248,6 +296,27 @@ function getCopilotClientEnv(
   clearInheritedCopilotAuthEnv(env)
 
   return env
+}
+
+async function ensureCopilotPrivateDirectories(
+  env: Record<string, string | undefined>
+): Promise<void> {
+  const directories = [
+    env.COPILOT_HOME,
+    env.COPILOT_CACHE_HOME,
+    env.GH_CONFIG_DIR,
+    env.HOME,
+    env.USERPROFILE,
+    env.XDG_CONFIG_HOME,
+    env.XDG_CACHE_HOME,
+    env.XDG_DATA_HOME,
+    env.APPDATA,
+    env.LOCALAPPDATA,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+
+  await Promise.all(
+    directories.map(directory => mkdir(directory, { recursive: true }))
+  )
 }
 
 async function getCopilotExecutablePath(): Promise<string | null> {
@@ -1113,6 +1182,7 @@ export class CopilotStore extends BaseStore {
     }
 
     const env = getCopilotClientEnv(account)
+    await ensureCopilotPrivateDirectories(env)
     const authOptions =
       authMode === 'account-token'
         ? { gitHubToken: account.token, useLoggedInUser: false }
@@ -1200,10 +1270,43 @@ export class CopilotStore extends BaseStore {
         env.COPILOT_HOME ?? '<unset>'
       }; COPILOT_CACHE_HOME=${env.COPILOT_CACHE_HOME ?? '<unset>'}; GH_CONFIG_DIR=${
         env.GH_CONFIG_DIR ?? '<unset>'
+      }; HOME=${env.HOME ?? '<unset>'}; USERPROFILE=${
+        env.USERPROFILE ?? '<unset>'
       }; keytarDisabled=${env.COPILOT_DISABLE_KEYTAR ?? '<unset>'}; providerEndpointRpc=${
         env.COPILOT_ALLOW_GET_PROVIDER_ENDPOINT ?? '<unset>'
       }; integrationId=${env.GITHUB_COPILOT_INTEGRATION_ID ?? '<unset>'}`
     )
+  }
+
+  private async verifySessionAccountAuthStatus(
+    session: CopilotSession,
+    account: Account,
+    operation: string
+  ): Promise<void> {
+    const authStatus = await session.rpc.auth.getStatus().catch(e => {
+      log.warn(
+        `CopilotStore: ${operation} auth status request failed for ${getAccountLogDescription(
+          account
+        )}`,
+        e
+      )
+      return null
+    })
+
+    if (authStatus !== null) {
+      const authStatusLog = authStatus as ICopilotAuthStatusLike
+      log.info(
+        `CopilotStore: ${operation} auth status: authenticated=${
+          authStatusLog.isAuthenticated
+        }; login=${authStatusLog.login ?? '<none>'}; plan=${
+          authStatusLog.copilotPlan ?? '<none>'
+        }; authType=${authStatusLog.authType ?? '<none>'}; account=${getAccountLogDescription(
+          account
+        )}; credentialSource=WebUI account token`
+      )
+    }
+
+    validateCopilotSessionAccountAuthStatus(authStatus, account, operation)
   }
 
   /**
@@ -1401,6 +1504,14 @@ export class CopilotStore extends BaseStore {
               kind: 'reject',
             }),
           })
+
+          if (provider === undefined) {
+            await this.verifySessionAccountAuthStatus(
+              session,
+              account,
+              'commit message generation'
+            )
+          }
 
           // Send the diff (and any repo-rule constraints) and wait for response.
           // Both are wrapped in per-request tagged blocks so the model can
@@ -1822,6 +1933,7 @@ export class CopilotStore extends BaseStore {
         const prompt = formatConflictContextForPrompt(filteredContext)
         const chunkResult = await this.resolveChunk(
           client,
+          account,
           prompt,
           resolvableFiles,
           modelConfig,
@@ -1869,6 +1981,7 @@ export class CopilotStore extends BaseStore {
             const prompt = formatConflictContextForPrompt(chunkContext)
             return this.resolveChunk(
               client,
+              account,
               prompt,
               chunkFiles,
               modelConfig,
@@ -1941,6 +2054,7 @@ export class CopilotStore extends BaseStore {
    */
   private async resolveChunk(
     client: CopilotClient,
+    account: Account,
     prompt: string,
     expectedFiles: ReadonlyArray<IFileConflictContext>,
     modelConfig: IResolvedConflictModelConfig,
@@ -1985,6 +2099,14 @@ export class CopilotStore extends BaseStore {
         }),
       })
       sessionTimer.done()
+
+      if (modelConfig.provider === undefined) {
+        await this.verifySessionAccountAuthStatus(
+          session,
+          account,
+          'conflict resolution'
+        )
+      }
 
       // The user may have cancelled while the session was being created. Tear
       // it down immediately rather than starting a turn we're about to abandon.
@@ -2212,6 +2334,7 @@ export class CopilotStore extends BaseStore {
           'CopilotStore: WebUI account token model discovery failed or returned no selectable models; not falling back to global Copilot login state',
           lastError
         )
+        throw lastError
       }
 
       return lastResult
@@ -2276,20 +2399,7 @@ export class CopilotStore extends BaseStore {
         }),
       })
 
-      const authStatus = await session.rpc.auth.getStatus().catch(e => {
-        log.warn('CopilotStore: Session auth status request failed', e)
-        return null
-      })
-
-      if (authStatus !== null) {
-        log.info(
-          `CopilotStore: Session auth status for model list: authenticated=${
-            authStatus.isAuthenticated
-          }; login=${authStatus.login ?? '<none>'}; plan=${
-            authStatus.copilotPlan ?? '<none>'
-          }; account=${getAccountLogDescription(account)}`
-        )
-      }
+      await this.verifySessionAccountAuthStatus(session, account, 'model list')
 
       const result = await withTimeout(
         listSessionCopilotModels(session),

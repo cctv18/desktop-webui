@@ -10,6 +10,7 @@ import {
   getSupportedReasoningEffort,
   isCopilotConflictResolutionAbortError,
   runConflictResolutionTurn,
+  validateCopilotSessionAccountAuthStatus,
 } from '../../../src/lib/stores/copilot-store'
 import { Account } from '../../../src/models/account'
 
@@ -206,6 +207,24 @@ describe('getPreferredDefaultModel', () => {
 })
 
 describe('CopilotStore model discovery', () => {
+  it('rejects Copilot SDK auth status for a different GitHub account', () => {
+    const account = makeCopilotAccount()
+
+    assert.throws(
+      () =>
+        validateCopilotSessionAccountAuthStatus(
+          {
+            isAuthenticated: true,
+            login: 'someone-else',
+            copilotPlan: 'individual',
+          },
+          account,
+          'model list'
+        ),
+      /authenticated as someone-else/
+    )
+  })
+
   it('does not use the account Copilot endpoint when the session RPC returns no selectable models', async () => {
     const account = makeCopilotAccount()
     const store = new CopilotStore({

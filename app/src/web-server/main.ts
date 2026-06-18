@@ -5,6 +5,7 @@ import { WebRuntime } from './runtime'
 import { parseAllowedRoots, PathGuard } from './path-guard'
 import { serializeForWeb } from '../lib/webui-serialization'
 import { IOAuthAction } from '../lib/parse-app-url'
+import { GitHubCliOAuthClientID } from '../lib/api'
 
 type ServerEvent = {
   readonly type: string
@@ -12,7 +13,6 @@ type ServerEvent = {
 }
 
 const args = parseArgs(process.argv.slice(2))
-const DefaultWebUIOAuthClientId = 'Ov23liz1Wb08XDEhs7tm'
 const host = args.host ?? process.env.GITDESK_HOST ?? '127.0.0.1'
 const port = parseInt(args.port ?? process.env.GITDESK_PORT ?? '8080', 10)
 const staticRoot =
@@ -21,17 +21,6 @@ const staticRoot =
   process.env.GITDESK_STATIC_ROOT ??
   Path.join(__dirname, 'web')
 process.env.GITDESK_WEBUI_STATIC_ROOT = staticRoot
-setEnvIfValue(
-  'GITDESK_WEBUI_OAUTH_CLIENT_ID',
-  args.oauthClientId ??
-    args['oauth-client-id'] ??
-    process.env.GITDESK_WEBUI_OAUTH_CLIENT_ID ??
-    DefaultWebUIOAuthClientId
-)
-setEnvIfValue(
-  'GITDESK_WEBUI_OAUTH_CLIENT_SECRET',
-  args.oauthClientSecret ?? args['oauth-client-secret']
-)
 setEnvIfValue(
   'GITDESK_WEBUI_GIT_PATH',
   args.gitPath ?? args['git-path']
@@ -109,9 +98,7 @@ server.listen(port, host, () => {
     `GitDesk WebUI public URL: ${publicBaseURL}; OAuth callback: ${process.env.GITDESK_WEBUI_OAUTH_CALLBACK_URL}`
   )
   log.info(
-    `GitDesk WebUI OAuth client: ${
-      process.env.GITDESK_WEBUI_OAUTH_CLIENT_ID ? 'configured' : 'not configured'
-    }`
+    `GitDesk WebUI OAuth client: GitHub CLI device flow (${GitHubCliOAuthClientID})`
   )
 })
 

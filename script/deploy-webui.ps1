@@ -17,8 +17,6 @@ param(
   [string]$DataDir = "",
   [string]$StaticRoot = "",
   [string]$CopilotCliPath = "",
-  [string]$OAuthClientId = "",
-  [string]$OAuthClientSecret = "",
   [string]$OAuthCallbackUrl = "",
   [string]$LogFile = "out\webui-deploy.log"
 )
@@ -395,14 +393,6 @@ if (-not [string]::IsNullOrWhiteSpace($StaticRoot)) {
 
 if (-not [string]::IsNullOrWhiteSpace($CopilotCliPath)) {
   $runArguments += @("-CopilotCliPath", $CopilotCliPath)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($OAuthClientId)) {
-  $runArguments += @("-OAuthClientId", $OAuthClientId)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($OAuthClientSecret)) {
-  $runArguments += @("-OAuthClientSecret", $OAuthClientSecret)
 }
 
 if (-not [string]::IsNullOrWhiteSpace($OAuthCallbackUrl)) {

@@ -152,13 +152,10 @@ interface IFetchAllOptions<T> {
 const ClientID = process.env.TEST_ENV ? '' : __OAUTH_CLIENT_ID__
 const ClientSecret = process.env.TEST_ENV ? '' : __OAUTH_SECRET__
 
-function getWebUIOAuthClientID(): string | undefined {
-  return process.env.GITDESK_WEBUI_OAUTH_CLIENT_ID
-}
-
-function getWebUIOAuthClientSecret(): string | undefined {
-  return process.env.GITDESK_WEBUI_OAUTH_CLIENT_SECRET
-}
+// GitHub CLI official OAuth app. The client secret is intentionally public in
+// gh-cli and is used only for OAuth app endpoints that require basic auth.
+export const GitHubCliOAuthClientID = '178c6fc778ccc68e1d6a'
+const GitHubCliOAuthClientSecret = '34ddeff2b558a23d38fba8a6de74f086ede1cc0b'
 
 export function getOAuthClientID(): string | undefined {
   if (process.env.TEST_ENV) {
@@ -166,7 +163,7 @@ export function getOAuthClientID(): string | undefined {
   }
 
   if (__PROCESS_KIND__ === 'web-server') {
-    return getWebUIOAuthClientID() || ClientID
+    return GitHubCliOAuthClientID
   }
 
   return ClientID
@@ -178,24 +175,14 @@ export function getOAuthClientSecret(): string | undefined {
   }
 
   if (__PROCESS_KIND__ === 'web-server') {
-    return getWebUIOAuthClientSecret() || ClientSecret
+    return GitHubCliOAuthClientSecret
   }
 
   return ClientSecret
 }
 
 export function getWebUIOAuthConfigurationError(): Error | null {
-  if (__PROCESS_KIND__ !== 'web-server') {
-    return null
-  }
-
-  if (getWebUIOAuthClientID()) {
-    return null
-  }
-
-  return new Error(
-    `GitDesk WebUI OAuth device flow is not configured. Create a GitHub OAuth App with Device Flow enabled, then start the WebUI server with --oauth-client-id or set GITDESK_WEBUI_OAUTH_CLIENT_ID. The bundled GitHub Desktop OAuth app should not be used for WebUI device login.`
-  )
+  return null
 }
 
 const configuredOAuthClientID = getOAuthClientID()
@@ -209,14 +196,14 @@ if (
     !configuredOAuthClientSecret.length)
 ) {
   log.warn(
-    `OAuth client id and/or client secret is undefined. Desktop builds use DESKTOP_OAUTH_CLIENT_ID/DESKTOP_OAUTH_CLIENT_SECRET; WebUI server builds use GITDESK_WEBUI_OAUTH_CLIENT_ID/GITDESK_WEBUI_OAUTH_CLIENT_SECRET. You won't be able to authenticate new users.`
+    `OAuth client id and/or client secret is undefined. Desktop builds use DESKTOP_OAUTH_CLIENT_ID/DESKTOP_OAUTH_CLIENT_SECRET; WebUI server builds use the fixed GitHub CLI OAuth app. You won't be able to authenticate new users.`
   )
 }
 
 export type GitHubAccountType = 'User' | 'Organization'
 
 /** The OAuth scopes we want to request */
-const oauthScopes = ['repo', 'user', 'workflow']
+const oauthScopes = ['repo', 'read:org', 'gist', 'workflow', 'user']
 
 /**
  * Information about a repository as returned by the GitHub API.

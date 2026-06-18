@@ -21,8 +21,6 @@ GIT_CONFIG_GLOBAL=""
 DATA_DIR=""
 STATIC_ROOT=""
 COPILOT_CLI_PATH=""
-OAUTH_CLIENT_ID=""
-OAUTH_CLIENT_SECRET=""
 OAUTH_CALLBACK_URL=""
 REQUIRED_NODE_MAJOR=20
 PREFERRED_NODE_MAJOR=22
@@ -55,9 +53,6 @@ Options:
   --static-root <path>     Web static asset directory
   --copilot-cli-path <path>
                            Copilot CLI index.js path or package directory
-  --oauth-client-id <id>   Override the built-in GitHub OAuth client id
-  --oauth-client-secret <secret>
-                           GitHub OAuth client secret
   --oauth-callback-url <url>
                            GitHub OAuth callback URL
   --log-file <path>        Write full deploy output to a log file. Default: out/webui-deploy.log
@@ -138,14 +133,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --copilot-cli-path)
       COPILOT_CLI_PATH="$2"
-      shift 2
-      ;;
-    --oauth-client-id)
-      OAUTH_CLIENT_ID="$2"
-      shift 2
-      ;;
-    --oauth-client-secret)
-      OAUTH_CLIENT_SECRET="$2"
       shift 2
       ;;
     --oauth-callback-url)
@@ -516,14 +503,6 @@ fi
 
 if [[ -n "$COPILOT_CLI_PATH" ]]; then
   run_args+=(--copilot-cli-path "$COPILOT_CLI_PATH")
-fi
-
-if [[ -n "$OAUTH_CLIENT_ID" ]]; then
-  run_args+=(--oauth-client-id "$OAUTH_CLIENT_ID")
-fi
-
-if [[ -n "$OAUTH_CLIENT_SECRET" ]]; then
-  run_args+=(--oauth-client-secret "$OAUTH_CLIENT_SECRET")
 fi
 
 if [[ -n "$OAUTH_CALLBACK_URL" ]]; then
