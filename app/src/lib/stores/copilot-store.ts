@@ -180,12 +180,30 @@ function getCopilotDataDir(): string {
   return join(__dirname, 'copilot-data')
 }
 
+function clearInheritedCopilotAuthEnv(env: Record<string, string | undefined>) {
+  const authEnvNames = new Set([
+    'COPILOT_GITHUB_TOKEN',
+    'COPILOT_SDK_AUTH_TOKEN',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'GITHUB_COPILOT_GITHUB_TOKEN',
+    'GITHUB_COPILOT_API_TOKEN',
+    'GITHUB_PERSONAL_ACCESS_TOKEN',
+  ])
+
+  for (const key of Object.keys(env)) {
+    if (authEnvNames.has(key.toUpperCase())) {
+      delete env[key]
+    }
+  }
+}
+
 function getCopilotClientEnv(
   account: Account
 ): Record<string, string | undefined> {
   const copilotDataDir = getCopilotDataDir()
-
-  return {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     COPILOT_RUN_APP: '1',
     COPILOT_AUTO_UPDATE: 'false',
@@ -194,6 +212,20 @@ function getCopilotClientEnv(
     GH_HOST: getCopilotGHHost(account),
     GITHUB_COPILOT_INTEGRATION_ID: getCopilotIntegrationId(),
   }
+
+  clearInheritedCopilotAuthEnv(env)
+
+  if (account.token.length > 0) {
+    // These variables are scoped to the spawned Copilot runtime only. They let
+    // `useLoggedInUser` mode authenticate without writing WebUI credentials to
+    // the user's global gh/copilot auth stores.
+    env.COPILOT_GITHUB_TOKEN = account.token
+    env.GH_TOKEN = account.token
+    env.GITHUB_TOKEN = account.token
+    env.GITHUB_COPILOT_GITHUB_TOKEN = account.token
+  }
+
+  return env
 }
 
 async function getCopilotExecutablePath(): Promise<string | null> {
