@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import type { CopilotSession, ModelInfo } from '@github/copilot-sdk'
 import {
+  CopilotStore,
   CopilotConflictResolutionAbortError,
   DefaultCopilotModel,
   getLowestReasoningEffort,
@@ -10,6 +11,7 @@ import {
   isCopilotConflictResolutionAbortError,
   runConflictResolutionTurn,
 } from '../../../src/lib/stores/copilot-store'
+import { Account } from '../../../src/models/account'
 
 function makeModel(
   overrides: Partial<ModelInfo> & Pick<ModelInfo, 'id' | 'name'>
@@ -21,6 +23,28 @@ function makeModel(
     },
     ...overrides,
   }
+}
+
+function makeCopilotAccount(token = 'webui-token'): Account {
+  return new Account(
+    'webuitester',
+    'https://api.github.com',
+    token,
+    [
+      {
+        email: 'webuitester@example.com',
+        primary: true,
+        verified: true,
+        visibility: 'public',
+      },
+    ],
+    '',
+    1,
+    'webuitester',
+    'free',
+    'https://api.githubcopilot.com',
+    true
+  )
 }
 
 describe('getLowestReasoningEffort', () => {
@@ -178,6 +202,71 @@ describe('getPreferredDefaultModel', () => {
     })
     const result = getPreferredDefaultModel([cheapModel, defaultModel])
     assert.strictEqual(result, defaultModel)
+  })
+})
+
+describe('CopilotStore model discovery', () => {
+  it('uses the account Copilot endpoint when SDK model RPCs return no selectable models', async () => {
+    const account = makeCopilotAccount()
+    const store = new CopilotStore({
+      onDidUpdate() {},
+      getAll: async () => [account],
+    } as any)
+    const calls: Array<string> = []
+
+    ;(store as any).fetchModelsFromSession = async () => {
+      calls.push('session.model.list')
+      return []
+    }
+    ;(store as any).fetchModelsForAuthMode = async (
+      _account: Account,
+      authMode: string
+    ) => {
+      calls.push(`models.list:${authMode}`)
+      return { models: [], authMode }
+    }
+    ;(store as any).fetchModelsFromAccountEndpoint = async () => {
+      calls.push('account-endpoint')
+      return [
+        makeModel({
+          id: 'auto',
+          name: 'Auto',
+        }),
+        makeModel({
+          id: 'gpt-5-mini',
+          name: 'GPT-5 mini',
+        }),
+      ]
+    }
+
+    const result = await (store as any).fetchModelsWithFallback(account)
+
+    assert.strictEqual(result.authMode, 'account-token')
+    assert.deepStrictEqual(
+      result.models.map((model: ModelInfo) => model.id),
+      ['gpt-5-mini']
+    )
+    assert.deepStrictEqual(calls, [
+      'session.model.list',
+      'account-endpoint',
+    ])
+  })
+
+  it('does not fall back to global Copilot login state when the account token is missing', async () => {
+    const account = makeCopilotAccount('')
+    const store = new CopilotStore({
+      onDidUpdate() {},
+      getAll: async () => [account],
+    } as any)
+
+    ;(store as any).fetchModelsForAuthMode = async () => {
+      throw new Error('unexpected global Copilot login fallback')
+    }
+
+    const result = await (store as any).fetchModelsWithFallback(account)
+
+    assert.strictEqual(result.authMode, 'account-token')
+    assert.deepStrictEqual(result.models, [])
   })
 })
 
