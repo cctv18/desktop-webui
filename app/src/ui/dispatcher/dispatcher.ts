@@ -9,6 +9,7 @@ import {
   getDotComAPIEndpoint,
   IAPICreatePushProtectionBypassResponse,
 } from '../../lib/api'
+import type { IOAuthDeviceCode } from '../../lib/api'
 import { shell } from '../../lib/app-shell'
 import {
   CompareAction,
@@ -23,6 +24,7 @@ import {
   MultiCommitOperationConflictState,
   IMultiCommitOperationState,
   CommitOptions,
+  CopilotOAuthDeviceFlowPollResult,
 } from '../../lib/app-state'
 import { assertNever, fatalError } from '../../lib/fatal-error'
 import {
@@ -4299,6 +4301,16 @@ export class Dispatcher {
   /** Fetch the list of available Copilot models from the SDK. */
   public fetchCopilotModels(): Promise<void> {
     return this.appStore._fetchCopilotModels()
+  }
+
+  public beginCopilotOAuthDeviceFlow(): Promise<IOAuthDeviceCode> {
+    return this.appStore._beginCopilotOAuthDeviceFlow()
+  }
+
+  public pollCopilotOAuthDeviceFlow(
+    deviceCode: string
+  ): Promise<CopilotOAuthDeviceFlowPollResult> {
+    return this.appStore._pollCopilotOAuthDeviceFlow(deviceCode)
   }
 
   /**

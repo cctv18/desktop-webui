@@ -116,7 +116,7 @@ interface IResolvedConflictModelConfig {
   readonly gitHubToken: string | undefined
 }
 
-type CopilotAuthMode = 'account-token' | 'logged-in-user'
+type CopilotAuthMode = 'account-token' | 'copilot-oauth-token'
 
 interface ICopilotModelCacheEntry {
   readonly models: ReadonlyArray<ModelInfo>
@@ -126,6 +126,11 @@ interface ICopilotModelCacheEntry {
 
 interface ICopilotModelFetchResult {
   readonly models: ReadonlyArray<ModelInfo>
+  readonly authMode: CopilotAuthMode
+}
+
+interface ICopilotAuthCredentials {
+  readonly account: Account
   readonly authMode: CopilotAuthMode
 }
 
@@ -166,9 +171,9 @@ export function getCopilotGHHost(account: Account): string | undefined {
 }
 
 function getCopilotAuthModeDescription(authMode: CopilotAuthMode): string {
-  return authMode === 'account-token'
-    ? 'WebUI account token'
-    : 'logged-in Copilot user'
+  return authMode === 'copilot-oauth-token'
+    ? 'Copilot CLI OAuth token'
+    : 'WebUI account token'
 }
 
 function getTokenLogState(token: string | undefined): string {
@@ -1172,21 +1177,45 @@ export class CopilotStore extends BaseStore {
    *
    * @throws Error if the account has no token
    */
+  private async resolveAuthCredentials(
+    account: Account
+  ): Promise<ICopilotAuthCredentials> {
+    const credentials =
+      await this.accountsStore.getCopilotOAuthCredentialsForAccount(account)
+
+    if (credentials !== null) {
+      log.info(
+        `CopilotStore: Using stored Copilot CLI OAuth token for ${getAccountLogDescription(
+          account
+        )}; credential=login=${credentials.login}; id=${
+          credentials.id
+        }; token=${getTokenLogState(credentials.token)}`
+      )
+
+      return {
+        account: account.withToken(credentials.token),
+        authMode: 'copilot-oauth-token',
+      }
+    }
+
+    return {
+      account,
+      authMode: 'account-token',
+    }
+  }
+
   private async createClient(
     account: Account,
     repositoryPath?: string,
     authMode: CopilotAuthMode = 'account-token'
   ): Promise<CopilotClient> {
-    if (authMode === 'account-token' && !account.token) {
+    if (!account.token) {
       throw new Error('Cannot create Copilot client: Account has no token')
     }
 
     const env = getCopilotClientEnv(account)
     await ensureCopilotPrivateDirectories(env)
-    const authOptions =
-      authMode === 'account-token'
-        ? { gitHubToken: account.token, useLoggedInUser: false }
-        : { useLoggedInUser: false }
+    const authOptions = { gitHubToken: account.token, useLoggedInUser: false }
 
     const indexPath = await getCopilotCLIIndexPath()
 
@@ -1281,7 +1310,8 @@ export class CopilotStore extends BaseStore {
   private async verifySessionAccountAuthStatus(
     session: CopilotSession,
     account: Account,
-    operation: string
+    operation: string,
+    authMode: CopilotAuthMode
   ): Promise<void> {
     const authStatus = await session.rpc.auth.getStatus().catch(e => {
       log.warn(
@@ -1302,7 +1332,7 @@ export class CopilotStore extends BaseStore {
           authStatusLog.copilotPlan ?? '<none>'
         }; authType=${authStatusLog.authType ?? '<none>'}; account=${getAccountLogDescription(
           account
-        )}; credentialSource=WebUI account token`
+        )}; credentialSource=${getCopilotAuthModeDescription(authMode)}`
       )
     }
 
@@ -1431,6 +1461,13 @@ export class CopilotStore extends BaseStore {
         : undefined
     }
 
+    const authCredentials =
+      provider === undefined
+        ? await this.resolveAuthCredentials(account)
+        : { account, authMode }
+    authMode = authCredentials.authMode
+    const authAccount = authCredentials.account
+
     let client: CopilotClient
     try {
       log.info(
@@ -1441,14 +1478,16 @@ export class CopilotStore extends BaseStore {
         }; account=${getAccountLogDescription(
           account
         )}; tokenSource=${
-          provider === undefined ? `session gitHubToken ${getAccountTokenLogState(account)}` : 'byok provider'
+          provider === undefined
+            ? `session gitHubToken ${getAccountTokenLogState(authAccount)}`
+            : 'byok provider'
         }; request=createSession{model=${
           modelId ?? '<runtime-default>'
         }, reasoningEffort=${reasoningEffort ?? '<unset>'}, promptBytes=${
           Buffer.byteLength(diff, 'utf8')
         }}`
       )
-      client = await this.createClient(account, repositoryPath, authMode)
+      client = await this.createClient(authAccount, repositoryPath, authMode)
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         return this.generateCommitMessageWithoutSDK(
@@ -1489,8 +1528,8 @@ export class CopilotStore extends BaseStore {
               ? { reasoningEffort: sessionReasoningEffort }
               : {}),
             ...(provider !== undefined ? { provider } : {}),
-            ...(provider === undefined && account.token
-              ? { gitHubToken: account.token }
+            ...(provider === undefined && authAccount.token
+              ? { gitHubToken: authAccount.token }
               : {}),
             systemMessage: {
               // It's important to 'append' the system prompt so that it doesn't
@@ -1509,7 +1548,8 @@ export class CopilotStore extends BaseStore {
             await this.verifySessionAccountAuthStatus(
               session,
               account,
-              'commit message generation'
+              'commit message generation',
+              authMode
             )
           }
 
@@ -1903,7 +1943,20 @@ export class CopilotStore extends BaseStore {
 
     onProgress?.({ filesResolved: 0, filesTotal })
 
-    const modelConfig = this.resolveConflictModelConfig(account, request)
+    const baseModelConfig = this.resolveConflictModelConfig(account, request)
+    const authCredentials =
+      baseModelConfig.provider === undefined
+        ? await this.resolveAuthCredentials(account)
+        : { account, authMode: baseModelConfig.authMode }
+    const modelConfig: IResolvedConflictModelConfig = {
+      ...baseModelConfig,
+      authMode: authCredentials.authMode,
+      gitHubToken:
+        baseModelConfig.provider === undefined
+          ? authCredentials.account.token
+          : baseModelConfig.gitHubToken,
+    }
+    const authAccount = authCredentials.account
 
     log.info(
       `CopilotStore: Resolving conflicts using ${getCopilotAuthModeDescription(
@@ -1918,7 +1971,7 @@ export class CopilotStore extends BaseStore {
     )
     const clientTimer = startTimer('createClient')
     const client = await this.createClient(
-      account,
+      authAccount,
       repositoryPath,
       modelConfig.authMode
     )
@@ -2104,7 +2157,8 @@ export class CopilotStore extends BaseStore {
         await this.verifySessionAccountAuthStatus(
           session,
           account,
-          'conflict resolution'
+          'conflict resolution',
+          modelConfig.authMode
         )
       }
 
@@ -2189,6 +2243,13 @@ export class CopilotStore extends BaseStore {
     return (
       this.modelCaches.get(getCopilotModelCacheKey(account))?.models ?? null
     )
+  }
+
+  public invalidateModelCache(account: Account): void {
+    const key = getCopilotModelCacheKey(account)
+    this.modelCaches.delete(key)
+    this.modelsInFlight.delete(key)
+    this.emitUpdate()
   }
 
   private getCachedModelEntryFromCache(
@@ -2307,13 +2368,21 @@ export class CopilotStore extends BaseStore {
       authMode: 'account-token',
     }
     let lastError: Error | undefined
+    const authCredentials = await this.resolveAuthCredentials(account)
+    lastResult = {
+      models: [],
+      authMode: authCredentials.authMode,
+    }
 
-    if (account.token) {
+    if (authCredentials.account.token) {
       try {
-        const rawModels = await this.fetchModelsFromSession(account)
+        const rawModels = await this.fetchModelsFromSession(
+          account,
+          authCredentials
+        )
         const result = this.createModelFetchResult(
           rawModels,
-          'account-token',
+          authCredentials.authMode,
           'session.model.list RPC'
         )
         lastResult = result
@@ -2331,7 +2400,7 @@ export class CopilotStore extends BaseStore {
 
       if (lastError !== undefined) {
         log.warn(
-          'CopilotStore: WebUI account token model discovery failed or returned no selectable models; not falling back to global Copilot login state',
+          'CopilotStore: Copilot model discovery failed or returned no selectable models; not falling back to global Copilot login state',
           lastError
         )
         throw lastError
@@ -2341,7 +2410,7 @@ export class CopilotStore extends BaseStore {
     }
 
     log.warn(
-      'CopilotStore: Cannot fetch Copilot model list because the WebUI account has no token; refusing to use global Copilot login state'
+      'CopilotStore: Cannot fetch Copilot model list because no WebUI or Copilot OAuth token is available; refusing to use global Copilot login state'
     )
     return lastResult
   }
@@ -2369,16 +2438,25 @@ export class CopilotStore extends BaseStore {
   }
 
   private async fetchModelsFromSession(
-    account: Account
+    expectedAccount: Account,
+    credentials: ICopilotAuthCredentials
   ): Promise<ReadonlyArray<ModelInfo>> {
     let client: CopilotClient
     try {
       log.info(
         `CopilotStore: Fetching Copilot model list using session.model.list; account=${getAccountLogDescription(
-          account
-        )}; tokenSource=session gitHubToken ${getAccountTokenLogState(account)}`
+          expectedAccount
+        )}; tokenSource=session gitHubToken ${getAccountTokenLogState(
+          credentials.account
+        )}; credentialSource=${getCopilotAuthModeDescription(
+          credentials.authMode
+        )}`
       )
-      client = await this.createClient(account, undefined, 'account-token')
+      client = await this.createClient(
+        credentials.account,
+        undefined,
+        credentials.authMode
+      )
     } catch (e) {
       if (this.isMissingCLIError(e)) {
         log.warn('CopilotStore: Cannot list models because the CLI is missing', e)
@@ -2392,14 +2470,19 @@ export class CopilotStore extends BaseStore {
     try {
       await client.start()
       session = await client.createSession({
-        gitHubToken: account.token,
+        gitHubToken: credentials.account.token,
         availableTools: [],
         onPermissionRequest: async () => ({
           kind: 'reject',
         }),
       })
 
-      await this.verifySessionAccountAuthStatus(session, account, 'model list')
+      await this.verifySessionAccountAuthStatus(
+        session,
+        expectedAccount,
+        'model list',
+        credentials.authMode
+      )
 
       const result = await withTimeout(
         listSessionCopilotModels(session),
@@ -2409,7 +2492,11 @@ export class CopilotStore extends BaseStore {
       log.info(
         `CopilotStore: Session model list request completed; raw=${
           result.list.length
-        }; account=${getAccountLogDescription(account)}`
+        }; account=${getAccountLogDescription(
+          expectedAccount
+        )}; credentialSource=${getCopilotAuthModeDescription(
+          credentials.authMode
+        )}`
       )
       return normalizeCopilotModelInfos(result.list)
     } finally {

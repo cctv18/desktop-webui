@@ -43,6 +43,11 @@ import { Repository } from '../../models/repository'
 import { Notifications } from './notifications'
 import { Accessibility } from './accessibility'
 import type { ModelInfo } from '@github/copilot-sdk'
+import type {
+  CopilotOAuthDeviceFlowPollResult,
+  CopilotOAuthStatus,
+} from '../../lib/app-state'
+import type { IOAuthDeviceCode } from '../../lib/api'
 import { CopilotPreferences } from './copilot'
 import type {
   CopilotFeature,
@@ -112,6 +117,7 @@ interface IPreferencesProps {
   readonly selectedCopilotModels: CopilotModelSelections
   readonly copilotModels: ReadonlyArray<ModelInfo> | null
   readonly copilotAvailable: boolean
+  readonly copilotOAuthStatus: CopilotOAuthStatus
   readonly byokProviders: ReadonlyArray<IBYOKProvider>
 }
 
@@ -518,9 +524,17 @@ export class Preferences extends React.Component<
             selectedCopilotModels={this.state.selectedCopilotModels}
             copilotModels={this.props.copilotModels}
             copilotAvailable={this.props.copilotAvailable}
+            copilotOAuthStatus={this.props.copilotOAuthStatus}
             byokProviders={this.props.byokProviders}
             showBYOKSettings={this.shouldShowBYOKSettings()}
             onSelectedCopilotModelChanged={this.onSelectedCopilotModelChanged}
+            onBeginCopilotOAuthDeviceFlow={
+              this.onBeginCopilotOAuthDeviceFlow
+            }
+            onPollCopilotOAuthDeviceFlow={
+              this.onPollCopilotOAuthDeviceFlow
+            }
+            onFetchCopilotModels={this.onFetchCopilotModels}
             onAddBYOKProvider={this.onAddBYOKProvider}
             onEditBYOKProvider={this.onEditBYOKProvider}
             onDeleteBYOKProvider={this.onDeleteBYOKProvider}
@@ -891,6 +905,20 @@ export class Preferences extends React.Component<
       type: PopupType.ConfirmDeleteCopilotBYOKProvider,
       provider,
     })
+  }
+
+  private onBeginCopilotOAuthDeviceFlow = (): Promise<IOAuthDeviceCode> => {
+    return this.props.dispatcher.beginCopilotOAuthDeviceFlow()
+  }
+
+  private onPollCopilotOAuthDeviceFlow = (
+    deviceCode: string
+  ): Promise<CopilotOAuthDeviceFlowPollResult> => {
+    return this.props.dispatcher.pollCopilotOAuthDeviceFlow(deviceCode)
+  }
+
+  private onFetchCopilotModels = (): Promise<void> => {
+    return this.props.dispatcher.fetchCopilotModels()
   }
 
   private onSelectedTabSizeChanged = (tabSize: number) => {

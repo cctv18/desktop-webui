@@ -1,5 +1,6 @@
 import * as Path from 'path'
 import { rm, writeFile } from 'fs/promises'
+import { createHash } from 'crypto'
 import {
   AccountsStore,
   CloningRepositoriesStore,
@@ -13,6 +14,7 @@ import {
   SignInStore,
   UpstreamRemoteName,
 } from '.'
+import type { ICopilotOAuthCredentials } from './accounts-store'
 import type { CopilotFeature, CopilotModelSelections } from './copilot-store'
 import {
   IBYOKProvider,
@@ -153,7 +155,11 @@ import {
   IAPIRepoRuleset,
   deleteToken,
   IAPICreatePushProtectionBypassResponse,
+  fetchOAuthUserIdentity,
+  requestCopilotOAuthDeviceCode,
+  requestCopilotOAuthDeviceToken,
 } from '../api'
+import type { IOAuthDeviceCode } from '../api'
 import { shell } from '../app-shell'
 import {
   CompareAction,
@@ -161,6 +167,8 @@ import {
   Foldout,
   FoldoutType,
   IAppState,
+  CopilotOAuthStatus,
+  CopilotOAuthDeviceFlowPollResult,
   ICompareBranch,
   ICompareFormUpdate,
   ICompareToBranch,
@@ -574,6 +582,15 @@ const selectedCopilotModelsKey = 'selected-copilot-models'
 const legacyAutoCopilotModelKey = '__copilot_auto__'
 export const showChangesFilterDefault = true
 
+function getTokenLogStateForAppStore(token: string | undefined): string {
+  return !token
+    ? 'missing'
+    : `present(length=${token.length}, sha256=${createHash('sha256')
+        .update(token)
+        .digest('hex')
+        .slice(0, 8)})`
+}
+
 export class AppStore extends TypedBaseStore<IAppState> {
   private readonly gitStoreCache: GitStoreCache
 
@@ -752,6 +769,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private selectedCopilotModels: CopilotModelSelections = {}
   private copilotModels: ReadonlyArray<ModelInfo> | null = null
+  private copilotOAuthStatus: CopilotOAuthStatus = { kind: 'unavailable' }
   private byokProviders: ReadonlyArray<IBYOKProvider> = []
 
   public constructor(
@@ -1043,6 +1061,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.accountsStore.onDidUpdate(accounts => {
       this.accounts = accounts
       this.syncCopilotModelsFromCache()
+      void this.refreshCopilotOAuthStatus()
       const endpointTokens = accounts.map<EndpointToken>(
         ({ endpoint, token }) => ({ endpoint, token })
       )
@@ -1104,6 +1123,40 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     this.copilotModels = this.copilotStore.getCachedModelList(account)
+  }
+
+  private async refreshCopilotOAuthStatus(): Promise<void> {
+    const account = this.getCopilotModelsAccount()
+
+    if (account === undefined) {
+      if (this.copilotOAuthStatus.kind !== 'unavailable') {
+        this.copilotOAuthStatus = { kind: 'unavailable' }
+        this.emitUpdate()
+      }
+      return
+    }
+
+    const credential =
+      await this.accountsStore.getCopilotOAuthCredentialsForAccount(account)
+
+    const nextStatus: CopilotOAuthStatus =
+      credential === null
+        ? { kind: 'unauthorized' }
+        : {
+            kind: 'authorized',
+            login: credential.login,
+            name: credential.name,
+          }
+
+    if (
+      this.copilotOAuthStatus.kind !== nextStatus.kind ||
+      (nextStatus.kind === 'authorized' &&
+        (this.copilotOAuthStatus.kind !== 'authorized' ||
+          this.copilotOAuthStatus.login !== nextStatus.login))
+    ) {
+      this.copilotOAuthStatus = nextStatus
+      this.emitUpdate()
+    }
   }
 
   /** Load the emoji from disk. */
@@ -1302,6 +1355,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       selectedCopilotModels: this.selectedCopilotModels,
       copilotModels: this.copilotModels,
       copilotAvailable: this.getCopilotModelsAccount() !== undefined,
+      copilotOAuthStatus: this.copilotOAuthStatus,
       byokProviders: this.byokProviders,
     }
   }
@@ -10654,6 +10708,84 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** This shouldn't be called directly. See 'Dispatcher'. */
   public async _fetchCopilotModels(): Promise<void> {
     return this.fetchCopilotModelsForCurrentAccount()
+  }
+
+  public async _beginCopilotOAuthDeviceFlow(): Promise<IOAuthDeviceCode> {
+    const account = this.getCopilotModelsAccount()
+    if (account === undefined) {
+      throw new Error('Sign in to a GitHub.com account before authorizing Copilot.')
+    }
+
+    const deviceCode = await requestCopilotOAuthDeviceCode(account.endpoint)
+    if (deviceCode === null) {
+      throw new Error('Failed to start Copilot device login.')
+    }
+
+    log.info(
+      `CopilotStore: Started Copilot CLI OAuth device flow for ${account.login}; endpoint=${account.endpoint}; client=Copilot CLI`
+    )
+
+    return deviceCode
+  }
+
+  public async _pollCopilotOAuthDeviceFlow(
+    deviceCode: string
+  ): Promise<CopilotOAuthDeviceFlowPollResult> {
+    const account = this.getCopilotModelsAccount()
+    if (account === undefined) {
+      return {
+        kind: 'failed',
+        error: new Error('No GitHub.com account is signed in.'),
+      }
+    }
+
+    const result = await requestCopilotOAuthDeviceToken(
+      account.endpoint,
+      deviceCode
+    )
+
+    if (result.kind !== 'success') {
+      return result
+    }
+
+    const identity = await fetchOAuthUserIdentity(account.endpoint, result.token)
+
+    if (identity.login !== account.login || identity.id !== account.id) {
+      log.warn(
+        `CopilotStore: Ignoring Copilot CLI OAuth token for login=${identity.login}; id=${identity.id}; expected login=${account.login}; id=${account.id}`
+      )
+      return {
+        kind: 'failed',
+        error: new Error(
+          `Copilot authorization completed for ${identity.login}, but WebUI is signed in as ${account.login}.`
+        ),
+      }
+    }
+
+    const credential: ICopilotOAuthCredentials = {
+      endpoint: account.endpoint,
+      login: identity.login,
+      id: identity.id,
+      name: identity.name,
+      avatarURL: identity.avatarURL,
+      token: result.token,
+    }
+
+    await this.accountsStore.setCopilotOAuthCredentials(account, credential)
+    this.copilotModels = null
+    this.copilotStore.invalidateModelCache(account)
+    await this.refreshCopilotOAuthStatus()
+    await this.fetchCopilotModelsForCurrentAccount()
+
+    log.info(
+      `CopilotStore: Stored Copilot CLI OAuth token for login=${
+        identity.login
+      }; id=${identity.id}; endpoint=${
+        account.endpoint
+      }; token=${getTokenLogStateForAppStore(result.token)}`
+    )
+
+    return { kind: 'success' }
   }
 
   private async fetchCopilotModelsForCurrentAccount(): Promise<void> {

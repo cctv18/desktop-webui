@@ -1707,6 +1707,7 @@ export class App extends React.Component<IAppProps, IAppState> {
             selectedCopilotModels={this.state.selectedCopilotModels}
             copilotModels={this.state.copilotModels}
             copilotAvailable={this.state.copilotAvailable}
+            copilotOAuthStatus={this.state.copilotOAuthStatus}
             byokProviders={this.state.byokProviders}
           />
         )

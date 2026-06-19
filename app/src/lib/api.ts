@@ -156,6 +156,7 @@ const ClientSecret = process.env.TEST_ENV ? '' : __OAUTH_SECRET__
 // gh-cli and is used only for OAuth app endpoints that require basic auth.
 export const GitHubCliOAuthClientID = '178c6fc778ccc68e1d6a'
 const GitHubCliOAuthClientSecret = '34ddeff2b558a23d38fba8a6de74f086ede1cc0b'
+export const CopilotCliOAuthClientID = 'Ov23ctDVkRmgkPke0Mmm'
 
 export function getOAuthClientID(): string | undefined {
   if (process.env.TEST_ENV) {
@@ -204,6 +205,7 @@ export type GitHubAccountType = 'User' | 'Organization'
 
 /** The OAuth scopes we want to request */
 const oauthScopes = ['repo', 'read:org', 'gist', 'workflow', 'user']
+const copilotOAuthScopes = ['read:user']
 
 /**
  * Information about a repository as returned by the GitHub API.
@@ -2426,6 +2428,37 @@ export async function fetchUser(
   }
 }
 
+export interface IOAuthUserIdentity {
+  readonly login: string
+  readonly id: number
+  readonly name: string
+  readonly avatarURL: string
+}
+
+/** Fetch a lightweight identity for OAuth tokens that may only have read:user. */
+export async function fetchOAuthUserIdentity(
+  endpoint: string,
+  token: string
+): Promise<IOAuthUserIdentity> {
+  const api = new API(endpoint, token)
+
+  try {
+    const user = await retryWebUIRequest('fetchOAuthUserIdentity', () =>
+      api.fetchAccount()
+    )
+
+    return {
+      login: user.login,
+      id: user.id,
+      name: user.name || user.login,
+      avatarURL: user.avatar_url,
+    }
+  } catch (e) {
+    log.warn(`fetchOAuthUserIdentity: failed with endpoint ${endpoint}`, e)
+    throw e
+  }
+}
+
 async function retryWebUIRequest<T>(
   operationName: string,
   operation: () => Promise<T>
@@ -2635,9 +2668,25 @@ async function retryOAuthNetworkRequest<T>(
 export async function requestOAuthDeviceCode(
   endpoint: string
 ): Promise<IOAuthDeviceCode | null> {
-  try {
-    const clientID = getOAuthClientID()
+  return requestOAuthDeviceCodeWithClient(endpoint, getOAuthClientID(), oauthScopes)
+}
 
+export async function requestCopilotOAuthDeviceCode(
+  endpoint: string
+): Promise<IOAuthDeviceCode | null> {
+  return requestOAuthDeviceCodeWithClient(
+    endpoint,
+    CopilotCliOAuthClientID,
+    copilotOAuthScopes
+  )
+}
+
+async function requestOAuthDeviceCodeWithClient(
+  endpoint: string,
+  clientID: string | undefined,
+  scopes: ReadonlyArray<string>
+): Promise<IOAuthDeviceCode | null> {
+  try {
     if (!clientID) {
       log.warn('requestOAuthDeviceCode: OAuth client id is undefined')
       return null
@@ -2650,7 +2699,7 @@ export async function requestOAuthDeviceCode(
       () =>
         request(urlBase, null, 'POST', 'login/device/code', {
           client_id: clientID,
-          scope: oauthScopes.join(' '),
+          scope: scopes.join(' '),
         })
     )
     const result = await parsedResponse<IAPIOAuthDeviceCode>(response)
@@ -2673,9 +2722,30 @@ export async function requestOAuthDeviceToken(
   endpoint: string,
   deviceCode: string
 ): Promise<OAuthDeviceTokenResult> {
-  try {
-    const clientID = getOAuthClientID()
+  return requestOAuthDeviceTokenWithClient(
+    endpoint,
+    deviceCode,
+    getOAuthClientID()
+  )
+}
 
+export async function requestCopilotOAuthDeviceToken(
+  endpoint: string,
+  deviceCode: string
+): Promise<OAuthDeviceTokenResult> {
+  return requestOAuthDeviceTokenWithClient(
+    endpoint,
+    deviceCode,
+    CopilotCliOAuthClientID
+  )
+}
+
+async function requestOAuthDeviceTokenWithClient(
+  endpoint: string,
+  deviceCode: string,
+  clientID: string | undefined
+): Promise<OAuthDeviceTokenResult> {
+  try {
     if (!clientID) {
       return {
         kind: 'failed',
