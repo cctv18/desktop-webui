@@ -181,6 +181,125 @@ run_as_root() {
   fi
 }
 
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+normalize_proxy_url() {
+  local proxy_value
+  proxy_value="$(trim "$1")"
+  [[ -n "$proxy_value" ]] || return 0
+
+  case "$proxy_value" in
+    *://*) printf '%s' "$proxy_value" ;;
+    *) printf 'http://%s' "$proxy_value" ;;
+  esac
+}
+
+set_proxy_environment() {
+  local proxy_value
+  proxy_value="$(normalize_proxy_url "$1")"
+  [[ -n "$proxy_value" ]] || return 1
+
+  [[ -n "${HTTP_PROXY:-}" ]] || HTTP_PROXY="$proxy_value"
+  [[ -n "${HTTPS_PROXY:-}" ]] || HTTPS_PROXY="$proxy_value"
+  [[ -n "${ALL_PROXY:-}" ]] || ALL_PROXY="$proxy_value"
+  [[ -n "${http_proxy:-}" ]] || http_proxy="$proxy_value"
+  [[ -n "${https_proxy:-}" ]] || https_proxy="$proxy_value"
+  [[ -n "${all_proxy:-}" ]] || all_proxy="$proxy_value"
+  NODE_USE_ENV_PROXY=1
+  export HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy NODE_USE_ENV_PROXY
+  return 0
+}
+
+get_proxy_from_pac_url() {
+  local pac_url="$1"
+  local pac_content=""
+  local proxy_value=""
+
+  pac_url="$(trim "$pac_url")"
+  [[ -n "$pac_url" ]] || return 0
+
+  if command_exists curl; then
+    pac_content="$(curl -fsSL --max-time 5 "$pac_url" 2>/dev/null || true)"
+  elif command_exists wget; then
+    pac_content="$(wget -qO- --timeout=5 "$pac_url" 2>/dev/null || true)"
+  fi
+
+  [[ -n "$pac_content" ]] || return 0
+  proxy_value="$(
+    printf '%s' "$pac_content" |
+      grep -Eio '(PROXY|HTTPS?|SOCKS5?)[[:space:]]+[^;[:space:]]+:[0-9]+' |
+      head -n 1 |
+      awk '{print $2}' || true
+  )"
+  normalize_proxy_url "$proxy_value"
+}
+
+gsettings_value() {
+  local value
+  value="$(gsettings get "$1" "$2" 2>/dev/null || true)"
+  printf '%s' "$value" | sed "s/^'//;s/'$//"
+}
+
+get_gsettings_proxy() {
+  command_exists gsettings || return 0
+
+  local proxy_mode
+  proxy_mode="$(gsettings_value org.gnome.system.proxy mode)"
+  case "$proxy_mode" in
+    manual)
+      local schema proxy_host proxy_port
+      for schema in org.gnome.system.proxy.https org.gnome.system.proxy.http; do
+        proxy_host="$(gsettings_value "$schema" host)"
+        proxy_port="$(gsettings get "$schema" port 2>/dev/null || true)"
+        proxy_port="$(printf '%s' "$proxy_port" | tr -dc '0-9')"
+        if [[ -n "$proxy_host" && -n "$proxy_port" && "$proxy_port" -gt 0 ]]; then
+          normalize_proxy_url "$proxy_host:$proxy_port"
+          return 0
+        fi
+      done
+      ;;
+    auto)
+      get_proxy_from_pac_url "$(gsettings_value org.gnome.system.proxy autoconfig-url)"
+      return 0
+      ;;
+  esac
+}
+
+get_kde_proxy() {
+  local kde_proxy_file="${XDG_CONFIG_HOME:-$HOME/.config}/kioslaverc"
+  local proxy_value
+
+  [[ -f "$kde_proxy_file" ]] || return 0
+  proxy_value="$(
+    awk -F= 'BEGIN{section=0} /^\[Proxy Settings\]/{section=1; next} /^\[/{section=0} section && ($1=="httpsProxy" || $1=="httpProxy") {print $2; exit}' "$kde_proxy_file"
+  )"
+  normalize_proxy_url "$proxy_value"
+}
+
+initialize_proxy_environment() {
+  local existing_proxy="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-${ALL_PROXY:-${all_proxy:-}}}}}}"
+  local system_proxy=""
+
+  if [[ -n "$existing_proxy" ]]; then
+    if set_proxy_environment "$existing_proxy"; then
+      step "Using existing proxy environment for Node/Copilot: $(normalize_proxy_url "$existing_proxy")"
+    fi
+    return 0
+  fi
+
+  system_proxy="$(get_gsettings_proxy)"
+  [[ -n "$system_proxy" ]] || system_proxy="$(get_kde_proxy)"
+
+  if set_proxy_environment "$system_proxy"; then
+    step "Detected system proxy for Node/Copilot: $system_proxy"
+  fi
+}
+
 normalize_platform() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     ""|all)
@@ -399,6 +518,7 @@ if [[ -n "$LOG_FILE" ]]; then
   step "Detailed WebUI diagnostics JSON: $WEBUI_DIAGNOSTICS_JSON"
 fi
 
+initialize_proxy_environment
 ensure_node
 PLATFORM="$(normalize_platform "$PLATFORM")"
 YARN_IGNORE_PLATFORM=0

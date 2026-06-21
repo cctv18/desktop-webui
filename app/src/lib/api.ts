@@ -710,6 +710,13 @@ export interface IAPIPullRequest {
   readonly draft?: boolean
 }
 
+export interface IAPIRelease {
+  readonly id: number
+  readonly name: string | null
+  readonly tag_name: string
+  readonly html_url: string
+}
+
 /** Information about a pull request review as returned by the GitHub API. */
 export interface IAPIPullRequestReview {
   readonly id: number
@@ -1080,6 +1087,39 @@ export class API {
     } catch (e) {
       log.warn(`fetchRepository: an error occurred for '${owner}/${name}'`, e)
       return null
+    }
+  }
+
+  /**
+   * Fetch the release associated with a tag, if one exists.
+   */
+  public async fetchReleaseForTag(
+    owner: string,
+    name: string,
+    tagName: string
+  ): Promise<IAPIRelease | null> {
+    const safeTagName = encodeURIComponent(tagName)
+
+    try {
+      const response = await this.ghRequest(
+        'GET',
+        `repos/${owner}/${name}/releases/tags/${safeTagName}`
+      )
+      if (response.status === HttpStatusCode.NotFound) {
+        return null
+      }
+
+      return await parsedResponse<IAPIRelease>(response)
+    } catch (e) {
+      if (isNotFoundApiError(e)) {
+        return null
+      }
+
+      log.warn(
+        `fetchReleaseForTag: an error occurred for '${owner}/${name}' tag '${tagName}'`,
+        e
+      )
+      throw e
     }
   }
 

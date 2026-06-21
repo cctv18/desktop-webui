@@ -7,7 +7,56 @@ import { envForRemoteOperation } from './environment'
 import { Branch } from '../../models/branch'
 import { formatAsLocalRef } from './refs'
 
+const TagDeletionPushRefspecPrefix = ':refs/tags/'
+const TagDeletionMetadataSeparator = '::'
+
+export function getTagDeletionPushRefspec(
+  tagName: string,
+  commitSha?: string
+): string {
+  const refspec = `${TagDeletionPushRefspecPrefix}${tagName}`
+
+  return commitSha === undefined
+    ? refspec
+    : `${refspec}${TagDeletionMetadataSeparator}${commitSha}`
+}
+
+export function isTagDeletionPushRefspec(value: string): boolean {
+  return value.startsWith(TagDeletionPushRefspecPrefix)
+}
+
+export function getTagNameFromDeletionPushRefspec(value: string): string {
+  const nameWithMetadata = value.substring(TagDeletionPushRefspecPrefix.length)
+  const separatorIndex = nameWithMetadata.lastIndexOf(
+    TagDeletionMetadataSeparator
+  )
+
+  return separatorIndex === -1
+    ? nameWithMetadata
+    : nameWithMetadata.substring(0, separatorIndex)
+}
+
+export function getCommitShaFromDeletionPushRefspec(
+  value: string
+): string | null {
+  const separatorIndex = value.lastIndexOf(TagDeletionMetadataSeparator)
+
+  if (separatorIndex === -1) {
+    return null
+  }
+
+  const commitSha = value.substring(
+    separatorIndex + TagDeletionMetadataSeparator.length
+  )
+
+  return commitSha.length > 0 ? commitSha : null
+}
+
 function getTagPushRefspec(tagName: string): string {
+  if (isTagDeletionPushRefspec(tagName)) {
+    return getTagDeletionPushRefspec(getTagNameFromDeletionPushRefspec(tagName))
+  }
+
   return `refs/tags/${tagName}:refs/tags/${tagName}`
 }
 

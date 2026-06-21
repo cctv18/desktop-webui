@@ -4664,8 +4664,71 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _deleteTag(repository: Repository, name: string) {
+    const canDeleteTag = await this.ensureTagHasNoGitHubRelease(
+      repository,
+      name
+    )
+    if (!canDeleteTag) {
+      return
+    }
+
     const gitStore = this.gitStoreCache.get(repository)
     await gitStore.deleteTag(name)
+  }
+
+  private async ensureTagHasNoGitHubRelease(
+    repository: Repository,
+    tagName: string
+  ): Promise<boolean> {
+    if (!isRepositoryWithGitHubRepository(repository)) {
+      return true
+    }
+
+    const account = getAccountForRepository(this.accounts, repository)
+    if (account === null) {
+      this.emitError(
+        new Error(
+          `Could not check whether tag "${tagName}" has an associated GitHub release because no account is signed in for this repository. The tag was not deleted.`
+        )
+      )
+      return false
+    }
+
+    const gitHubRepository = repository.gitHubRepository
+
+    try {
+      const release = await API.fromAccount(account).fetchReleaseForTag(
+        gitHubRepository.owner.login,
+        gitHubRepository.name,
+        tagName
+      )
+
+      if (release === null) {
+        return true
+      }
+
+      const releaseName =
+        release.name !== null && release.name.trim().length > 0
+          ? release.name
+          : release.tag_name
+
+      this.emitError(
+        new Error(
+          `Cannot delete tag "${tagName}" because it is associated with the GitHub release "${releaseName}". Delete that release first, then delete the tag.`
+        )
+      )
+
+      return false
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      this.emitError(
+        new Error(
+          `Could not check whether tag "${tagName}" has an associated GitHub release. The tag was not deleted. ${errorMessage}`
+        )
+      )
+
+      return false
+    }
   }
 
   private updateCheckoutProgress(

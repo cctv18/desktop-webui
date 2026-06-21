@@ -29,6 +29,10 @@ import { formatDate } from '../../lib/format-date'
 import { Avatar } from '../lib/avatar'
 import { Octicon } from '../octicons'
 import * as octicons from '../octicons/octicons.generated'
+import {
+  getCommitShaFromDeletionPushRefspec,
+  isTagDeletionPushRefspec,
+} from '../../lib/git/push'
 
 const RowHeight = 50
 
@@ -365,7 +369,7 @@ export class CommitList extends React.Component<
     }
 
     if (numUnpushedTags > 0) {
-      return `This commit has ${numUnpushedTags} tag${
+      return `This commit has ${numUnpushedTags} tag change${
         numUnpushedTags > 1 ? 's' : ''
       } to push`
     }
@@ -378,8 +382,18 @@ export class CommitList extends React.Component<
   }
 
   private getUnpushedTags(commit: Commit) {
-    const tagsToPushSet = new Set(this.props.tagsToPush ?? [])
-    return commit.tags.filter(tagName => tagsToPushSet.has(tagName))
+    const tagsToPush = this.props.tagsToPush ?? []
+    const tagsToPushSet = new Set(tagsToPush)
+    const tagCreations = commit.tags.filter(tagName =>
+      tagsToPushSet.has(tagName)
+    )
+    const tagDeletions = tagsToPush.filter(
+      tagToPush =>
+        isTagDeletionPushRefspec(tagToPush) &&
+        getCommitShaFromDeletionPushRefspec(tagToPush) === commit.sha
+    )
+
+    return [...tagCreations, ...tagDeletions]
   }
 
   private onSelectionChanged = (rows: ReadonlyArray<number>) => {

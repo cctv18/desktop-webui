@@ -99,6 +99,11 @@ import { getDefaultBranch } from '../helpers/default-branch'
 import { rm, stat } from 'fs/promises'
 import { findForkedRemotesToPrune } from './helpers/find-forked-remotes-to-prune'
 import { findDefaultBranch } from '../find-default-branch'
+import {
+  getTagDeletionPushRefspec,
+  getTagNameFromDeletionPushRefspec,
+  isTagDeletionPushRefspec,
+} from '../git/push'
 
 /** The number of commits to load from history per batch. */
 const CommitBatchSize = 100
@@ -255,10 +260,15 @@ export class GitStore extends BaseStore {
 
     this._localTags = newTags
 
-    // Remove any unpushed tag that cannot be found in the list
+    // Remove any unpushed tag creation that cannot be found in the list
     // of local tags. This can happen when the user deletes an
-    // unpushed tag from outside of Desktop.
+    // unpushed tag from outside of Desktop. Pending remote deletions are
+    // intentionally kept even though the local tag no longer exists.
     for (const tagToPush of this._tagsToPush) {
+      if (isTagDeletionPushRefspec(tagToPush)) {
+        continue
+      }
+
       if (!this._localTags.has(tagToPush)) {
         this.removeTagToPush(tagToPush)
       }
@@ -358,6 +368,9 @@ export class GitStore extends BaseStore {
   }
 
   public async deleteTag(name: string) {
+    const wasPendingCreate = this._tagsToPush.includes(name)
+    const deletedTagCommitSha = this._localTags?.get(name)
+
     const result = await this.performFailableOperation(async () => {
       await deleteTag(this.repository, name)
       return true
@@ -368,7 +381,11 @@ export class GitStore extends BaseStore {
     }
 
     await this.refreshTags()
-    this.removeTagToPush(name)
+    if (wasPendingCreate) {
+      this.removeTagToPush(name)
+    } else {
+      this.addTagDeletionToPush(name, deletedTagCommitSha)
+    }
 
     this.statsStore.increment('tagsDeleted')
   }
@@ -504,7 +521,22 @@ export class GitStore extends BaseStore {
   }
 
   private addTagToPush(tagName: string) {
+    this._tagsToPush = this._tagsToPush.filter(
+      tag => !this.isTagsToPushEntryForTag(tag, tagName)
+    )
     this._tagsToPush = [...this._tagsToPush, tagName]
+
+    storeTagsToPush(this.repository, this._tagsToPush)
+    this.emitUpdate()
+  }
+
+  private addTagDeletionToPush(tagName: string, commitSha?: string) {
+    const deletionRefspec = getTagDeletionPushRefspec(tagName, commitSha)
+
+    this._tagsToPush = this._tagsToPush.filter(
+      tag => !this.isTagsToPushEntryForTag(tag, tagName)
+    )
+    this._tagsToPush = [...this._tagsToPush, deletionRefspec]
 
     storeTagsToPush(this.repository, this._tagsToPush)
     this.emitUpdate()
@@ -512,11 +544,17 @@ export class GitStore extends BaseStore {
 
   private removeTagToPush(tagToDelete: string) {
     this._tagsToPush = this._tagsToPush.filter(
-      tagName => tagName !== tagToDelete
+      tagName => !this.isTagsToPushEntryForTag(tagName, tagToDelete)
     )
 
     storeTagsToPush(this.repository, this._tagsToPush)
     this.emitUpdate()
+  }
+
+  private isTagsToPushEntryForTag(entry: string, tagName: string): boolean {
+    return isTagDeletionPushRefspec(entry)
+      ? getTagNameFromDeletionPushRefspec(entry) === tagName
+      : entry === tagName
   }
 
   public clearTagsToPush() {

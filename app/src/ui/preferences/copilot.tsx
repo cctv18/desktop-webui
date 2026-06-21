@@ -29,6 +29,10 @@ import { enableCopilotConflictResolution } from '../../lib/feature-flag'
 
 const AutoCopilotModelKey = '__copilot_auto__'
 
+function showCopilotIndependentLoginNotice(): boolean {
+  return false
+}
+
 interface ICopilotPreferencesProps {
   readonly selectedCopilotModels: CopilotModelSelections
   readonly copilotModels: ReadonlyArray<ModelInfo> | null
@@ -301,6 +305,10 @@ export class CopilotPreferences extends React.Component<
   }
 
   private renderCopilotOAuthNotice() {
+    if (!showCopilotIndependentLoginNotice()) {
+      return null
+    }
+
     const { copilotOAuthStatus } = this.props
     const { deviceFlow, loginError, loginBusy } = this.state
 
@@ -338,7 +346,7 @@ export class CopilotPreferences extends React.Component<
             disabled={loginBusy || deviceFlow !== null}
           >
             {loginBusy || deviceFlow !== null
-              ? 'Waiting for Copilot login…'
+              ? 'Waiting for Copilot login...'
               : 'Copilot Login'}
           </Button>
         </div>
