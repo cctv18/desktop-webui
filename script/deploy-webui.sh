@@ -13,6 +13,7 @@ PRODUCTION=0
 NO_START=0
 SKIP_INSTALL=0
 FULL_NATIVE_INSTALL=0
+SKIP_SYSTEM_PROXY=0
 LOG_FILE="out/webui-deploy.log"
 GIT_PATH=""
 GIT_DIRECTORY=""
@@ -44,6 +45,7 @@ Options:
   --no-start               Install and compile only
   --skip-install           Do not run yarn install; fail if local deps are missing
   --full-native-install    Run package install scripts for full Desktop native dependencies
+  --skip-system-proxy      Do not auto-configure proxy variables during deploy
   --git-path <path>        Exact Git executable path for the WebUI server
   --git-directory <path>   Git installation root for the WebUI server
   --git-exec-path <path>   Git helper directory, e.g. /usr/lib/git-core
@@ -105,6 +107,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-native-install)
       FULL_NATIVE_INSTALL=1
+      shift
+      ;;
+    --skip-system-proxy)
+      SKIP_SYSTEM_PROXY=1
       shift
       ;;
     --git-path)
@@ -518,7 +524,11 @@ if [[ -n "$LOG_FILE" ]]; then
   step "Detailed WebUI diagnostics JSON: $WEBUI_DIAGNOSTICS_JSON"
 fi
 
-initialize_proxy_environment
+if [[ "$SKIP_SYSTEM_PROXY" -eq 1 ]]; then
+  step "Skipping system proxy auto-configuration for Node/Copilot."
+else
+  initialize_proxy_environment
+fi
 ensure_node
 PLATFORM="$(normalize_platform "$PLATFORM")"
 YARN_IGNORE_PLATFORM=0

@@ -268,6 +268,7 @@ export class CompareSidebar extends React.Component<
         onCheckoutCommit={this.onCheckoutCommit}
         onCreateTag={this.onCreateTag}
         onDeleteTag={this.onDeleteTag}
+        onRevertTagDeletion={this.onRevertTagDeletion}
         onCherryPick={this.onCherryPick}
         onDropCommitInsertion={this.onDropCommitInsertion}
         onKeyboardReorder={this.onKeyboardReorder}
@@ -646,6 +647,10 @@ export class CompareSidebar extends React.Component<
 
   private onDeleteTag = (tagName: string) => {
     this.props.dispatcher.showDeleteTagDialog(this.props.repository, tagName)
+  }
+
+  private onRevertTagDeletion = (tagName: string) => {
+    this.props.dispatcher.revertTagDeletion(this.props.repository, tagName)
   }
 
   private onCherryPick = (commits: ReadonlyArray<CommitOneLine>) => {

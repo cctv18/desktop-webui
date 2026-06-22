@@ -70,21 +70,6 @@ import { ICustomIntegration } from './custom-integration'
 import { Emoji } from './emoji'
 import { IUpdateState } from '../ui/lib/update-store'
 
-export type CopilotOAuthStatus =
-  | { readonly kind: 'unavailable' }
-  | { readonly kind: 'unauthorized' }
-  | {
-      readonly kind: 'authorized'
-      readonly login: string
-      readonly name: string
-    }
-
-export type CopilotOAuthDeviceFlowPollResult =
-  | { readonly kind: 'success' }
-  | { readonly kind: 'pending' }
-  | { readonly kind: 'slowDown' }
-  | { readonly kind: 'failed'; readonly error: Error }
-
 export enum SelectionType {
   Repository,
   CloningRepository,
@@ -455,9 +440,6 @@ export interface IAppState {
 
   /** Whether Copilot is available (i.e. a GitHub.com account is signed in). */
   readonly copilotAvailable: boolean
-
-  /** Whether an independent Copilot CLI OAuth token is stored for the account. */
-  readonly copilotOAuthStatus: CopilotOAuthStatus
 
   /**
    * The list of user-configured Copilot model providers (BYOK). Empty when

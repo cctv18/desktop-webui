@@ -40,6 +40,8 @@ export async function clone(
   const args = [
     '-c',
     `init.defaultBranch=${defaultBranch}`,
+    '-c',
+    'core.hideDotFiles=false',
     'clone',
     '--recursive',
   ]

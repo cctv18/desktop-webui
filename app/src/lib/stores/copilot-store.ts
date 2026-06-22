@@ -116,7 +116,7 @@ interface IResolvedConflictModelConfig {
   readonly gitHubToken: string | undefined
 }
 
-type CopilotAuthMode = 'account-token' | 'copilot-oauth-token'
+type CopilotAuthMode = 'account-token'
 
 interface ICopilotModelCacheEntry {
   readonly models: ReadonlyArray<ModelInfo>
@@ -170,10 +170,8 @@ export function getCopilotGHHost(account: Account): string | undefined {
   return isGHE(account.endpoint) && host ? host.replace(/^api\./, '') : host
 }
 
-function getCopilotAuthModeDescription(authMode: CopilotAuthMode): string {
-  return authMode === 'copilot-oauth-token'
-    ? 'Copilot CLI OAuth token'
-    : 'WebUI account token'
+function getCopilotAuthModeDescription(_authMode: CopilotAuthMode): string {
+  return 'WebUI account token'
 }
 
 function getTokenLogState(token: string | undefined): string {
@@ -1180,24 +1178,6 @@ export class CopilotStore extends BaseStore {
   private async resolveAuthCredentials(
     account: Account
   ): Promise<ICopilotAuthCredentials> {
-    const credentials =
-      await this.accountsStore.getCopilotOAuthCredentialsForAccount(account)
-
-    if (credentials !== null) {
-      log.info(
-        `CopilotStore: Using stored Copilot CLI OAuth token for ${getAccountLogDescription(
-          account
-        )}; credential=login=${credentials.login}; id=${
-          credentials.id
-        }; token=${getTokenLogState(credentials.token)}`
-      )
-
-      return {
-        account: account.withToken(credentials.token),
-        authMode: 'copilot-oauth-token',
-      }
-    }
-
     return {
       account,
       authMode: 'account-token',
@@ -2410,7 +2390,7 @@ export class CopilotStore extends BaseStore {
     }
 
     log.warn(
-      'CopilotStore: Cannot fetch Copilot model list because no WebUI or Copilot OAuth token is available; refusing to use global Copilot login state'
+      'CopilotStore: Cannot fetch Copilot model list because no WebUI account token is available; refusing to use global Copilot login state'
     )
     return lastResult
   }

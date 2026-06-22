@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 
-import { push } from '../../../src/lib/git/push'
+import { getTagDeletionPushInfo, push } from '../../../src/lib/git/push'
 import { setupEmptyRepository } from '../../helpers/repositories'
 import { makeCommit } from '../../helpers/repository-scaffolding'
 import { IRemote } from '../../../src/models/remote'
@@ -24,6 +24,16 @@ async function createBareUpstream(
 }
 
 describe('git/push', () => {
+  it('parses pending tag deletion refspec metadata', () => {
+    const info = getTagDeletionPushInfo(':refs/tags/v1.2.3::deadbeef')
+
+    assert.deepEqual(info, {
+      tagName: 'v1.2.3',
+      commitSha: 'deadbeef',
+    })
+    assert.equal(getTagDeletionPushInfo('v1.2.3'), null)
+  })
+
   it('pushes commits to a local remote', async t => {
     const repo = await setupEmptyRepository(t)
     await makeCommit(repo, {

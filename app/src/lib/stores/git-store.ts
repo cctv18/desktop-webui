@@ -101,6 +101,7 @@ import { findForkedRemotesToPrune } from './helpers/find-forked-remotes-to-prune
 import { findDefaultBranch } from '../find-default-branch'
 import {
   getTagDeletionPushRefspec,
+  getTagDeletionPushInfo,
   getTagNameFromDeletionPushRefspec,
   isTagDeletionPushRefspec,
 } from '../git/push'
@@ -329,6 +330,9 @@ export class GitStore extends BaseStore {
     }
 
     this.storeCommits(commitsToStore)
+    if (commitsToStore.length > 0) {
+      this.emitUpdate()
+    }
   }
 
   public async createBranch(
@@ -362,14 +366,27 @@ export class GitStore extends BaseStore {
     }
 
     await this.refreshTags()
+    await this.refreshStoredCommit(targetCommitSha)
     this.addTagToPush(name)
 
     this.statsStore.increment('tagsCreatedInDesktop')
   }
 
-  public async deleteTag(name: string) {
+  public async getLocalTagCommitSha(name: string): Promise<string | null> {
+    if (this._localTags === null) {
+      await this.refreshTags()
+    }
+
+    return this._localTags?.get(name) ?? null
+  }
+
+  public async deleteTag(name: string): Promise<boolean> {
     const wasPendingCreate = this._tagsToPush.includes(name)
     const deletedTagCommitSha = this._localTags?.get(name)
+
+    if (deletedTagCommitSha === undefined) {
+      return false
+    }
 
     const result = await this.performFailableOperation(async () => {
       await deleteTag(this.repository, name)
@@ -377,10 +394,11 @@ export class GitStore extends BaseStore {
     })
 
     if (result === undefined) {
-      return
+      return false
     }
 
     await this.refreshTags()
+    await this.refreshStoredCommit(deletedTagCommitSha)
     if (wasPendingCreate) {
       this.removeTagToPush(name)
     } else {
@@ -388,6 +406,37 @@ export class GitStore extends BaseStore {
     }
 
     this.statsStore.increment('tagsDeleted')
+    return true
+  }
+
+  public async revertTagDeletion(name: string): Promise<boolean> {
+    const deletion = this._tagsToPush
+      .map(getTagDeletionPushInfo)
+      .find(info => info !== null && info.tagName === name)
+
+    if (deletion === undefined || deletion === null) {
+      return false
+    }
+
+    if (deletion.commitSha === null) {
+      return false
+    }
+
+    const commitSha = deletion.commitSha
+    const result = await this.performFailableOperation(async () => {
+      await createTag(this.repository, name, commitSha)
+      return true
+    })
+
+    if (result === undefined) {
+      return false
+    }
+
+    await this.refreshTags()
+    await this.refreshStoredCommit(commitSha)
+    this.removeTagToPush(name)
+
+    return true
   }
 
   /** The list of ordered SHAs. */
@@ -713,6 +762,18 @@ export class GitStore extends BaseStore {
   private storeCommits(commits: ReadonlyArray<Commit>) {
     for (const commit of commits) {
       this.commitLookup.set(commit.sha, commit)
+    }
+  }
+
+  private async refreshStoredCommit(commitSha: string | undefined | null) {
+    if (!commitSha) {
+      return
+    }
+
+    const commit = await getCommit(this.repository, commitSha)
+    if (commit !== null) {
+      this.storeCommits([commit])
+      this.emitUpdate()
     }
   }
 

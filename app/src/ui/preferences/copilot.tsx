@@ -8,11 +8,6 @@ import { Octicon } from '../octicons'
 import * as octicons from '../octicons/octicons.generated'
 import { TabBar } from '../tab-bar'
 import type { ModelInfo } from '@github/copilot-sdk'
-import type {
-  CopilotOAuthDeviceFlowPollResult,
-  CopilotOAuthStatus,
-} from '../../lib/app-state'
-import type { IOAuthDeviceCode } from '../../lib/api'
 import {
   DefaultCopilotModel,
   type CopilotFeature,
@@ -29,26 +24,16 @@ import { enableCopilotConflictResolution } from '../../lib/feature-flag'
 
 const AutoCopilotModelKey = '__copilot_auto__'
 
-function showCopilotIndependentLoginNotice(): boolean {
-  return false
-}
-
 interface ICopilotPreferencesProps {
   readonly selectedCopilotModels: CopilotModelSelections
   readonly copilotModels: ReadonlyArray<ModelInfo> | null
   readonly copilotAvailable: boolean
-  readonly copilotOAuthStatus: CopilotOAuthStatus
   readonly byokProviders: ReadonlyArray<IBYOKProvider>
   readonly showBYOKSettings: boolean
   readonly onSelectedCopilotModelChanged: (
     feature: CopilotFeature,
     model: string | null
   ) => void
-  readonly onBeginCopilotOAuthDeviceFlow: () => Promise<IOAuthDeviceCode>
-  readonly onPollCopilotOAuthDeviceFlow: (
-    deviceCode: string
-  ) => Promise<CopilotOAuthDeviceFlowPollResult>
-  readonly onFetchCopilotModels: () => Promise<void>
   readonly onAddBYOKProvider: () => void
   readonly onEditBYOKProvider: (provider: IBYOKProvider) => void
   readonly onDeleteBYOKProvider: (provider: IBYOKProvider) => void
@@ -56,10 +41,6 @@ interface ICopilotPreferencesProps {
 
 interface ICopilotPreferencesState {
   readonly selectedTabIndex: number
-  readonly deviceFlow: IOAuthDeviceCode | null
-  readonly loginError: Error | null
-  readonly loginBusy: boolean
-  readonly pollInterval: number
 }
 
 export class CopilotPreferences extends React.Component<
@@ -70,17 +51,7 @@ export class CopilotPreferences extends React.Component<
     super(props)
     this.state = {
       selectedTabIndex: 0,
-      deviceFlow: null,
-      loginError: null,
-      loginBusy: false,
-      pollInterval: 5,
     }
-  }
-
-  private pollTimer: ReturnType<typeof setTimeout> | null = null
-
-  public componentWillUnmount() {
-    this.clearPollTimer()
   }
 
   private onTabClicked = (index: number) => {
@@ -119,94 +90,6 @@ export class CopilotPreferences extends React.Component<
 
   private onDeleteBYOKProviderClick = (provider: IBYOKProvider) => () =>
     this.props.onDeleteBYOKProvider(provider)
-
-  private onCopilotLoginClick = async () => {
-    this.clearPollTimer()
-    this.setState({ loginBusy: true, loginError: null, deviceFlow: null })
-
-    try {
-      const deviceFlow = await this.props.onBeginCopilotOAuthDeviceFlow()
-      this.setState({
-        deviceFlow,
-        loginBusy: false,
-        pollInterval: deviceFlow.interval,
-      })
-      this.openDeviceFlowPage(deviceFlow)
-      this.schedulePoll(deviceFlow.deviceCode, deviceFlow.interval)
-    } catch (e) {
-      this.setState({
-        loginBusy: false,
-        loginError: e instanceof Error ? e : new Error(`${e}`),
-      })
-    }
-  }
-
-  private openDeviceFlowPage(deviceFlow: IOAuthDeviceCode) {
-    const url = deviceFlow.verificationURIComplete ?? deviceFlow.verificationURI
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
-
-  private onOpenDeviceFlowPage = () => {
-    const deviceFlow = this.state.deviceFlow
-    if (deviceFlow !== null) {
-      this.openDeviceFlowPage(deviceFlow)
-    }
-  }
-
-  private schedulePoll(deviceCode: string, interval: number) {
-    this.clearPollTimer()
-    this.pollTimer = setTimeout(
-      () => this.pollDeviceFlow(deviceCode),
-      Math.max(interval, 1) * 1000
-    )
-  }
-
-  private clearPollTimer() {
-    if (this.pollTimer !== null) {
-      clearTimeout(this.pollTimer)
-      this.pollTimer = null
-    }
-  }
-
-  private pollDeviceFlow = async (deviceCode: string) => {
-    let result: CopilotOAuthDeviceFlowPollResult
-    try {
-      result = await this.props.onPollCopilotOAuthDeviceFlow(deviceCode)
-    } catch (e) {
-      this.setState({
-        loginBusy: false,
-        loginError: e instanceof Error ? e : new Error(`${e}`),
-      })
-      return
-    }
-
-    if (result.kind === 'success') {
-      this.clearPollTimer()
-      this.setState({
-        deviceFlow: null,
-        loginBusy: false,
-        loginError: null,
-      })
-      await this.props.onFetchCopilotModels()
-      return
-    }
-
-    if (result.kind === 'failed') {
-      this.clearPollTimer()
-      this.setState({
-        loginBusy: false,
-        loginError: result.error,
-      })
-      return
-    }
-
-    const nextInterval =
-      result.kind === 'slowDown'
-        ? this.state.pollInterval + 5
-        : this.state.pollInterval
-    this.setState({ pollInterval: nextInterval, loginBusy: false })
-    this.schedulePoll(deviceCode, nextInterval)
-  }
 
   public render() {
     const showBYOK = this.props.showBYOKSettings && this.props.copilotAvailable
@@ -259,7 +142,6 @@ export class CopilotPreferences extends React.Component<
     if (copilotModels === null) {
       return (
         <>
-          {this.renderCopilotOAuthNotice()}
           <p>Loading available models…</p>
         </>
       )
@@ -267,7 +149,6 @@ export class CopilotPreferences extends React.Component<
 
     return (
       <>
-        {this.renderCopilotOAuthNotice()}
         {copilotModels.length === 0 && byokProviders.length === 0 && (
           <p>No models available. Check your Copilot subscription.</p>
         )}
@@ -301,56 +182,6 @@ export class CopilotPreferences extends React.Component<
             this.onConflictResolutionModelChanged
           )}
       </>
-    )
-  }
-
-  private renderCopilotOAuthNotice() {
-    if (!showCopilotIndependentLoginNotice()) {
-      return null
-    }
-
-    const { copilotOAuthStatus } = this.props
-    const { deviceFlow, loginError, loginBusy } = this.state
-
-    if (copilotOAuthStatus.kind === 'authorized') {
-      return (
-        <Row className="copilot-feature-hint">
-          <p>
-            Copilot has been independently authorized for login, and can access
-            the full model list now.
-          </p>
-        </Row>
-      )
-    }
-
-    return (
-      <Row className="copilot-feature-hint">
-        <div>
-          <p>
-            Due to limitations of the GitHub CAPI, Copilot may not be able to
-            access all models without separate login authorization.
-          </p>
-          {loginError !== null && (
-            <p className="warning-message">{loginError.message}</p>
-          )}
-          {deviceFlow !== null && (
-            <div className="copilot-device-flow">
-              <p>Device code: {deviceFlow.userCode}</p>
-              <Button onClick={this.onOpenDeviceFlowPage}>
-                Open GitHub authorization page
-              </Button>
-            </div>
-          )}
-          <Button
-            onClick={this.onCopilotLoginClick}
-            disabled={loginBusy || deviceFlow !== null}
-          >
-            {loginBusy || deviceFlow !== null
-              ? 'Waiting for Copilot login...'
-              : 'Copilot Login'}
-          </Button>
-        </div>
-      </Row>
     )
   }
 

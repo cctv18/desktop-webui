@@ -156,7 +156,6 @@ const ClientSecret = process.env.TEST_ENV ? '' : __OAUTH_SECRET__
 // gh-cli and is used only for OAuth app endpoints that require basic auth.
 export const GitHubCliOAuthClientID = '178c6fc778ccc68e1d6a'
 const GitHubCliOAuthClientSecret = '34ddeff2b558a23d38fba8a6de74f086ede1cc0b'
-export const CopilotCliOAuthClientID = 'Ov23ctDVkRmgkPke0Mmm'
 
 export function getOAuthClientID(): string | undefined {
   if (process.env.TEST_ENV) {
@@ -205,7 +204,6 @@ export type GitHubAccountType = 'User' | 'Organization'
 
 /** The OAuth scopes we want to request */
 const oauthScopes = ['repo', 'read:org', 'gist', 'workflow', 'user']
-const copilotOAuthScopes = ['read:user']
 
 /**
  * Information about a repository as returned by the GitHub API.
@@ -2711,16 +2709,6 @@ export async function requestOAuthDeviceCode(
   return requestOAuthDeviceCodeWithClient(endpoint, getOAuthClientID(), oauthScopes)
 }
 
-export async function requestCopilotOAuthDeviceCode(
-  endpoint: string
-): Promise<IOAuthDeviceCode | null> {
-  return requestOAuthDeviceCodeWithClient(
-    endpoint,
-    CopilotCliOAuthClientID,
-    copilotOAuthScopes
-  )
-}
-
 async function requestOAuthDeviceCodeWithClient(
   endpoint: string,
   clientID: string | undefined,
@@ -2766,17 +2754,6 @@ export async function requestOAuthDeviceToken(
     endpoint,
     deviceCode,
     getOAuthClientID()
-  )
-}
-
-export async function requestCopilotOAuthDeviceToken(
-  endpoint: string,
-  deviceCode: string
-): Promise<OAuthDeviceTokenResult> {
-  return requestOAuthDeviceTokenWithClient(
-    endpoint,
-    deviceCode,
-    CopilotCliOAuthClientID
   )
 }
 

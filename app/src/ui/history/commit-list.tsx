@@ -31,6 +31,7 @@ import { Octicon } from '../octicons'
 import * as octicons from '../octicons/octicons.generated'
 import {
   getCommitShaFromDeletionPushRefspec,
+  getTagDeletionPushInfo,
   isTagDeletionPushRefspec,
 } from '../../lib/git/push'
 
@@ -113,6 +114,9 @@ interface ICommitListProps {
 
   /** Callback to fire to delete an unpushed tag */
   readonly onDeleteTag?: (tagName: string) => void
+
+  /** Callback to fire to undo a pending, unpushed tag deletion */
+  readonly onRevertTagDeletion?: (tagName: string) => void
 
   /**
    * A handler called whenever the user drops commits on the list to be inserted.
@@ -394,6 +398,19 @@ export class CommitList extends React.Component<
     )
 
     return [...tagCreations, ...tagDeletions]
+  }
+
+  private getDeletedTagsToPush(commit: Commit): ReadonlyArray<string> {
+    const deletedTags = new Array<string>()
+
+    for (const tagToPush of this.props.tagsToPush ?? []) {
+      const info = getTagDeletionPushInfo(tagToPush)
+      if (info !== null && info.commitSha === commit.sha) {
+        deletedTags.push(info.tagName)
+      }
+    }
+
+    return deletedTags
   }
 
   private onSelectionChanged = (rows: ReadonlyArray<number>) => {
@@ -847,14 +864,17 @@ export class CommitList extends React.Component<
       }
     )
 
-    const deleteTagsMenuItem = this.getDeleteTagsMenuItem(commit)
+    const tagMenuItems = [
+      this.getDeleteTagsMenuItem(commit),
+      this.getRevertTagDeletionsMenuItem(commit),
+    ].filter((item): item is IMenuItem => item !== null)
 
-    if (deleteTagsMenuItem !== null) {
+    if (tagMenuItems.length > 0) {
       items.push(
         {
           type: 'separator',
         },
-        deleteTagsMenuItem
+        ...tagMenuItems
       )
     }
     const darwinTagsLabel = commit.tags.length > 1 ? 'Copy Tags' : 'Copy Tag'
@@ -930,6 +950,36 @@ export class CommitList extends React.Component<
         return {
           label: tagName,
           action: () => onDeleteTag(tagName),
+          enabled: true,
+        }
+      }),
+    }
+  }
+
+  private getRevertTagDeletionsMenuItem(commit: Commit): IMenuItem | null {
+    const { onRevertTagDeletion } = this.props
+    const deletedTags = this.getDeletedTagsToPush(commit)
+
+    if (onRevertTagDeletion === undefined || deletedTags.length === 0) {
+      return null
+    }
+
+    if (deletedTags.length === 1) {
+      const tagName = deletedTags[0]
+
+      return {
+        label: `Revert delete tag ${tagName}`,
+        action: () => onRevertTagDeletion(tagName),
+        enabled: true,
+      }
+    }
+
+    return {
+      label: 'Revert delete tag…',
+      submenu: deletedTags.map(tagName => {
+        return {
+          label: tagName,
+          action: () => onRevertTagDeletion(tagName),
           enabled: true,
         }
       }),

@@ -60,7 +60,12 @@ export class DeleteTag extends React.Component<
 
     this.setState({ isDeleting: true })
 
-    await dispatcher.deleteTag(repository, tagName)
-    this.props.onDismissed()
+    const deleted = await dispatcher.deleteTag(repository, tagName)
+
+    if (deleted) {
+      this.props.onDismissed()
+    } else {
+      this.setState({ isDeleting: false })
+    }
   }
 }

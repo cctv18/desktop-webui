@@ -9,7 +9,6 @@ import {
   getDotComAPIEndpoint,
   IAPICreatePushProtectionBypassResponse,
 } from '../../lib/api'
-import type { IOAuthDeviceCode } from '../../lib/api'
 import { shell } from '../../lib/app-shell'
 import {
   CompareAction,
@@ -24,7 +23,6 @@ import {
   MultiCommitOperationConflictState,
   IMultiCommitOperationState,
   CommitOptions,
-  CopilotOAuthDeviceFlowPollResult,
 } from '../../lib/app-state'
 import { assertNever, fatalError } from '../../lib/fatal-error'
 import {
@@ -699,8 +697,18 @@ export class Dispatcher {
   /**
    * Deletes the passed tag.
    */
-  public deleteTag(repository: Repository, name: string): Promise<void> {
+  public deleteTag(repository: Repository, name: string): Promise<boolean> {
     return this.appStore._deleteTag(repository, name)
+  }
+
+  /**
+   * Reverts a pending, unpushed tag deletion.
+   */
+  public revertTagDeletion(
+    repository: Repository,
+    name: string
+  ): Promise<boolean> {
+    return this.appStore._revertTagDeletion(repository, name)
   }
 
   /**
@@ -4301,16 +4309,6 @@ export class Dispatcher {
   /** Fetch the list of available Copilot models from the SDK. */
   public fetchCopilotModels(): Promise<void> {
     return this.appStore._fetchCopilotModels()
-  }
-
-  public beginCopilotOAuthDeviceFlow(): Promise<IOAuthDeviceCode> {
-    return this.appStore._beginCopilotOAuthDeviceFlow()
-  }
-
-  public pollCopilotOAuthDeviceFlow(
-    deviceCode: string
-  ): Promise<CopilotOAuthDeviceFlowPollResult> {
-    return this.appStore._pollCopilotOAuthDeviceFlow(deviceCode)
   }
 
   /**

@@ -52,6 +52,19 @@ export function getCommitShaFromDeletionPushRefspec(
   return commitSha.length > 0 ? commitSha : null
 }
 
+export function getTagDeletionPushInfo(
+  value: string
+): { readonly tagName: string; readonly commitSha: string | null } | null {
+  if (!isTagDeletionPushRefspec(value)) {
+    return null
+  }
+
+  return {
+    tagName: getTagNameFromDeletionPushRefspec(value),
+    commitSha: getCommitShaFromDeletionPushRefspec(value),
+  }
+}
+
 function getTagPushRefspec(tagName: string): string {
   if (isTagDeletionPushRefspec(tagName)) {
     return getTagDeletionPushRefspec(getTagNameFromDeletionPushRefspec(tagName))

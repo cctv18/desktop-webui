@@ -1,5 +1,5 @@
 import { IDataStore, ISecureStore } from './stores'
-import { getKeyForAccount, getKeyForEndpoint } from '../auth'
+import { getKeyForAccount } from '../auth'
 import { Account, isDotComAccount } from '../../models/account'
 import { fetchUser, EmailVisibility, getEnterpriseAPIURL } from '../api'
 import { fatalError } from '../fatal-error'
@@ -66,48 +66,6 @@ interface IAccount {
   readonly copilotLicenseType?: string
 }
 
-interface ICopilotOAuthCredentialMetadata {
-  readonly endpoint: string
-  readonly login: string
-  readonly id: number
-  readonly name: string
-  readonly avatarURL: string
-}
-
-export interface ICopilotOAuthCredentials
-  extends ICopilotOAuthCredentialMetadata {
-  readonly token: string
-}
-
-const copilotOAuthCredentialsKey = 'copilot-oauth-credentials'
-
-function getCopilotOAuthSecureKey(endpoint: string): string {
-  return `${getKeyForEndpoint(endpoint)} - Copilot CLI OAuth`
-}
-
-function getCopilotOAuthSecureLogin(
-  credential: Pick<ICopilotOAuthCredentialMetadata, 'login' | 'id'>
-): string {
-  return `${credential.login}:${credential.id}`
-}
-
-function isCopilotOAuthCredentialMetadata(
-  value: unknown
-): value is ICopilotOAuthCredentialMetadata {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  const credential = value as Partial<ICopilotOAuthCredentialMetadata>
-  return (
-    typeof credential.endpoint === 'string' &&
-    typeof credential.login === 'string' &&
-    typeof credential.id === 'number' &&
-    typeof credential.name === 'string' &&
-    typeof credential.avatarURL === 'string'
-  )
-}
-
 /** The store for logged in accounts. */
 export class AccountsStore extends TypedBaseStore<ReadonlyArray<Account>> {
   private dataStore: IDataStore
@@ -171,96 +129,6 @@ export class AccountsStore extends TypedBaseStore<ReadonlyArray<Account>> {
     return account
   }
 
-  public async getCopilotOAuthCredentialsForAccount(
-    account: Account
-  ): Promise<ICopilotOAuthCredentials | null> {
-    await this.loadingPromise
-
-    const credential = this.getCopilotOAuthCredentialMetadata().find(
-      x => x.endpoint === account.endpoint
-    )
-
-    if (credential === undefined) {
-      return null
-    }
-
-    const matchesAccount =
-      credential.id === account.id && credential.login === account.login
-
-    if (!matchesAccount) {
-      log.warn(
-        `Ignoring stored Copilot OAuth credentials for login=${credential.login}; id=${credential.id}; endpoint=${credential.endpoint} because the current WebUI account is login=${account.login}; id=${account.id}; endpoint=${account.endpoint}`
-      )
-      return null
-    }
-
-    const token = await this.secureStore.getItem(
-      getCopilotOAuthSecureKey(credential.endpoint),
-      getCopilotOAuthSecureLogin(credential)
-    )
-
-    if (!token) {
-      return null
-    }
-
-    return { ...credential, token }
-  }
-
-  public async setCopilotOAuthCredentials(
-    account: Account,
-    credential: ICopilotOAuthCredentials
-  ): Promise<void> {
-    await this.loadingPromise
-
-    if (
-      credential.endpoint !== account.endpoint ||
-      credential.login !== account.login ||
-      credential.id !== account.id
-    ) {
-      throw new Error(
-        `Cannot store Copilot OAuth credentials for ${credential.login}; the current WebUI account is ${account.login}.`
-      )
-    }
-
-    await this.secureStore.setItem(
-      getCopilotOAuthSecureKey(credential.endpoint),
-      getCopilotOAuthSecureLogin(credential),
-      credential.token
-    )
-
-    const credentials = this.getCopilotOAuthCredentialMetadata()
-      .filter(x => x.endpoint !== credential.endpoint)
-      .concat({
-        endpoint: credential.endpoint,
-        login: credential.login,
-        id: credential.id,
-        name: credential.name,
-        avatarURL: credential.avatarURL,
-      })
-
-    this.saveCopilotOAuthCredentialMetadata(credentials)
-    this.emitUpdate(this.accounts)
-  }
-
-  public async removeCopilotOAuthCredentials(account: Account): Promise<void> {
-    await this.loadingPromise
-
-    const credentials = this.getCopilotOAuthCredentialMetadata()
-    const credential = credentials.find(x => x.endpoint === account.endpoint)
-
-    if (credential !== undefined) {
-      await this.secureStore.deleteItem(
-        getCopilotOAuthSecureKey(credential.endpoint),
-        getCopilotOAuthSecureLogin(credential)
-      )
-    }
-
-    this.saveCopilotOAuthCredentialMetadata(
-      credentials.filter(x => x.endpoint !== account.endpoint)
-    )
-    this.emitUpdate(this.accounts)
-  }
-
   /** Refresh all accounts by fetching their latest info from the API. */
   public async refresh(): Promise<void> {
     this.accounts = await Promise.all(
@@ -312,40 +180,7 @@ export class AccountsStore extends TypedBaseStore<ReadonlyArray<Account>> {
       a => !(a.endpoint === account.endpoint && a.id === account.id)
     )
 
-    await this.removeCopilotOAuthCredentials(account)
-
     this.save()
-  }
-
-  private getCopilotOAuthCredentialMetadata(): ReadonlyArray<ICopilotOAuthCredentialMetadata> {
-    const raw = this.dataStore.getItem(copilotOAuthCredentialsKey)
-    if (!raw || !raw.length) {
-      return []
-    }
-
-    try {
-      const parsed = JSON.parse(raw)
-      return Array.isArray(parsed)
-        ? parsed.filter(isCopilotOAuthCredentialMetadata)
-        : []
-    } catch (e) {
-      log.warn('Error reading Copilot OAuth credential metadata', e)
-      return []
-    }
-  }
-
-  private saveCopilotOAuthCredentialMetadata(
-    credentials: ReadonlyArray<ICopilotOAuthCredentialMetadata>
-  ) {
-    if (credentials.length === 0) {
-      this.dataStore.setItem(copilotOAuthCredentialsKey, '')
-      return
-    }
-
-    this.dataStore.setItem(
-      copilotOAuthCredentialsKey,
-      JSON.stringify(credentials)
-    )
   }
 
   private getMigratedGHEAccounts(
