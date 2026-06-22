@@ -16,7 +16,7 @@ import {
 } from '../../models/branch'
 import { Tip, TipState } from '../../models/tip'
 import { Commit } from '../../models/commit'
-import { IRemote } from '../../models/remote'
+import { IRemote, remoteEquals } from '../../models/remote'
 import { IFetchProgress, IRevertProgress } from '../../models/progress'
 import {
   ICommitMessage,
@@ -406,29 +406,6 @@ export class GitStore extends BaseStore {
     }
 
     this.statsStore.increment('tagsDeleted')
-    return true
-  }
-
-  public async deleteLocalTag(name: string): Promise<boolean> {
-    const deletedTagCommitSha = this._localTags?.get(name)
-
-    if (deletedTagCommitSha === undefined) {
-      return false
-    }
-
-    const result = await this.performFailableOperation(async () => {
-      await deleteTag(this.repository, name)
-      return true
-    })
-
-    if (result === undefined) {
-      return false
-    }
-
-    await this.refreshTags()
-    await this.refreshStoredCommit(deletedTagCommitSha)
-    this.removeTagToPush(name)
-
     return true
   }
 
@@ -1216,7 +1193,8 @@ export class GitStore extends BaseStore {
     }
     const fetchSucceeded = await this.performFailableOperation(
       async () => {
-        await fetchRepo(repo, remote, progressCallback, backgroundTask)
+        const syncTags = !remoteEquals(remote, this.upstreamRemote)
+        await fetchRepo(repo, remote, progressCallback, backgroundTask, syncTags)
         return true
       },
       { backgroundTask, retryAction }

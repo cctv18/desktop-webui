@@ -4605,12 +4605,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _createTag(repository: Repository, name: string, sha: string) {
     const gitStore = this.gitStoreCache.get(repository)
-
     const existingLocalTagCommitSha = await gitStore.getLocalTagCommitSha(name)
-    if (
-      existingLocalTagCommitSha !== null &&
-      isRepositoryWithGitHubRepository(repository)
-    ) {
+
+    if (isRepositoryWithGitHubRepository(repository)) {
       const tagExistsInGitHubRepository =
         await this.getTagExistsInGitHubRepository(repository, name)
 
@@ -4627,17 +4624,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
         })
         return
       }
+    }
 
-      const deletedLocalTag = await gitStore.deleteLocalTag(name)
-      if (!deletedLocalTag) {
-        await this._showPopup({
-          type: PopupType.Error,
-          error: new Error(
-            `Could not replace the stale local tag "${name}". Fetch the repository and try again.`
-          ),
-        })
-        return
-      }
+    if (existingLocalTagCommitSha !== null) {
+      await this._showPopup({
+        type: PopupType.Error,
+        error: new Error(`A tag named "${name}" already exists locally.`),
+      })
+      return
     }
 
     await gitStore.createTag(name, sha)
@@ -4656,6 +4650,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
         ),
       })
       return false
+    }
+
+    const wasPendingCreate = gitStore.tagsToPush?.includes(name) === true
+    if (wasPendingCreate) {
+      return gitStore.deleteTag(name)
     }
 
     const tagExistsInGitHubRepository =

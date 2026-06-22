@@ -1,9 +1,6 @@
 import * as React from 'react'
 
-import {
-  Repository,
-  isRepositoryWithGitHubRepository,
-} from '../../models/repository'
+import { Repository } from '../../models/repository'
 import { Dispatcher } from '../dispatcher'
 import { Dialog, DialogError, DialogContent, DialogFooter } from '../dialog'
 
@@ -124,9 +121,7 @@ export class CreateTag extends React.Component<
     }
 
     const alreadyExists =
-      !isRepositoryWithGitHubRepository(this.props.repository) &&
-      this.props.localTags &&
-      this.props.localTags.has(this.state.tagName)
+      this.props.localTags && this.props.localTags.has(this.state.tagName)
     if (alreadyExists) {
       return (
         <>

@@ -17,6 +17,7 @@ import {
   fastForwardBranches,
   getAllTags,
   getRemotes,
+  addRemote,
 } from '../../../src/lib/git'
 import * as Path from 'path'
 import { readFile } from 'fs/promises'
@@ -47,6 +48,31 @@ describe('git/fetch', () => {
     await fetch(repository, originRemote)
 
     assert.equal((await getAllTags(repository)).has('stale-tag'), false)
+  })
+
+  it('does not import or prune tags when tag syncing is disabled', async t => {
+    const originRepoPath = await setupFixtureRepository(t, 'test-repo')
+    const upstreamRepoPath = await setupFixtureRepository(t, 'test-repo')
+    const originRepository = new Repository(originRepoPath, -1, null, false)
+    const upstreamRepository = new Repository(upstreamRepoPath, -1, null, false)
+
+    await createTag(originRepository, 'origin-tag', 'HEAD')
+    await createTag(upstreamRepository, 'upstream-tag', 'HEAD')
+
+    const repository = await setupLocalForkOfRepository(t, originRepository)
+    const upstreamRemote = await addRemote(
+      repository,
+      'upstream',
+      upstreamRepository.path
+    )
+
+    assert.equal((await getAllTags(repository)).has('origin-tag'), true)
+
+    await fetch(repository, upstreamRemote, undefined, false, false)
+
+    const tags = await getAllTags(repository)
+    assert.equal(tags.has('origin-tag'), true)
+    assert.equal(tags.has('upstream-tag'), false)
   })
 
   describe('fastForwardBranches', () => {

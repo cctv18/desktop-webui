@@ -8,13 +8,14 @@ import { envForRemoteOperation } from './environment'
 
 async function getFetchArgs(
   remote: string,
-  progressCallback?: (progress: IFetchProgress) => void
+  progressCallback?: (progress: IFetchProgress) => void,
+  syncTags = true
 ) {
   return [
     'fetch',
     ...(progressCallback ? ['--progress'] : []),
     '--prune',
-    '--prune-tags',
+    ...(syncTags ? ['--prune-tags'] : ['--no-tags']),
     '--recurse-submodules=on-demand',
     remote,
   ]
@@ -41,7 +42,8 @@ export async function fetch(
   repository: Repository,
   remote: IRemote,
   progressCallback?: (progress: IFetchProgress) => void,
-  isBackgroundTask = false
+  isBackgroundTask = false,
+  syncTags = true
 ): Promise<void> {
   let opts: IGitStringExecutionOptions = {
     successExitCodes: new Set([0]),
@@ -84,7 +86,7 @@ export async function fetch(
     progressCallback({ kind, title, value: 0, remote: remote.name })
   }
 
-  const args = await getFetchArgs(remote.name, progressCallback)
+  const args = await getFetchArgs(remote.name, progressCallback, syncTags)
 
   await git(args, repository.path, 'fetch', opts)
 }
