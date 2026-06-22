@@ -409,6 +409,29 @@ export class GitStore extends BaseStore {
     return true
   }
 
+  public async deleteLocalTag(name: string): Promise<boolean> {
+    const deletedTagCommitSha = this._localTags?.get(name)
+
+    if (deletedTagCommitSha === undefined) {
+      return false
+    }
+
+    const result = await this.performFailableOperation(async () => {
+      await deleteTag(this.repository, name)
+      return true
+    })
+
+    if (result === undefined) {
+      return false
+    }
+
+    await this.refreshTags()
+    await this.refreshStoredCommit(deletedTagCommitSha)
+    this.removeTagToPush(name)
+
+    return true
+  }
+
   public async revertTagDeletion(name: string): Promise<boolean> {
     const deletion = this._tagsToPush
       .map(getTagDeletionPushInfo)
@@ -1211,6 +1234,8 @@ export class GitStore extends BaseStore {
       await updateRemoteHEAD(repo, remote, backgroundTask).catch(e =>
         log.error('Failed updating remote HEAD', e)
       )
+
+      await this.refreshTags()
     }
   }
 

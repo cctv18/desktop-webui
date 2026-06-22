@@ -4605,6 +4605,41 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _createTag(repository: Repository, name: string, sha: string) {
     const gitStore = this.gitStoreCache.get(repository)
+
+    const existingLocalTagCommitSha = await gitStore.getLocalTagCommitSha(name)
+    if (
+      existingLocalTagCommitSha !== null &&
+      isRepositoryWithGitHubRepository(repository)
+    ) {
+      const tagExistsInGitHubRepository =
+        await this.getTagExistsInGitHubRepository(repository, name)
+
+      if (tagExistsInGitHubRepository === null) {
+        return
+      }
+
+      if (tagExistsInGitHubRepository) {
+        await this._showPopup({
+          type: PopupType.Error,
+          error: new Error(
+            `A tag named "${name}" already exists in the current repository.`
+          ),
+        })
+        return
+      }
+
+      const deletedLocalTag = await gitStore.deleteLocalTag(name)
+      if (!deletedLocalTag) {
+        await this._showPopup({
+          type: PopupType.Error,
+          error: new Error(
+            `Could not replace the stale local tag "${name}". Fetch the repository and try again.`
+          ),
+        })
+        return
+      }
+    }
+
     await gitStore.createTag(name, sha)
   }
 
@@ -4617,9 +4652,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
       await this._showPopup({
         type: PopupType.Error,
         error: new Error(
-          `Cannot delete tag "${name}" because the current repository does not contain this tag. Fetch the repository and try again after the tag exists locally.`
+          `Cannot delete tag "${name}" because the current repository does not contain this tag.`
         ),
       })
+      return false
+    }
+
+    const tagExistsInGitHubRepository =
+      await this.ensureTagExistsInGitHubRepository(repository, name)
+    if (!tagExistsInGitHubRepository) {
       return false
     }
 
@@ -4652,6 +4693,73 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     return reverted
+  }
+
+  private async ensureTagExistsInGitHubRepository(
+    repository: Repository,
+    tagName: string
+  ): Promise<boolean> {
+    if (!isRepositoryWithGitHubRepository(repository)) {
+      return true
+    }
+
+    const tagExists = await this.getTagExistsInGitHubRepository(
+      repository,
+      tagName,
+      'deleted'
+    )
+
+    if (tagExists === null) {
+      return false
+    }
+
+    if (tagExists) {
+      return true
+    }
+
+    await this._showPopup({
+      type: PopupType.Error,
+      error: new Error(
+        `Cannot delete tag "${tagName}" because the current repository does not contain this tag.`
+      ),
+    })
+    return false
+  }
+
+  private async getTagExistsInGitHubRepository(
+    repository: RepositoryWithGitHubRepository,
+    tagName: string,
+    failedAction: 'created' | 'deleted' = 'created'
+  ): Promise<boolean | null> {
+    const account = getAccountForRepository(this.accounts, repository)
+    if (account === null) {
+      await this._showPopup({
+        type: PopupType.Error,
+        error: new Error(
+          `Could not check whether tag "${tagName}" exists in the current GitHub repository because no account is signed in for this repository. The tag was not ${failedAction}.`
+        ),
+      })
+      return null
+    }
+
+    const gitHubRepository = repository.gitHubRepository
+    try {
+      return await API.fromAccount(account).fetchTagExists(
+        gitHubRepository.owner.login,
+        gitHubRepository.name,
+        tagName
+      )
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      await this._showPopup({
+        type: PopupType.Error,
+        error: new Error(
+          `Could not check whether tag "${tagName}" exists in the current GitHub repository. The tag was not ${failedAction}. ${errorMessage}`
+        ),
+      })
+
+      return null
+    }
   }
 
   private async ensureTagHasNoGitHubRelease(

@@ -715,6 +715,10 @@ export interface IAPIRelease {
   readonly html_url: string
 }
 
+interface IAPIGitRef {
+  readonly ref: string
+}
+
 /** Information about a pull request review as returned by the GitHub API. */
 export interface IAPIPullRequestReview {
   readonly id: number
@@ -1115,6 +1119,42 @@ export class API {
 
       log.warn(
         `fetchReleaseForTag: an error occurred for '${owner}/${name}' tag '${tagName}'`,
+        e
+      )
+      throw e
+    }
+  }
+
+  /**
+   * Check whether a tag ref exists in the repository addressed by owner/name.
+   */
+  public async fetchTagExists(
+    owner: string,
+    name: string,
+    tagName: string
+  ): Promise<boolean> {
+    const safeTagName = encodeURIComponent(tagName)
+    const expectedRef = `refs/tags/${tagName}`
+
+    try {
+      const response = await this.ghRequest(
+        'GET',
+        `repos/${owner}/${name}/git/matching-refs/tags/${safeTagName}`
+      )
+
+      if (response.status === HttpStatusCode.NotFound) {
+        return false
+      }
+
+      const refs = await parsedResponse<ReadonlyArray<IAPIGitRef>>(response)
+      return refs.some(ref => ref.ref === expectedRef)
+    } catch (e) {
+      if (isNotFoundApiError(e)) {
+        return false
+      }
+
+      log.warn(
+        `fetchTagExists: an error occurred for '${owner}/${name}' tag '${tagName}'`,
         e
       )
       throw e

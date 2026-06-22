@@ -1,21 +1,54 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { Repository } from '../../../src/models/repository'
-import { setupFixtureRepository } from '../../helpers/repositories'
+import {
+  setupFixtureRepository,
+  setupLocalForkOfRepository,
+} from '../../helpers/repositories'
 import {
   getBranches,
   getBranchesDifferingFromUpstream,
 } from '../../../src/lib/git/for-each-ref'
 import { Branch } from '../../../src/models/branch'
-import { fastForwardBranches } from '../../../src/lib/git'
+import {
+  createTag,
+  deleteTag,
+  fetch,
+  fastForwardBranches,
+  getAllTags,
+  getRemotes,
+} from '../../../src/lib/git'
 import * as Path from 'path'
 import { readFile } from 'fs/promises'
+import { forceUnwrap } from '../../../src/lib/fatal-error'
+import { findDefaultRemote } from '../../../src/lib/stores/helpers/find-default-remote'
 
 function branchWithName(branches: ReadonlyArray<Branch>, name: string) {
   return branches.filter(branch => branch.name === name)[0]
 }
 
 describe('git/fetch', () => {
+  it('prunes tags deleted from the remote', async t => {
+    const remoteRepoPath = await setupFixtureRepository(t, 'test-repo')
+    const remoteRepository = new Repository(remoteRepoPath, -1, null, false)
+
+    await createTag(remoteRepository, 'stale-tag', 'HEAD')
+
+    const repository = await setupLocalForkOfRepository(t, remoteRepository)
+    assert.equal((await getAllTags(repository)).has('stale-tag'), true)
+
+    await deleteTag(remoteRepository, 'stale-tag')
+
+    const originRemote = forceUnwrap(
+      "couldn't find origin remote",
+      findDefaultRemote(await getRemotes(repository))
+    )
+
+    await fetch(repository, originRemote)
+
+    assert.equal((await getAllTags(repository)).has('stale-tag'), false)
+  })
+
   describe('fastForwardBranches', () => {
     it('fast-forwards branches using fetch', async t => {
       const testRepoPath = await setupFixtureRepository(

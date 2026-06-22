@@ -65,7 +65,7 @@ export class DeleteTag extends React.Component<
     if (deleted) {
       this.props.onDismissed()
     } else {
-      this.setState({ isDeleting: false })
+      this.props.onDismissed()
     }
   }
 }
