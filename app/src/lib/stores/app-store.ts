@@ -1709,7 +1709,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _initializeCompare(
     repository: Repository,
-    initialAction?: CompareAction
+    initialAction?: CompareAction,
+    forceHistoryRefresh: boolean = false
   ) {
     const state = this.repositoryStateCache.get(repository)
 
@@ -1744,13 +1745,14 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const cachedState = compareState.formState
     const action =
       initialAction != null ? initialAction : getInitialAction(cachedState)
-    this._executeCompare(repository, action)
+    this._executeCompare(repository, action, forceHistoryRefresh)
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
   public async _executeCompare(
     repository: Repository,
-    action: CompareAction
+    action: CompareAction,
+    forceHistoryRefresh: boolean = false
   ): Promise<void> {
     const gitStore = this.gitStoreCache.get(repository)
     const kind = action.kind
@@ -1780,6 +1782,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         currentSha === previousTip
 
       if (
+        !forceHistoryRefresh &&
         tipIsUnchanged &&
         formState.kind === HistoryTabMode.History &&
         commitSHAs.length > 0 &&
@@ -4004,7 +4007,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _refreshRepository(repository: Repository): Promise<void> {
+  public async _refreshRepository(
+    repository: Repository,
+    forceHistoryRefresh: boolean = false
+  ): Promise<void> {
     if (repository.missing) {
       return
     }
@@ -4085,7 +4091,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const latestState = this.repositoryStateCache.get(repository)
     this.updateMenuItemLabels(latestState)
 
-    this._initializeCompare(repository)
+    this._initializeCompare(repository, undefined, forceHistoryRefresh)
 
     this.updateCurrentTutorialStep(repository)
   }
@@ -6413,7 +6419,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
           currentRepository
         )
 
-        await this._refreshRepository(currentRepository)
+        await this._refreshRepository(currentRepository, true)
       } finally {
         this.updatePushPullFetchProgress(repository, null)
 

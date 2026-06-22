@@ -50,7 +50,7 @@ async function localBranchExists(repository: Repository, branchName: string) {
     ['show-ref', '--verify', `refs/heads/${branchName}`],
     repository.path,
     'localBranchExists',
-    { successExitCodes: new Set([0, 1]) }
+    { successExitCodes: new Set([0, 1, 128]) }
   )
 
   return result.exitCode === 0
