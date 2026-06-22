@@ -103,7 +103,7 @@ describe('git/checkout', () => {
     assert.equal(validBranch.branch.upstreamRemoteName, 'first-remote')
   })
 
-  it('will fail when an existing branch matches the remote branch', async t => {
+  it('checks out a remote branch using its remote-prefixed name when the short name exists locally', async t => {
     const path = await setupFixtureRepository(t, 'checkout-test-cases')
     const repository = new Repository(path, -1, null, false)
 
@@ -120,10 +120,18 @@ describe('git/checkout', () => {
 
     await createBranch(repository, expectedBranch, null)
 
-    await assert.rejects(
-      checkoutBranch(repository, remoteBranch, null),
-      /A branch with that name already exists./
-    )
+    await checkoutBranch(repository, remoteBranch, null)
+
+    const store = new GitStore(repository, shell, new TestStatsStore())
+    await store.loadStatus()
+    const tip = store.tip
+
+    assert.equal(tip.kind, TipState.Valid)
+
+    const validBranch = tip as IValidBranch
+    assert.equal(validBranch.branch.name, firstBranch)
+    assert.equal(validBranch.branch.type, BranchType.Local)
+    assert.equal(validBranch.branch.upstream, firstBranch)
   })
 
   describe('with submodules', () => {

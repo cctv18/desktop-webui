@@ -76,6 +76,33 @@ export async function getAllTags(
 }
 
 /**
+ * Gets all tags fetched for display from non-current remotes.
+ */
+export async function getAllUpstreamTags(
+  repository: Repository
+): Promise<Map<string, string>> {
+  const args = ['show-ref', '-d', 'refs/gitdesk/upstream-tags']
+
+  const tags = await git(args, repository.path, 'getAllUpstreamTags', {
+    successExitCodes: new Set([0, 1]),
+  })
+
+  const tagsArray: Array<[string, string]> = tags.stdout
+    .split('\n')
+    .filter(line => line !== '')
+    .map(line => {
+      const [commitSha, rawTagName] = line.split(' ')
+      const tagName = rawTagName
+        .replace(/^refs\/gitdesk\/upstream-tags\/[^/]+\//, '')
+        .replace(/\^\{\}$/, '')
+
+      return [tagName, commitSha]
+    })
+
+  return new Map(tagsArray)
+}
+
+/**
  * Fetches the tags that will get pushed to the remote repository (it does a network request).
  *
  * @param repository  - The repository in which to check for unpushed tags

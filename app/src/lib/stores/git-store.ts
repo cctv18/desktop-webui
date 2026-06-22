@@ -68,6 +68,7 @@ import {
   removeRemote,
   createTag,
   getAllTags,
+  getAllUpstreamTags,
   deleteTag,
   MergeResult,
   createBranch,
@@ -137,6 +138,8 @@ export class GitStore extends BaseStore {
   private _upstreamDefaultBranch: Branch | null = null
 
   private _localTags: Map<string, string> | null = null
+
+  private _upstreamTags = new Map<string, string>()
 
   private _allBranches: ReadonlyArray<Branch> = []
 
@@ -275,9 +278,24 @@ export class GitStore extends BaseStore {
       }
     }
 
-    // We don't await for the emition of updates to finish
-    // to make this method return earlier.
-    this.emitUpdatesForChangedTags(previousTags ?? new Map(), this._localTags)
+    await this.emitUpdatesForChangedTags(
+      previousTags ?? new Map(),
+      this._localTags
+    )
+  }
+
+  private async refreshUpstreamTags() {
+    const previousTags = this._upstreamTags
+    const newTags = await this.performFailableOperation(() =>
+      getAllUpstreamTags(this.repository)
+    )
+
+    if (newTags === undefined) {
+      return
+    }
+
+    this._upstreamTags = newTags
+    await this.emitUpdatesForChangedTags(previousTags, this._upstreamTags)
   }
 
   /**
@@ -1185,13 +1203,13 @@ export class GitStore extends BaseStore {
     progressCallback?: (fetchProgress: IFetchProgress) => void
   ): Promise<void> {
     const repo = this.repository
+    const syncTags = !remoteEquals(remote, this.upstreamRemote)
     const retryAction: RetryAction = {
       type: RetryActionType.Fetch,
       repository: repo,
     }
     const fetchSucceeded = await this.performFailableOperation(
       async () => {
-        const syncTags = !remoteEquals(remote, this.upstreamRemote)
         await fetchRepo(repo, remote, progressCallback, backgroundTask, syncTags)
         return true
       },
@@ -1212,6 +1230,9 @@ export class GitStore extends BaseStore {
       )
 
       await this.refreshTags()
+      if (!syncTags) {
+        await this.refreshUpstreamTags()
+      }
     }
   }
 

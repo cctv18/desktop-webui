@@ -25,14 +25,35 @@ function getCheckoutArgs(progressCallback?: ProgressCallback) {
   return ['checkout', ...(progressCallback ? ['--progress'] : [])]
 }
 
-async function getBranchCheckoutArgs(branch: Branch) {
+async function getBranchCheckoutArgs(repository: Repository, branch: Branch) {
+  if (branch.type !== BranchType.Remote) {
+    return [branch.name, '--']
+  }
+
+  const localBranchName = (await localBranchExists(
+    repository,
+    branch.nameWithoutRemote
+  ))
+    ? branch.name
+    : branch.nameWithoutRemote
+
   return [
     branch.name,
-    ...(branch.type === BranchType.Remote
-      ? ['-b', branch.nameWithoutRemote]
-      : []),
+    '-b',
+    localBranchName,
     '--',
   ]
+}
+
+async function localBranchExists(repository: Repository, branchName: string) {
+  const result = await git(
+    ['show-ref', '--verify', `refs/heads/${branchName}`],
+    repository.path,
+    'localBranchExists',
+    { successExitCodes: new Set([0, 1]) }
+  )
+
+  return result.exitCode === 0
 }
 
 async function getCheckoutOpts(
@@ -119,7 +140,10 @@ export async function checkoutBranch(
   )
 
   const baseArgs = getCheckoutArgs(progressCallback)
-  const args = [...baseArgs, ...(await getBranchCheckoutArgs(branch))]
+  const args = [
+    ...baseArgs,
+    ...(await getBranchCheckoutArgs(repository, branch)),
+  ]
 
   await git(args, repository.path, 'checkoutBranch', opts)
 
