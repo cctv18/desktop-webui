@@ -20,7 +20,10 @@ async function getFetchArgs(
     remote,
     ...(syncTags
       ? []
-      : [`+refs/tags/*:refs/gitdesk/upstream-tags/${remote}/*`]),
+      : [
+          `+refs/heads/*:refs/remotes/${remote}/*`,
+          `+refs/tags/*:refs/gitdesk/upstream-tags/${remote}/*`,
+        ]),
   ]
 }
 

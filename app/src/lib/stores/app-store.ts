@@ -4049,6 +4049,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // loadBranches needs the default remote to determine the default branch
     await gitStore.loadRemotes()
     await gitStore.loadBranches()
+    await gitStore.refreshTags()
 
     const { selectedSection: section } =
       this.repositoryStateCache.get(repository)
@@ -4072,8 +4073,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this._refreshWorktrees(repository),
       refreshSectionPromise,
     ])
-
-    await gitStore.refreshTags()
 
     // this promise is fire-and-forget, so no need to await it
     this.updateStashEntryCountMetric(

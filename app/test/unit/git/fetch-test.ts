@@ -19,6 +19,7 @@ import {
   getCommits,
   getRemotes,
   addRemote,
+  createBranch,
 } from '../../../src/lib/git'
 import * as Path from 'path'
 import { readFile } from 'fs/promises'
@@ -59,6 +60,7 @@ describe('git/fetch', () => {
 
     await createTag(originRepository, 'origin-tag', 'HEAD')
     await createTag(upstreamRepository, 'upstream-tag', 'HEAD')
+    await createBranch(upstreamRepository, 'upstream-branch', 'HEAD')
 
     const repository = await setupLocalForkOfRepository(t, originRepository)
     const upstreamRemote = await addRemote(
@@ -82,6 +84,10 @@ describe('git/fetch', () => {
     ])
 
     const branches = await getBranches(repository)
+    assert.equal(
+      branches.some(branch => branch.name === 'upstream/upstream-branch'),
+      true
+    )
     assert.equal(
       branches.some(branch => branch.name === 'upstream/tags/upstream-tag'),
       false
