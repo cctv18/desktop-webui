@@ -322,6 +322,7 @@ export type PopupDetail =
       type: PopupType.DeleteTag
       repository: Repository
       tagName: string
+      targetCommitSha: string
     }
   | {
       type: PopupType.ChooseForkSettings

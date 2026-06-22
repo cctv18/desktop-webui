@@ -4611,7 +4611,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       const tagExistsInGitHubRepository =
         await this.getTagExistsInGitHubRepository(repository, name)
 
-      if (tagExistsInGitHubRepository === null) {
+      if (tagExistsInGitHubRepository === undefined) {
         return
       }
 
@@ -4638,7 +4638,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _deleteTag(repository: Repository, name: string): Promise<boolean> {
+  public async _deleteTag(
+    repository: Repository,
+    name: string,
+    targetCommitSha: string
+  ): Promise<boolean> {
     const gitStore = this.gitStoreCache.get(repository)
     const tagCommitSha = await gitStore.getLocalTagCommitSha(name)
 
@@ -4658,7 +4662,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
 
     const tagExistsInGitHubRepository =
-      await this.ensureTagExistsInGitHubRepository(repository, name)
+      await this.ensureTagExistsInGitHubRepository(
+        repository,
+        name,
+        targetCommitSha
+      )
     if (!tagExistsInGitHubRepository) {
       return false
     }
@@ -4696,7 +4704,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private async ensureTagExistsInGitHubRepository(
     repository: Repository,
-    tagName: string
+    tagName: string,
+    targetCommitSha: string
   ): Promise<boolean> {
     if (!isRepositoryWithGitHubRepository(repository)) {
       return true
@@ -4708,11 +4717,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
       'deleted'
     )
 
-    if (tagExists === null) {
+    if (tagExists === undefined) {
       return false
     }
 
-    if (tagExists) {
+    if (tagExists === targetCommitSha) {
       return true
     }
 
@@ -4729,7 +4738,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: RepositoryWithGitHubRepository,
     tagName: string,
     failedAction: 'created' | 'deleted' = 'created'
-  ): Promise<boolean | null> {
+  ): Promise<string | null | undefined> {
     const account = getAccountForRepository(this.accounts, repository)
     if (account === null) {
       await this._showPopup({
@@ -4738,12 +4747,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
           `Could not check whether tag "${tagName}" exists in the current GitHub repository because no account is signed in for this repository. The tag was not ${failedAction}.`
         ),
       })
-      return null
+      return undefined
     }
 
     const gitHubRepository = repository.gitHubRepository
     try {
-      return await API.fromAccount(account).fetchTagExists(
+      return await API.fromAccount(account).fetchTagTargetSha(
         gitHubRepository.owner.login,
         gitHubRepository.name,
         tagName
@@ -4757,7 +4766,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         ),
       })
 
-      return null
+      return undefined
     }
   }
 

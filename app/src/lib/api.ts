@@ -717,6 +717,17 @@ export interface IAPIRelease {
 
 interface IAPIGitRef {
   readonly ref: string
+  readonly object: {
+    readonly sha: string
+    readonly type: string
+  }
+}
+
+interface IAPIGitTag {
+  readonly object: {
+    readonly sha: string
+    readonly type: string
+  }
 }
 
 /** Information about a pull request review as returned by the GitHub API. */
@@ -1133,6 +1144,17 @@ export class API {
     name: string,
     tagName: string
   ): Promise<boolean> {
+    return (await this.fetchTagTargetSha(owner, name, tagName)) !== null
+  }
+
+  /**
+   * Fetch the commit SHA targeted by a tag ref, if the tag exists.
+   */
+  public async fetchTagTargetSha(
+    owner: string,
+    name: string,
+    tagName: string
+  ): Promise<string | null> {
     const safeTagName = encodeURIComponent(tagName)
     const expectedRef = `refs/tags/${tagName}`
 
@@ -1143,18 +1165,38 @@ export class API {
       )
 
       if (response.status === HttpStatusCode.NotFound) {
-        return false
+        return null
       }
 
       const refs = await parsedResponse<ReadonlyArray<IAPIGitRef>>(response)
-      return refs.some(ref => ref.ref === expectedRef)
+      const matchingRef = refs.find(ref => ref.ref === expectedRef)
+
+      if (matchingRef === undefined) {
+        return null
+      }
+
+      if (matchingRef.object.type === 'tag') {
+        const tagResponse = await this.ghRequest(
+          'GET',
+          `repos/${owner}/${name}/git/tags/${matchingRef.object.sha}`
+        )
+
+        if (tagResponse.status === HttpStatusCode.NotFound) {
+          return null
+        }
+
+        const tag = await parsedResponse<IAPIGitTag>(tagResponse)
+        return tag.object.sha
+      }
+
+      return matchingRef.object.sha
     } catch (e) {
       if (isNotFoundApiError(e)) {
-        return false
+        return null
       }
 
       log.warn(
-        `fetchTagExists: an error occurred for '${owner}/${name}' tag '${tagName}'`,
+        `fetchTagTargetSha: an error occurred for '${owner}/${name}' tag '${tagName}'`,
         e
       )
       throw e

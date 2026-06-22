@@ -182,7 +182,15 @@ export async function getCommits(
     const tags = commit.refs
       .toString()
       .split(', ')
-      .flatMap(ref => (ref.startsWith('tag: ') ? ref.substring(5) : []))
+      .flatMap(ref => {
+        if (ref.startsWith('tag: ')) {
+          return ref.substring(5)
+        }
+
+        const upstreamTagMatch = /^[^/]+\/tags\/(.+)$/.exec(ref)
+        return upstreamTagMatch === null ? [] : upstreamTagMatch[1]
+      })
+      .filter((tagName, index, allTags) => allTags.indexOf(tagName) === index)
 
     return new Commit(
       commit.sha.toString(),

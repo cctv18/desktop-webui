@@ -697,8 +697,12 @@ export class Dispatcher {
   /**
    * Deletes the passed tag.
    */
-  public deleteTag(repository: Repository, name: string): Promise<boolean> {
-    return this.appStore._deleteTag(repository, name)
+  public deleteTag(
+    repository: Repository,
+    name: string,
+    targetCommitSha: string
+  ): Promise<boolean> {
+    return this.appStore._deleteTag(repository, name, targetCommitSha)
   }
 
   /**
@@ -734,12 +738,14 @@ export class Dispatcher {
    */
   public showDeleteTagDialog(
     repository: Repository,
-    tagName: string
+    tagName: string,
+    targetCommitSha: string
   ): Promise<void> {
     return this.showPopup({
       type: PopupType.DeleteTag,
       repository,
       tagName,
+      targetCommitSha,
     })
   }
 

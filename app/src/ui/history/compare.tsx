@@ -645,8 +645,12 @@ export class CompareSidebar extends React.Component<
     }
   }
 
-  private onDeleteTag = (tagName: string) => {
-    this.props.dispatcher.showDeleteTagDialog(this.props.repository, tagName)
+  private onDeleteTag = (tagName: string, targetCommitSha: string) => {
+    this.props.dispatcher.showDeleteTagDialog(
+      this.props.repository,
+      tagName,
+      targetCommitSha
+    )
   }
 
   private onRevertTagDeletion = (tagName: string) => {

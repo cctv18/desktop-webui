@@ -18,6 +18,7 @@ async function getFetchArgs(
     ...(syncTags ? ['--prune-tags'] : ['--no-tags']),
     '--recurse-submodules=on-demand',
     remote,
+    ...(syncTags ? [] : [`+refs/tags/*:refs/remotes/${remote}/tags/*`]),
   ]
 }
 

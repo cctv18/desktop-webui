@@ -113,7 +113,7 @@ interface ICommitListProps {
   readonly onCreateTag?: (targetCommitSha: string) => void
 
   /** Callback to fire to delete an unpushed tag */
-  readonly onDeleteTag?: (tagName: string) => void
+  readonly onDeleteTag?: (tagName: string, targetCommitSha: string) => void
 
   /** Callback to fire to undo a pending, unpushed tag deletion */
   readonly onRevertTagDeletion?: (tagName: string) => void
@@ -939,7 +939,7 @@ export class CommitList extends React.Component<
 
       return {
         label: `Delete tag ${tagName}`,
-        action: () => onDeleteTag(tagName),
+        action: () => onDeleteTag(tagName, commit.sha),
         enabled: true,
       }
     }
@@ -949,7 +949,7 @@ export class CommitList extends React.Component<
       submenu: commit.tags.map(tagName => {
         return {
           label: tagName,
-          action: () => onDeleteTag(tagName),
+          action: () => onDeleteTag(tagName, commit.sha),
           enabled: true,
         }
       }),
