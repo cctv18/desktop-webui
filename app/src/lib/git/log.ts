@@ -147,6 +147,8 @@ export async function getCommits(
   }
 
   args.push('--date=raw')
+  args.push('--decorate-refs=refs/tags/*')
+  args.push('--decorate-refs=refs/gitdesk/upstream-tags/*')
 
   if (limit !== undefined) {
     args.push(`--max-count=${limit}`)
@@ -187,7 +189,8 @@ export async function getCommits(
           return ref.substring(5)
         }
 
-        const upstreamTagMatch = /^[^/]+\/tags\/(.+)$/.exec(ref)
+        const upstreamTagMatch =
+          /^refs\/gitdesk\/upstream-tags\/[^/]+\/(.+)$/.exec(ref)
         return upstreamTagMatch === null ? [] : upstreamTagMatch[1]
       })
       .filter((tagName, index, allTags) => allTags.indexOf(tagName) === index)

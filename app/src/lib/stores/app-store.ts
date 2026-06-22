@@ -574,6 +574,14 @@ const selectedCopilotModelsKey = 'selected-copilot-models'
 const legacyAutoCopilotModelKey = '__copilot_auto__'
 export const showChangesFilterDefault = true
 
+function shasEqual(left: string | null, right: string | null) {
+  return (
+    left !== null &&
+    right !== null &&
+    left.toLowerCase() === right.toLowerCase()
+  )
+}
+
 export class AppStore extends TypedBaseStore<IAppState> {
   private readonly gitStoreCache: GitStoreCache
 
@@ -4646,7 +4654,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const gitStore = this.gitStoreCache.get(repository)
     const tagCommitSha = await gitStore.getLocalTagCommitSha(name)
 
-    if (tagCommitSha === null) {
+    if (tagCommitSha === null || !shasEqual(tagCommitSha, targetCommitSha)) {
       await this._showPopup({
         type: PopupType.Error,
         error: new Error(
@@ -4665,7 +4673,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       await this.ensureTagExistsInGitHubRepository(
         repository,
         name,
-        targetCommitSha
+        tagCommitSha
       )
     if (!tagExistsInGitHubRepository) {
       return false
@@ -4721,7 +4729,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       return false
     }
 
-    if (tagExists === targetCommitSha) {
+    if (shasEqual(tagExists, targetCommitSha)) {
       return true
     }
 

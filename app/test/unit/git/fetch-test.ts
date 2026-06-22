@@ -80,6 +80,12 @@ describe('git/fetch', () => {
       'origin-tag',
       'upstream-tag',
     ])
+
+    const branches = await getBranches(repository)
+    assert.equal(
+      branches.some(branch => branch.name === 'upstream/tags/upstream-tag'),
+      false
+    )
   })
 
   describe('fastForwardBranches', () => {

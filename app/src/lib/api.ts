@@ -1175,10 +1175,11 @@ export class API {
         return null
       }
 
-      if (matchingRef.object.type === 'tag') {
+      let tagObject = matchingRef.object
+      while (tagObject.type === 'tag') {
         const tagResponse = await this.ghRequest(
           'GET',
-          `repos/${owner}/${name}/git/tags/${matchingRef.object.sha}`
+          `repos/${owner}/${name}/git/tags/${tagObject.sha}`
         )
 
         if (tagResponse.status === HttpStatusCode.NotFound) {
@@ -1186,10 +1187,10 @@ export class API {
         }
 
         const tag = await parsedResponse<IAPIGitTag>(tagResponse)
-        return tag.object.sha
+        tagObject = tag.object
       }
 
-      return matchingRef.object.sha
+      return tagObject.sha
     } catch (e) {
       if (isNotFoundApiError(e)) {
         return null

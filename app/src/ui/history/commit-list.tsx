@@ -2,7 +2,7 @@ import * as React from 'react'
 import memoize from 'memoize-one'
 import { GitHubRepository } from '../../models/github-repository'
 import { Commit, CommitOneLine } from '../../models/commit'
-import { CommitListItem } from './commit-list-item'
+import { CommitListItem, CommitTagKind } from './commit-list-item'
 import { KeyboardInsertionData, List } from '../lib/list'
 import { arrayEquals } from '../../lib/equality'
 import { DragData, DragType } from '../../models/drag-drop'
@@ -161,6 +161,9 @@ interface ICommitListProps {
   /* Tags that haven't been pushed yet. This is used to show the unpushed indicator */
   readonly tagsToPush?: ReadonlyArray<string>
 
+  /** Local tags in the current repository namespace. */
+  readonly localTags: Map<string, string> | null
+
   /** Whether or not commits in this list can be reordered. */
   readonly reorderingEnabled?: boolean
 
@@ -299,6 +302,7 @@ export class CommitList extends React.Component<
 
     const isLocal = this.isLocalCommit(commit.sha)
     const unpushedTags = this.getUnpushedTags(commit)
+    const tagKinds = this.getTagKinds(commit)
 
     const showUnpushedIndicator =
       (isLocal || unpushedTags.length > 0) &&
@@ -326,8 +330,34 @@ export class CommitList extends React.Component<
         disableSquashing={this.props.disableSquashing}
         accounts={this.props.accounts}
         preferAbsoluteDates={this.props.preferAbsoluteDates}
+        tagKinds={tagKinds}
       />
     )
+  }
+
+  private getTagKinds(commit: Commit): ReadonlyMap<string, CommitTagKind> {
+    const tagKinds = new Map<string, CommitTagKind>()
+    const pendingTagCreations = new Set(
+      (this.props.tagsToPush ?? []).filter(
+        tagToPush => !isTagDeletionPushRefspec(tagToPush)
+      )
+    )
+
+    for (const tagName of commit.tags) {
+      const localTagCommitSha = this.props.localTags?.get(tagName)
+      if (pendingTagCreations.has(tagName)) {
+        tagKinds.set(tagName, 'pending')
+      } else if (
+        localTagCommitSha !== undefined &&
+        localTagCommitSha.toLowerCase() === commit.sha.toLowerCase()
+      ) {
+        tagKinds.set(tagName, 'repository')
+      } else {
+        tagKinds.set(tagName, 'upstream')
+      }
+    }
+
+    return tagKinds
   }
 
   private get inKeyboardReorderMode() {
@@ -654,6 +684,7 @@ export class CommitList extends React.Component<
             localCommitSHAs: this.props.localCommitSHAs,
             commitLookupHash: this.commitsHash(this.getVisibleCommits()),
             tagsToPush: this.props.tagsToPush,
+            localTags: getLocalTagsHash(this.props.localTags),
             shasToHighlight: this.props.shasToHighlight,
             preferAbsoluteDates: this.props.preferAbsoluteDates,
           }}
@@ -1109,4 +1140,12 @@ function commitListItemHash(commit: Commit): string {
 
 function makeCommitsHash(commits: ReadonlyArray<Commit>): string {
   return commits.map(commitListItemHash).join(' ')
+}
+
+function getLocalTagsHash(localTags: Map<string, string> | null): string {
+  return localTags === null
+    ? ''
+    : Array.from(localTags.entries())
+        .map(([tagName, commitSha]) => `${tagName}:${commitSha}`)
+        .join('|')
 }

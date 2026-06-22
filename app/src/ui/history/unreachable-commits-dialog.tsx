@@ -120,6 +120,7 @@ export class UnreachableCommitsDialog extends React.Component<
             accounts={this.props.accounts}
             isInformationalView={true}
             preferAbsoluteDates={this.props.preferAbsoluteDates}
+            localTags={null}
           />
         </div>
       </>

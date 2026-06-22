@@ -197,6 +197,7 @@ export class ConfigureGitUser extends React.Component<
           selectedCommits={[dummyCommit]}
           accounts={this.props.accounts}
           preferAbsoluteDates={false}
+          tagKinds={new Map()}
         />
       </div>
     )

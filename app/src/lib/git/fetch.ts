@@ -18,7 +18,9 @@ async function getFetchArgs(
     ...(syncTags ? ['--prune-tags'] : ['--no-tags']),
     '--recurse-submodules=on-demand',
     remote,
-    ...(syncTags ? [] : [`+refs/tags/*:refs/remotes/${remote}/tags/*`]),
+    ...(syncTags
+      ? []
+      : [`+refs/tags/*:refs/gitdesk/upstream-tags/${remote}/*`]),
   ]
 }
 
@@ -90,6 +92,32 @@ export async function fetch(
   const args = await getFetchArgs(remote.name, progressCallback, syncTags)
 
   await git(args, repository.path, 'fetch', opts)
+
+  if (!syncTags) {
+    await deleteLegacyUpstreamTagRefs(repository, remote.name)
+  }
+}
+
+async function deleteLegacyUpstreamTagRefs(
+  repository: Repository,
+  remoteName: string
+) {
+  const refs = await git(
+    ['for-each-ref', '--format=%(refname)', `refs/remotes/${remoteName}/tags`],
+    repository.path,
+    'deleteLegacyUpstreamTagRefs',
+    { successExitCodes: new Set([0]) }
+  )
+
+  const refNames = refs.stdout.split('\n').filter(ref => ref.length > 0)
+  for (const refName of refNames) {
+    await git(
+      ['update-ref', '-d', refName],
+      repository.path,
+      'deleteLegacyUpstreamTagRef',
+      { successExitCodes: new Set([0, 1]) }
+    )
+  }
 }
 
 /** Fetch a given refspec from the given remote. */

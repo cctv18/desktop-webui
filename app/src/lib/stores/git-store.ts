@@ -275,11 +275,9 @@ export class GitStore extends BaseStore {
       }
     }
 
-    if (previousTags !== null) {
-      // We don't await for the emition of updates to finish
-      // to make this method return earlier.
-      this.emitUpdatesForChangedTags(previousTags, this._localTags)
-    }
+    // We don't await for the emition of updates to finish
+    // to make this method return earlier.
+    this.emitUpdatesForChangedTags(previousTags ?? new Map(), this._localTags)
   }
 
   /**

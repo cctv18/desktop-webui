@@ -28,6 +28,8 @@ import { enableAccessibleListToolTips } from '../../lib/feature-flag'
 import { TooltippedContent } from '../lib/tooltipped-content'
 import { formatDate } from '../../lib/format-date'
 
+export type CommitTagKind = 'repository' | 'pending' | 'upstream'
+
 interface ICommitProps {
   readonly gitHubRepository: GitHubRepository | null
   readonly commit: Commit
@@ -50,6 +52,7 @@ interface ICommitProps {
   readonly unpushedIndicatorTitle?: string
   readonly accounts: ReadonlyArray<Account>
   readonly preferAbsoluteDates: boolean
+  readonly tagKinds: ReadonlyMap<string, CommitTagKind>
 }
 
 interface ICommitListItemState {
@@ -178,7 +181,10 @@ export class CommitListItem extends React.PureComponent<
   }
 
   private renderCommitIndicators() {
-    const tagIndicator = renderCommitListItemTags(this.props.commit.tags)
+    const tagIndicator = renderCommitListItemTags(
+      this.props.commit.tags,
+      this.props.tagKinds
+    )
     const unpushedIndicator = this.renderUnpushedIndicator()
 
     if (tagIndicator || unpushedIndicator) {
@@ -248,13 +254,17 @@ function renderRelativeTime(date: Date, preferAbsoluteDates: boolean) {
   )
 }
 
-function renderCommitListItemTags(tags: ReadonlyArray<string>) {
+function renderCommitListItemTags(
+  tags: ReadonlyArray<string>,
+  tagKinds: ReadonlyMap<string, CommitTagKind>
+) {
   if (tags.length === 0) {
     return null
   }
   const [firstTag] = tags
+  const firstTagKind = tagKinds.get(firstTag) ?? 'upstream'
   return (
-    <span className="tag-indicator">
+    <span className={classNames('tag-indicator', `tag-${firstTagKind}`)}>
       <span className="tag-name" key={firstTag}>
         {firstTag}
       </span>

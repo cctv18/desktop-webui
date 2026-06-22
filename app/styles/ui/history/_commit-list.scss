@@ -171,6 +171,22 @@
         border-radius: 0 var(--border-radius) var(--border-radius) 0;
         background: var(--list-item-badge-background-color);
       }
+
+      &.tag-repository {
+        .tag-name,
+        .tag-indicator-more {
+          background: #d8f5df;
+          color: #14532d;
+        }
+      }
+
+      &.tag-pending {
+        .tag-name,
+        .tag-indicator-more {
+          background: #fff4bf;
+          color: #5f4b00;
+        }
+      }
     }
 
     .unpushed-indicator {
