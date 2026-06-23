@@ -17,7 +17,7 @@ import {
   IFileResolution,
   ICopilotResolutionSummary,
 } from '../../../lib/copilot-conflict-resolution'
-import { showContextualMenu, IMenuItem } from '../../../lib/menu-item'
+import { IMenuItem } from '../../../lib/menu-item'
 import { OkCancelButtonGroup } from '../../dialog/ok-cancel-button-group'
 import { Button } from '../../lib/button'
 import { Octicon } from '../../octicons'
@@ -31,6 +31,11 @@ import { openFile } from '../../lib/open-file'
 import { revealInFileManager } from '../../../lib/app-shell'
 import { CopilotConflictsResolutionSummary } from './copilot-conflicts-resolution-summary'
 import { MultiCommitOperationKind } from '../../../models/multi-commit-operation'
+import {
+  Popover,
+  PopoverAnchorPosition,
+  PopoverDecoration,
+} from '../../lib/popover'
 
 /**
  * The resolution choice for a file in the Copilot conflicts dialog.
@@ -39,6 +44,12 @@ import { MultiCommitOperationKind } from '../../../models/multi-commit-operation
  * - 'theirs': Use their side (incoming branch)
  */
 type CopilotFileResolutionChoice = 'copilot' | 'ours' | 'theirs'
+type CopilotFileMenuKind = 'resolution' | 'overflow'
+
+interface ICopilotFileMenuState {
+  readonly path: string
+  readonly kind: CopilotFileMenuKind
+}
 
 interface ICopilotConflictsDialogProps {
   readonly repository: Repository
@@ -58,6 +69,7 @@ interface ICopilotConflictsDialogProps {
 
 interface ICopilotConflictsDialogState {
   readonly isContinuing: boolean
+  readonly activeMenu: ICopilotFileMenuState | null
 }
 
 /**
@@ -73,13 +85,16 @@ export class CopilotConflictsDialog extends React.Component<
 > {
   private readonly dropdownHandlers = new Map<string, () => void>()
   private readonly overflowHandlers = new Map<string, () => void>()
+  private readonly dropdownRefs = new Map<string, HTMLButtonElement>()
+  private readonly overflowRefs = new Map<string, HTMLButtonElement>()
 
   public constructor(props: ICopilotConflictsDialogProps) {
     super(props)
-    this.state = { isContinuing: false }
+    this.state = { isContinuing: false, activeMenu: null }
   }
 
   private onBackToManual = () => {
+    this.closeActiveMenu()
     const { dispatcher, repository, conflictState } = this.props
 
     dispatcher.setMultiCommitOperationStepWithCopilotResolution(
@@ -93,7 +108,7 @@ export class CopilotConflictsDialog extends React.Component<
   }
 
   private onContinue = async () => {
-    this.setState({ isContinuing: true })
+    this.setState({ isContinuing: true, activeMenu: null })
     try {
       // Write Copilot resolutions to disk before continuing the operation.
       // Done here (shared) so it works for merge, rebase, and cherry-pick.
@@ -109,7 +124,25 @@ export class CopilotConflictsDialog extends React.Component<
 
   private onAbort = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
+    this.closeActiveMenu()
     await this.props.onAbort()
+  }
+
+  private closeActiveMenu = () => {
+    if (this.state.activeMenu !== null) {
+      this.setState({ activeMenu: null })
+    }
+  }
+
+  private toggleActiveMenu(path: string, kind: CopilotFileMenuKind): void {
+    this.setState(state => {
+      const { activeMenu } = state
+      if (activeMenu?.path === path && activeMenu.kind === kind) {
+        return { activeMenu: null }
+      }
+
+      return { activeMenu: { path, kind } }
+    })
   }
 
   private getResolutionForFile(path: string): CopilotFileResolutionChoice {
@@ -136,7 +169,7 @@ export class CopilotConflictsDialog extends React.Component<
     }
   }
 
-  private onResolutionDropdownClick = (path: string) => {
+  private buildResolutionMenuItems(path: string): ReadonlyArray<IMenuItem> {
     const { conflictState } = this.props
     const currentChoice = this.getResolutionForFile(path)
     const { ourBranch, theirBranch } = conflictState
@@ -148,7 +181,7 @@ export class CopilotConflictsDialog extends React.Component<
       theirBranch ? ` from ${theirBranch}` : ''
     }`
 
-    const items: ReadonlyArray<IMenuItem> = [
+    return [
       {
         label: "Use Copilot's suggestion",
         type: 'checkbox',
@@ -168,8 +201,10 @@ export class CopilotConflictsDialog extends React.Component<
         action: () => this.setResolution(path, 'theirs'),
       },
     ]
+  }
 
-    showContextualMenu(items)
+  private onResolutionDropdownClick = (path: string) => {
+    this.toggleActiveMenu(path, 'resolution')
   }
 
   private setResolution(
@@ -195,7 +230,7 @@ export class CopilotConflictsDialog extends React.Component<
     }
   }
 
-  private onOverflowMenuClick = (path: string) => {
+  private buildOverflowMenuItems(path: string): ReadonlyArray<IMenuItem> {
     const { repository, dispatcher, resolvedExternalEditor } = this.props
     const absolutePath = join(repository.path, path)
 
@@ -219,7 +254,11 @@ export class CopilotConflictsDialog extends React.Component<
       }
     )
 
-    showContextualMenu(items)
+    return items
+  }
+
+  private onOverflowMenuClick = (path: string) => {
+    this.toggleActiveMenu(path, 'overflow')
   }
 
   private getResolutionDropdownClickHandler(path: string): () => void {
@@ -238,6 +277,109 @@ export class CopilotConflictsDialog extends React.Component<
       this.overflowHandlers.set(path, handler)
     }
     return handler
+  }
+
+  private getDropdownRefHandler(
+    path: string
+  ): (button: HTMLButtonElement | null) => void {
+    return button => {
+      if (button === null) {
+        this.dropdownRefs.delete(path)
+      } else {
+        this.dropdownRefs.set(path, button)
+      }
+    }
+  }
+
+  private getOverflowRefHandler(
+    path: string
+  ): (button: HTMLButtonElement | null) => void {
+    return button => {
+      if (button === null) {
+        this.overflowRefs.delete(path)
+      } else {
+        this.overflowRefs.set(path, button)
+      }
+    }
+  }
+
+  private renderMenuItems(items: ReadonlyArray<IMenuItem>): JSX.Element {
+    return (
+      <div className="copilot-conflicts-file-menu-items" role="menu">
+        {items.map((item, index) => {
+          if (item.type === 'separator') {
+            return (
+              <div
+                key={index}
+                className="copilot-conflicts-file-menu-separator"
+                role="separator"
+              />
+            )
+          }
+
+          const enabled = item.enabled !== false
+          const role =
+            item.type === 'checkbox' ? 'menuitemcheckbox' : 'menuitem'
+
+          return (
+            <button
+              key={index}
+              className="copilot-conflicts-file-menu-item"
+              disabled={!enabled}
+              role={role}
+              aria-checked={
+                item.type === 'checkbox' ? item.checked === true : undefined
+              }
+              onClick={event => {
+                event.preventDefault()
+                this.closeActiveMenu()
+                item.action?.()
+              }}
+            >
+              <span className="copilot-conflicts-file-menu-checkmark">
+                {item.type === 'checkbox' && item.checked === true && (
+                  <Octicon symbol={octicons.check} />
+                )}
+              </span>
+              <span className="copilot-conflicts-file-menu-label">
+                {item.label}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  private renderActiveMenu(path: string): JSX.Element | null {
+    const { activeMenu } = this.state
+    if (activeMenu === null || activeMenu.path !== path) {
+      return null
+    }
+
+    const isResolutionMenu = activeMenu.kind === 'resolution'
+    const anchor = isResolutionMenu
+      ? this.dropdownRefs.get(path) ?? null
+      : this.overflowRefs.get(path) ?? null
+    const items = isResolutionMenu
+      ? this.buildResolutionMenuItems(path)
+      : this.buildOverflowMenuItems(path)
+
+    return (
+      <Popover
+        className="copilot-conflicts-file-menu"
+        anchor={anchor}
+        anchorPosition={PopoverAnchorPosition.BottomRight}
+        decoration={PopoverDecoration.None}
+        onClickOutside={this.closeActiveMenu}
+        onMousedownOutside={this.closeActiveMenu}
+        trapFocus={false}
+        isDialog={false}
+        style={{ zIndex: 20 }}
+      >
+        {this.renderMenuItems(items)}
+      </Popover>
+    )
   }
 
   private getResolutionForPath(path: string): IFileResolution | undefined {
@@ -317,6 +459,12 @@ export class CopilotConflictsDialog extends React.Component<
             className="copilot-resolution-dropdown"
             onClick={onDropdownClick}
             disabled={this.state.isContinuing}
+            onButtonRef={this.getDropdownRefHandler(file.path)}
+            ariaExpanded={
+              this.state.activeMenu?.path === file.path &&
+              this.state.activeMenu.kind === 'resolution'
+            }
+            ariaHaspopup="menu"
           >
             {choice === 'copilot' && <Octicon symbol={octicons.copilot} />}
             {choiceLabel}
@@ -327,9 +475,16 @@ export class CopilotConflictsDialog extends React.Component<
             onClick={onOverflowClick}
             disabled={this.state.isContinuing}
             ariaLabel="File options"
+            onButtonRef={this.getOverflowRefHandler(file.path)}
+            ariaExpanded={
+              this.state.activeMenu?.path === file.path &&
+              this.state.activeMenu.kind === 'overflow'
+            }
+            ariaHaspopup="menu"
           >
             <Octicon symbol={octicons.kebabHorizontal} />
           </Button>
+          {this.renderActiveMenu(file.path)}
         </div>
       </li>
     )

@@ -3051,7 +3051,7 @@ export class Dispatcher {
       this.logHowToRevertCherryPick(nameAfterCheckout, tip.sha)
     }
 
-    this.processCherryPickResult(
+    await this.processCherryPickResult(
       repository,
       result,
       nameAfterCheckout,
@@ -3228,7 +3228,7 @@ export class Dispatcher {
       this.statsStore.increment('cherryPickSuccessfulWithConflictsCount')
     }
 
-    this.processCherryPickResult(
+    await this.processCherryPickResult(
       repository,
       result,
       conflictsState.targetBranchName,
