@@ -24,7 +24,7 @@ export function hasOutstandingRebaseConflicts(
   return files.some(f => f.status.kind === AppFileStatusKind.Conflicted)
 }
 
-function isEmptyCommitRebaseStop(error: unknown): boolean {
+export function isEmptyCommitRebaseStop(error: unknown): boolean {
   const result = (error as { result?: { stdout?: unknown; stderr?: unknown } })
     .result
   const message = error instanceof Error ? error.message : ''
@@ -33,9 +33,14 @@ function isEmptyCommitRebaseStop(error: unknown): boolean {
     .map(value => String(value))
     .join('\n')
 
+  const normalizedOutput = output.toLowerCase()
+
   const hasEmptyCommitHint =
     output.includes('--allow-empty') &&
-    (output.includes('empty commit') || output.includes('空提交'))
+    (normalizedOutput.includes('empty commit') ||
+      normalizedOutput.includes('would make') ||
+      normalizedOutput.includes('it empty') ||
+      output.includes('空提交'))
 
   const hasRebaseContinueHint =
     output.includes('rebase --continue') ||
@@ -43,6 +48,21 @@ function isEmptyCommitRebaseStop(error: unknown): boolean {
     output.includes('interactive rebase')
 
   return hasEmptyCommitHint && hasRebaseContinueHint
+}
+
+function isResolvedRebaseContinueStop(error: unknown): boolean {
+  const result = (error as { result?: { stdout?: unknown; stderr?: unknown } })
+    .result
+  const message = error instanceof Error ? error.message : ''
+  const output = [result?.stdout, result?.stderr, message]
+    .filter(value => value !== undefined && value !== null)
+    .map(value => String(value))
+    .join('\n')
+
+  return (
+    output.includes('all conflicts fixed') &&
+    output.includes('rebase --continue')
+  )
 }
 
 async function continueAutomaticallyResolvedSquashRebase(
@@ -85,6 +105,38 @@ async function continueAutomaticallyResolvedSquashRebase(
   }
 
   return nextResult
+}
+
+async function continueEmptySquashRebase(
+  repository: Repository,
+  commitMessagePath: string | undefined,
+  opts: RebaseInteractiveOptions
+): Promise<RebaseResult> {
+  const maxEmptyContinues = (opts.commits?.length ?? 1) + 1
+
+  for (let attempt = 0; attempt < maxEmptyContinues; attempt++) {
+    try {
+      return await continueRebaseWithEmptyCommit(
+        repository,
+        commitMessagePath,
+        {
+          ...opts,
+          action: 'continue empty squash rebase',
+        }
+      )
+    } catch (e) {
+      if (!isEmptyCommitRebaseStop(e)) {
+        throw e
+      }
+
+      log.info(
+        '[squash] accepting another empty squashed commit during rebase'
+      )
+    }
+  }
+
+  log.warn('[squash] reached the empty squashed commit continuation limit')
+  return RebaseResult.Error
 }
 
 /**
@@ -245,19 +297,27 @@ export async function squash(
         rebaseOptions
       )
     } catch (e) {
-      if (!isEmptyCommitRebaseStop(e)) {
+      if (isResolvedRebaseContinueStop(e) && !isEmptyCommitRebaseStop(e)) {
+        result = await continueAutomaticallyResolvedSquashRebase(
+          repository,
+          RebaseResult.ConflictsEncountered,
+          rebaseOptions
+        )
+      } else if (!isEmptyCommitRebaseStop(e)) {
         throw e
+      } else {
+        log.info('[squash] accepting empty squashed commit during rebase')
+        result = await continueEmptySquashRebase(
+          repository,
+          messagePath,
+          rebaseOptions
+        )
+        result = await continueAutomaticallyResolvedSquashRebase(
+          repository,
+          result,
+          rebaseOptions
+        )
       }
-
-      log.info('[squash] accepting empty squashed commit during rebase')
-      result = await continueRebaseWithEmptyCommit(
-        repository,
-        messagePath,
-        {
-          ...rebaseOptions,
-          action: 'continue empty squash rebase',
-        }
-      )
     }
   } catch (e) {
     log.error(e)

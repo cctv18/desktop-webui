@@ -16,6 +16,7 @@ import { setupEmptyRepositoryDefaultMain } from '../../helpers/repositories'
 import { makeCommit } from '../../helpers/repository-scaffolding'
 import {
   hasOutstandingRebaseConflicts,
+  isEmptyCommitRebaseStop,
   squash,
 } from '../../../src/lib/git/squash'
 import { exec } from 'dugite'
@@ -42,6 +43,22 @@ describe('git/cherry-pick', () => {
       hasOutstandingRebaseConflicts([modified, conflicted]),
       true
     )
+  })
+
+  it('detects empty squash rebase stops reported as an empty amend', () => {
+    const error = {
+      result: {
+        stderr:
+          'You asked to amend the most recent commit, but doing so would make\n' +
+          'it empty. You can repeat your command with --allow-empty, or you can\n' +
+          'remove the commit entirely with "git reset HEAD^".\n' +
+          'interactive rebase in progress; onto 4ab47c4\n' +
+          '  (all conflicts fixed: run "git rebase --continue")\n' +
+          'No changes\n',
+      },
+    }
+
+    assert.equal(isEmptyCommitRebaseStop(error), true)
   })
 
   it('squashes one commit onto the next (non-conflicting)', async t => {

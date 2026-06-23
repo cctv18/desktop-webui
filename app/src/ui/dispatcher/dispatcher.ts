@@ -3852,7 +3852,7 @@ export class Dispatcher {
     this.statsStore.recordOperationSuccessful(kind)
 
     this.endMultiCommitOperation(repository)
-    await this.appStore._refreshRepository(repository, true)
+    await this.refreshRepository(repository)
   }
 
   private getMultiCommitOperationSuccessBanner(
