@@ -189,6 +189,7 @@ import {
   launchExternalEditor,
 } from '../editors'
 import { assertNever, fatalError, forceUnwrap } from '../fatal-error'
+import { getTempFilePath } from '../file-system'
 
 import { formatCommitMessage } from '../format-commit-message'
 import {
@@ -7725,13 +7726,43 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ): Promise<RebaseResult> {
     const progressCallback =
       this.getMultiCommitOperationProgressCallBack(repository)
+    const { multiCommitOperationState } =
+      this.repositoryStateCache.get(repository)
+
+    let messagePath: string | undefined
+    let gitEditor: string | undefined
+
+    if (
+      multiCommitOperationState?.operationDetail.kind ===
+      MultiCommitOperationKind.Squash
+    ) {
+      const commitMessage = await formatCommitMessage(
+        repository,
+        multiCommitOperationState.operationDetail.commitContext
+      )
+
+      if (commitMessage.trim() !== '') {
+        messagePath = await getTempFilePath('squashCommitMessage')
+        await writeFile(messagePath, commitMessage)
+        gitEditor = `cat "${messagePath}" >`
+      }
+    }
 
     const gitStore = this.gitStoreCache.get(repository)
-    const result = await gitStore.performFailableOperation(() =>
-      continueRebase(repository, workingDirectory.files, manualResolutions, {
-        progressCallback,
-      })
-    )
+    let result: RebaseResult | undefined
+
+    try {
+      result = await gitStore.performFailableOperation(() =>
+        continueRebase(repository, workingDirectory.files, manualResolutions, {
+          progressCallback,
+          gitEditor,
+        })
+      )
+    } finally {
+      if (messagePath !== undefined) {
+        await rm(messagePath, { recursive: true, force: true })
+      }
+    }
 
     return result || RebaseResult.Error
   }

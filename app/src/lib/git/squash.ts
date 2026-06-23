@@ -6,10 +6,23 @@ import { IMultiCommitOperationProgress } from '../../models/progress'
 import { Repository } from '../../models/repository'
 import { getTempFilePath } from '../file-system'
 import {
+  continueRebase,
   continueRebaseWithEmptyCommit,
   rebaseInteractive,
+  RebaseInteractiveOptions,
   RebaseResult,
 } from './rebase'
+import { getStatus } from './status'
+import {
+  AppFileStatusKind,
+  WorkingDirectoryFileChange,
+} from '../../models/status'
+
+export function hasOutstandingRebaseConflicts(
+  files: ReadonlyArray<WorkingDirectoryFileChange>
+): boolean {
+  return files.some(f => f.status.kind === AppFileStatusKind.Conflicted)
+}
 
 function isEmptyCommitRebaseStop(error: unknown): boolean {
   const result = (error as { result?: { stdout?: unknown; stderr?: unknown } })
@@ -30,6 +43,48 @@ function isEmptyCommitRebaseStop(error: unknown): boolean {
     output.includes('interactive rebase')
 
   return hasEmptyCommitHint && hasRebaseContinueHint
+}
+
+async function continueAutomaticallyResolvedSquashRebase(
+  repository: Repository,
+  result: RebaseResult,
+  opts: RebaseInteractiveOptions
+): Promise<RebaseResult> {
+  let nextResult = result
+  const maxAutomaticContinues = (opts.commits?.length ?? 1) + 1
+
+  for (
+    let attempt = 0;
+    nextResult === RebaseResult.ConflictsEncountered &&
+    attempt < maxAutomaticContinues;
+    attempt++
+  ) {
+    const status = await getStatus(repository, false)
+
+    if (status === null) {
+      return nextResult
+    }
+
+    if (hasOutstandingRebaseConflicts(status.workingDirectory.files)) {
+      return nextResult
+    }
+
+    log.info(
+      '[squash] rebase stopped after all conflicts were resolved; continuing automatically'
+    )
+
+    nextResult = await continueRebase(
+      repository,
+      status.workingDirectory.files,
+      new Map(),
+      {
+        ...opts,
+        action: 'continue automatically resolved squash rebase',
+      }
+    )
+  }
+
+  return nextResult
 }
 
 /**
@@ -182,6 +237,11 @@ export async function squash(
         repository,
         todoPath,
         lastRetainedCommitRef,
+        rebaseOptions
+      )
+      result = await continueAutomaticallyResolvedSquashRebase(
+        repository,
+        result,
         rebaseOptions
       )
     } catch (e) {

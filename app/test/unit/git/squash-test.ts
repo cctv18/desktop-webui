@@ -14,12 +14,36 @@ import { Commit } from '../../../src/models/commit'
 import { Repository } from '../../../src/models/repository'
 import { setupEmptyRepositoryDefaultMain } from '../../helpers/repositories'
 import { makeCommit } from '../../helpers/repository-scaffolding'
-import { squash } from '../../../src/lib/git/squash'
+import {
+  hasOutstandingRebaseConflicts,
+  squash,
+} from '../../../src/lib/git/squash'
 import { exec } from 'dugite'
 import { getStatusOrThrow } from '../../helpers/status'
 import { getTempFilePath } from '../../../src/lib/file-system'
+import {
+  AppFileStatusKind,
+  WorkingDirectoryFileChange,
+} from '../../../src/models/status'
 
 describe('git/cherry-pick', () => {
+  it('only treats real conflicted files as outstanding rebase conflicts', () => {
+    const modified = {
+      path: 'resolved.md',
+      status: { kind: AppFileStatusKind.Modified },
+    } as WorkingDirectoryFileChange
+    const conflicted = {
+      path: 'conflict.md',
+      status: { kind: AppFileStatusKind.Conflicted },
+    } as WorkingDirectoryFileChange
+
+    assert.equal(hasOutstandingRebaseConflicts([modified]), false)
+    assert.equal(
+      hasOutstandingRebaseConflicts([modified, conflicted]),
+      true
+    )
+  })
+
   it('squashes one commit onto the next (non-conflicting)', async t => {
     const repository = await setupEmptyRepositoryDefaultMain(t)
     const initialCommit = await makeSquashCommit(repository, 'initialize')
