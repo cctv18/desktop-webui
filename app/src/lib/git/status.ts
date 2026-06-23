@@ -80,6 +80,13 @@ type ConflictFilesDetails = {
   binaryFilePaths: ReadonlyArray<string>
 }
 
+function normalizeStatusUpstreamBranch(name: string) {
+  const remoteNamespacePrefix = 'remotes/'
+  return name.startsWith(remoteNamespacePrefix)
+    ? name.substring(remoteNamespacePrefix.length)
+    : name
+}
+
 function parseConflictedState(
   entry: UnmergedEntry,
   path: string,
@@ -385,7 +392,7 @@ function parseStatusHeader(results: IStatusHeadersData, header: IStatusHeader) {
       currentBranch = match[1]
     }
   } else if ((match = value.match(/^branch.upstream (.*)/))) {
-    currentUpstreamBranch = match[1]
+    currentUpstreamBranch = normalizeStatusUpstreamBranch(match[1])
   } else if ((match = value.match(/^branch.ab \+(\d+) -(\d+)$/))) {
     const ahead = parseInt(match[1], 10)
     const behind = parseInt(match[2], 10)

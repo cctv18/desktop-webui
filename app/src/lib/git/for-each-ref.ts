@@ -23,6 +23,24 @@ function getBranchShortName(fullName: string) {
   return fullName
 }
 
+function getUpstreamShortName(fullName: string) {
+  const localRemotePrefix = 'refs/heads/remotes/'
+  if (fullName.startsWith(localRemotePrefix)) {
+    return fullName.substring(localRemotePrefix.length)
+  }
+
+  return getBranchShortName(fullName)
+}
+
+function getUpstreamFullName(fullName: string) {
+  const localRemotePrefix = 'refs/heads/remotes/'
+  if (fullName.startsWith(localRemotePrefix)) {
+    return `refs/remotes/${fullName.substring(localRemotePrefix.length)}`
+  }
+
+  return fullName
+}
+
 /** Get all the branches. */
 export async function getBranches(
   repository: Repository,
@@ -70,7 +88,7 @@ export async function getBranches(
 
     const upstream =
       ref.upstreamFullName.length > 0
-        ? getBranchShortName(ref.upstreamFullName)
+        ? getUpstreamShortName(ref.upstreamFullName)
         : null
 
     branches.push(new Branch(name, upstream, tip, type, ref.fullName))
@@ -132,7 +150,7 @@ export async function getBranchesDifferingFromUpstream(
       localBranches.push({
         ref: ref.fullName,
         sha: ref.sha,
-        upstream: ref.upstream,
+        upstream: getUpstreamFullName(ref.upstream),
       })
     } else {
       remoteBranchShas.set(ref.fullName, ref.sha)
