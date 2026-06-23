@@ -207,6 +207,50 @@ describe('GitStore', () => {
     })
   })
 
+  describe('loadLocalCommits', () => {
+    it('uses fully qualified branch refs when a tag has the same name', async t => {
+      const upstream = await setupEmptyRepository(t)
+      await makeCommit(upstream, {
+        commitMessage: 'main commit',
+        entries: [{ path: 'README.md', contents: 'main' }],
+      })
+
+      const mainCommit = await getCommit(upstream, 'HEAD')
+      assert(mainCommit !== null)
+
+      await switchTo(upstream, 'test')
+      await makeCommit(upstream, {
+        commitMessage: 'test base',
+        entries: [{ path: 'test.txt', contents: 'base' }],
+      })
+
+      await switchTo(upstream, 'master')
+      const repository = await cloneLocalRepository(t, upstream)
+      await exec(['checkout', 'test'], repository.path)
+
+      await exec(['tag', 'test', mainCommit.sha], repository.path)
+
+      await makeCommit(repository, {
+        commitMessage: 'local test commit',
+        entries: [{ path: 'test.txt', contents: 'local' }],
+      })
+
+      const localCommit = await getCommit(repository, 'HEAD')
+      assert(localCommit !== null)
+
+      const gitStore = new GitStore(repository, shell, new TestStatsStore())
+      await gitStore.loadStatus()
+
+      const tip = gitStore.tip as IValidBranch
+      assert.equal(tip.branch.name, 'test')
+      assert.equal(tip.branch.upstream, 'origin/test')
+
+      await gitStore.loadLocalCommits(tip.branch)
+
+      assert.deepEqual(gitStore.localCommitSHAs, [localCommit.sha])
+    })
+  })
+
   describe('repository with HEAD file', () => {
     it('can discard modified change cleanly', async t => {
       const path = await setupFixtureRepository(t, 'repository-with-HEAD-file')

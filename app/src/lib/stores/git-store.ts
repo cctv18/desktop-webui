@@ -120,6 +120,11 @@ function getNormalizedLocalBranchName(name: string) {
   return name.startsWith(headsPrefix) ? name.substring(headsPrefix.length) : name
 }
 
+function getRemoteBranchRef(name: string) {
+  const remotesPrefix = 'refs/remotes/'
+  return name.startsWith(remotesPrefix) ? name : `${remotesPrefix}${name}`
+}
+
 /** The store for a repository's git data. */
 export class GitStore extends BaseStore {
   /** The commits keyed by their SHA. */
@@ -727,7 +732,7 @@ export class GitStore extends BaseStore {
 
     let localCommits: ReadonlyArray<Commit> | undefined
     if (branch.upstream) {
-      const range = revRange(branch.upstream, branch.name)
+      const range = revRange(getRemoteBranchRef(branch.upstream), branch.ref)
       localCommits = await this.performFailableOperation(() =>
         getCommits(this.repository, range, CommitBatchSize, skip)
       )
