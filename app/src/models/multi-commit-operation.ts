@@ -47,6 +47,7 @@ export type MultiCommitOperationStep =
   | ShowConflictsStep
   | HideConflictsStep
   | ConfirmAbortStep
+  | ConfirmAbortProgressStep
   | CreateBranchStep
   | ShowCopilotConflictsLoadingStep
   | ShowCopilotConflictsStep
@@ -99,6 +100,12 @@ export const enum MultiCommitOperationStepKind {
    * they wish to abort.
    */
   ConfirmAbort = 'ConfirmAbort',
+
+  /**
+   * The user clicked Abort while a progress dialog was visible. Keep this
+   * confirmation open even if the underlying Git operation finishes first.
+   */
+  ConfirmAbortProgress = 'ConfirmAbortProgress',
 
   /**
    * If the user invokes creating a new branch during the operation, display
@@ -164,6 +171,13 @@ export type ConfirmAbortStep = {
     | MultiCommitOperationStepKind.ShowConflicts
     | MultiCommitOperationStepKind.ShowCopilotConflicts
     | MultiCommitOperationStepKind.ShowCopilotConflictsLoading
+}
+
+export type ConfirmAbortProgressStep = {
+  readonly kind: MultiCommitOperationStepKind.ConfirmAbortProgress
+  readonly completedOperation?: {
+    readonly count: number
+  }
 }
 
 export type CreateBranchStep = {

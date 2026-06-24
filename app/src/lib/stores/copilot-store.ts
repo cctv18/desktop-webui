@@ -34,6 +34,7 @@ import {
   IFileConflictContext,
   formatConflictContextForPrompt,
 } from '../copilot-conflict-context'
+import { runCopilotConflictResolutionWithRetry } from '../copilot/conflict-resolution-retry'
 import { startTimer } from '../../ui/lib/timing'
 import { chmod, mkdir, stat } from 'fs/promises'
 import { isAbsolute, join } from 'path'
@@ -2077,9 +2078,8 @@ export class CopilotStore extends BaseStore {
    * Resolve a single chunk of files. Delegates the streaming turn to
    * {@link runConflictResolutionTurn} so we can report the model's live
    * reasoning to the UI sentence-by-sentence and cancel an in-flight turn.
-   * Retries once on parse or validation failure. Transport errors (timeouts,
-   * auth, session creation) fail fast, and user-initiated aborts are never
-   * retried.
+   * Retries once on transient failures, parse failures, and validation
+   * failures. User-initiated aborts are never retried.
    *
    * Returns the validated per-file resolutions along with the optional
    * markdown summary string (null if the model omitted it) and any
@@ -2099,110 +2099,107 @@ export class CopilotStore extends BaseStore {
     readonly references: ReadonlyArray<ICopilotConflictReference>
   }> {
     const expectedPaths = new Set(expectedFiles.map(f => f.path))
-    let lastError: Error | undefined
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      // Don't start (or retry) a turn that's already been cancelled.
-      if (signal?.aborted) {
-        throw new CopilotConflictResolutionAbortError()
-      }
+    return runCopilotConflictResolutionWithRetry(
+      async attempt => {
+        // Don't start (or retry) a turn that's already been cancelled.
+        if (signal?.aborted) {
+          throw new CopilotConflictResolutionAbortError()
+        }
 
-      const sessionTimer = startTimer(`createSession (attempt ${attempt + 1})`)
-      const session = await client.createSession({
-        ...(modelConfig.modelId !== undefined
-          ? { model: modelConfig.modelId }
-          : {}),
-        ...(modelConfig.reasoningEffort !== undefined
-          ? { reasoningEffort: modelConfig.reasoningEffort }
-          : {}),
-        ...(modelConfig.provider !== undefined
-          ? { provider: modelConfig.provider }
-          : {}),
-        ...(modelConfig.provider === undefined && modelConfig.gitHubToken
-          ? { gitHubToken: modelConfig.gitHubToken }
-          : {}),
-        streaming: true,
-        availableTools: [],
-        systemMessage: {
-          mode: 'append',
-          content: ConflictResolutionSystemPrompt,
-        },
-        onPermissionRequest: async () => ({
-          kind: 'reject',
-        }),
-      })
-      sessionTimer.done()
+        let session: CopilotSession | null = null
+        let sessionLifecycleHandledByTurn = false
 
-      if (modelConfig.provider === undefined) {
-        await this.verifySessionAccountAuthStatus(
-          session,
-          account,
-          'conflict resolution',
-          modelConfig.authMode
-        )
-      }
+        try {
+          const sessionTimer = startTimer(`createSession (attempt ${attempt})`)
+          session = await client.createSession({
+            ...(modelConfig.modelId !== undefined
+              ? { model: modelConfig.modelId }
+              : {}),
+            ...(modelConfig.reasoningEffort !== undefined
+              ? { reasoningEffort: modelConfig.reasoningEffort }
+              : {}),
+            ...(modelConfig.provider !== undefined
+              ? { provider: modelConfig.provider }
+              : {}),
+            ...(modelConfig.provider === undefined && modelConfig.gitHubToken
+              ? { gitHubToken: modelConfig.gitHubToken }
+              : {}),
+            streaming: true,
+            availableTools: [],
+            systemMessage: {
+              mode: 'append',
+              content: ConflictResolutionSystemPrompt,
+            },
+            onPermissionRequest: async () => ({
+              kind: 'reject',
+            }),
+          })
+          sessionTimer.done()
 
-      // The user may have cancelled while the session was being created. Tear
-      // it down immediately rather than starting a turn we're about to abandon.
-      if (signal?.aborted) {
-        await session.disconnect().catch(() => {})
-        throw new CopilotConflictResolutionAbortError()
-      }
-
-      try {
-        const streamTimer = startTimer(
-          `streaming response (attempt ${attempt + 1})`
-        )
-
-        // runConflictResolutionTurn owns the session lifecycle for this turn —
-        // it destroys the session exactly once on success, error, or abort.
-        const responseContent = await runConflictResolutionTurn(
-          session,
-          prompt,
-          {
-            timeoutMs: modelConfig.timeoutMs ?? 600_000,
-            signal,
-            onReasoningSnippet,
+          if (modelConfig.provider === undefined) {
+            await this.verifySessionAccountAuthStatus(
+              session,
+              account,
+              'conflict resolution',
+              modelConfig.authMode
+            )
           }
-        )
 
-        streamTimer.done()
+          // The user may have cancelled while the session was being created.
+          // Tear it down immediately rather than starting a turn we're about to
+          // abandon.
+          if (signal?.aborted) {
+            throw new CopilotConflictResolutionAbortError()
+          }
 
-        const parseTimer = startTimer('parse+validate')
-        const parsed = parseCopilotConflictResolution(responseContent)
-        validateResolutionPaths(parsed.resolutions, expectedPaths)
-        parseTimer.done()
+          const streamTimer = startTimer(
+            `streaming response (attempt ${attempt})`
+          )
 
-        return {
-          resolutions: parsed.resolutions,
-          summary: parsed.summary,
-          references: parsed.references,
+          // runConflictResolutionTurn owns the session lifecycle for this turn.
+          sessionLifecycleHandledByTurn = true
+          const responseContent = await runConflictResolutionTurn(
+            session,
+            prompt,
+            {
+              timeoutMs: modelConfig.timeoutMs ?? 600_000,
+              signal,
+              onReasoningSnippet,
+            }
+          )
+
+          streamTimer.done()
+
+          const parseTimer = startTimer('parse+validate')
+          const parsed = parseCopilotConflictResolution(responseContent)
+          validateResolutionPaths(parsed.resolutions, expectedPaths)
+          parseTimer.done()
+
+          return {
+            resolutions: parsed.resolutions,
+            summary: parsed.summary,
+            references: parsed.references,
+          }
+        } catch (e) {
+          if (!sessionLifecycleHandledByTurn) {
+            await session?.disconnect().catch(() => {})
+          }
+
+          throw e
         }
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e))
-
-        // Never retry a user-initiated abort.
-        if (isCopilotConflictResolutionAbortError(lastError)) {
-          throw lastError
-        }
-
-        // Only retry on parse/validation failures — fail fast on
-        // transport errors (timeouts, auth, session creation).
-        const isRetryable = lastError instanceof CopilotValidationError
-
-        if (!isRetryable || attempt > 0) {
-          break
-        }
-
-        log.warn(
-          'CopilotStore: Conflict resolution parse/validation failed, retrying',
-          e
-        )
+      },
+      {
+        shouldRetry: error => !isCopilotConflictResolutionAbortError(error),
+        onRetry: error => {
+          const reason =
+            error instanceof CopilotValidationError
+              ? 'parse/validation failed'
+              : 'request failed'
+          log.warn(`CopilotStore: Conflict resolution ${reason}, retrying`, error)
+        },
       }
-    }
-
-    log.warn('CopilotStore: Failed to resolve conflicts after retry', lastError)
-    throw lastError ?? new Error('Conflict resolution failed')
+    )
   }
 
   /**

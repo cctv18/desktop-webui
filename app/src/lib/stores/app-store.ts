@@ -10095,6 +10095,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
       })
     )
 
+    if (
+      shouldShowMultiCommitOperationPopup(step) &&
+      !this.popupManager.areTherePopupsOfType(PopupType.MultiCommitOperation)
+    ) {
+      await this._showPopup({
+        type: PopupType.MultiCommitOperation,
+        repository,
+      })
+      return
+    }
+
     this.emitUpdate()
   }
 
@@ -11168,12 +11179,17 @@ function userIsStartingMultiCommitOperation(
   if (
     state.step.kind === MultiCommitOperationStepKind.ChooseBranch ||
     state.step.kind === MultiCommitOperationStepKind.WarnForcePush ||
-    state.step.kind === MultiCommitOperationStepKind.ShowProgress
+    state.step.kind === MultiCommitOperationStepKind.ShowProgress ||
+    state.step.kind === MultiCommitOperationStepKind.ConfirmAbortProgress
   ) {
     return true
   }
 
   return false
+}
+
+function shouldShowMultiCommitOperationPopup(step: MultiCommitOperationStep) {
+  return step.kind !== MultiCommitOperationStepKind.HideConflicts
 }
 
 function isLocalChangesOverwrittenError(error: Error): boolean {

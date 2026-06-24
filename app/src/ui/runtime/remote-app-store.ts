@@ -124,7 +124,10 @@ export class RemoteAppStore {
       popup => popup.id === undefined || !this.localPopupIDs.has(popup.id)
     )
 
-    const allPopups = this.mergePopupStacks(remotePopups, this.localPopups)
+    const allPopups = this.prioritizeRemoteMultiCommitPopup(
+      this.mergePopupStacks(remotePopups, this.localPopups),
+      remotePopups
+    )
 
     return {
       ...state,
@@ -151,5 +154,28 @@ export class RemoteAppStore {
     )
 
     return [...nonErrorPopups, ...errorPopups]
+  }
+
+  private prioritizeRemoteMultiCommitPopup(
+    popups: ReadonlyArray<Popup>,
+    remotePopups: ReadonlyArray<Popup>
+  ): ReadonlyArray<Popup> {
+    const remoteMultiCommitPopup = remotePopups.find(
+      popup => popup.type === PopupType.MultiCommitOperation
+    )
+
+    if (remoteMultiCommitPopup === undefined) {
+      return popups
+    }
+
+    const remaining = popups.filter(popup => popup !== remoteMultiCommitPopup)
+    const nonErrorPopups = remaining.filter(
+      popup => popup.type !== PopupType.Error
+    )
+    const errorPopups = remaining.filter(
+      popup => popup.type === PopupType.Error
+    )
+
+    return [...nonErrorPopups, remoteMultiCommitPopup, ...errorPopups]
   }
 }

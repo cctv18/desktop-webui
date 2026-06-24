@@ -48,4 +48,31 @@ describe('multi-commit progress dialog', () => {
       ;(ipcRenderer as any).send = previousSend
     }
   })
+
+  it('groups abort confirmation buttons side by side', async () => {
+    const previousSend = (ipcRenderer as any).send
+    ;(ipcRenderer as any).send = () => {}
+
+    try {
+      render(
+        <ProgressDialog
+          progress={progress}
+          emoji={new Map()}
+          operation={MultiCommitOperationKind.Squash}
+          onAbort={() => Promise.resolve()}
+        />
+      )
+
+      fireEvent.click(screen.getByText('Abort squash'))
+
+      const cancel = screen.getByText('Cancel')
+      const abort = screen.getByText('Abort squash')
+      const buttonGroup = cancel.closest('.button-group')
+
+      assert.ok(buttonGroup)
+      assert.equal(buttonGroup, abort.closest('.button-group'))
+    } finally {
+      ;(ipcRenderer as any).send = previousSend
+    }
+  })
 })

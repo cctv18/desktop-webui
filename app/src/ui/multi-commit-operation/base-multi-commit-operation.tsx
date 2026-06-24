@@ -13,6 +13,7 @@ import { ProgressDialog } from './dialog/progress-dialog'
 import { WarnForcePushDialog } from './dialog/warn-force-push-dialog'
 import { CopilotConflictsLoadingDialog } from './dialog/copilot-conflicts-loading-dialog'
 import { CopilotConflictsDialog } from './dialog/copilot-conflicts-dialog'
+import { ProgressAbortConfirmationDialog } from './dialog/progress-abort-confirmation-dialog'
 import { PopupType } from '../../models/popup'
 import { BannerType } from '../../models/banner'
 import { Account } from '../../models/account'
@@ -204,6 +205,57 @@ export abstract class BaseMultiCommitOperation extends React.Component<IMultiCom
     return this.onAbort()
   }
 
+  private onProgressAbortConfirmation = () => {
+    const { dispatcher, repository } = this.props
+
+    return dispatcher.setMultiCommitOperationStep(repository, {
+      kind: MultiCommitOperationStepKind.ConfirmAbortProgress,
+    })
+  }
+
+  private onProgressAbortCancelled = () => {
+    const { dispatcher, repository, state } = this.props
+    const { step } = state
+
+    if (step.kind !== MultiCommitOperationStepKind.ConfirmAbortProgress) {
+      this.endFlowInvalidState()
+      return
+    }
+
+    if (step.completedOperation !== undefined) {
+      dispatcher.closePopup(PopupType.MultiCommitOperation)
+      dispatcher.endMultiCommitOperation(repository)
+      return
+    }
+
+    return dispatcher.setMultiCommitOperationStep(repository, {
+      kind: MultiCommitOperationStepKind.ShowProgress,
+    })
+  }
+
+  private onProgressAbortConfirmed = async (): Promise<void> => {
+    const { dispatcher, repository, state } = this.props
+    const { step } = state
+
+    if (step.kind !== MultiCommitOperationStepKind.ConfirmAbortProgress) {
+      this.endFlowInvalidState()
+      return
+    }
+
+    if (step.completedOperation !== undefined) {
+      await dispatcher.undoMultiCommitOperationFromBanner(
+        state,
+        repository,
+        step.completedOperation.count
+      )
+      dispatcher.closePopup(PopupType.MultiCommitOperation)
+      dispatcher.endMultiCommitOperation(repository)
+      return
+    }
+
+    return this.onAbort()
+  }
+
   private moveToConflictState = () => {
     const { dispatcher, repository, state } = this.props
     const { step } = state
@@ -248,6 +300,20 @@ export abstract class BaseMultiCommitOperation extends React.Component<IMultiCom
             emoji={emoji}
             operation={state.operationDetail.kind}
             onAbort={this.onAbort}
+            onBeginAbort={this.onProgressAbortConfirmation}
+          />
+        )
+      case MultiCommitOperationStepKind.ConfirmAbortProgress:
+        return (
+          <ProgressAbortConfirmationDialog
+            operation={this.props.state.operationDetail.kind}
+            completedOperationCount={
+              step.completedOperation !== undefined
+                ? step.completedOperation.count
+                : null
+            }
+            onCancel={this.onProgressAbortCancelled}
+            onConfirmAbort={this.onProgressAbortConfirmed}
           />
         )
       case MultiCommitOperationStepKind.ShowConflicts: {

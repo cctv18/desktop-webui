@@ -130,6 +130,10 @@ import {
 import { getMultiCommitOperationChooseBranchStep } from '../../lib/multi-commit-operation'
 import { endCherryPickAfterUnexpectedError } from './cherry-pick-error'
 import { getPullRetryAction } from './pull-protection'
+import {
+  isProgressAbortConfirmationStep,
+  markProgressAbortConfirmationCompleted,
+} from './multi-commit-progress-abort'
 import { ICombinedRefCheck, IRefCheck } from '../../lib/ci-checks/ci-checks'
 import { ValidNotificationPullRequestReviewState } from '../../lib/valid-notification-pull-request-review'
 import { UnreachableCommitsTab } from '../history/unreachable-commits-dialog'
@@ -3879,8 +3883,6 @@ export class Dispatcher {
     repository: Repository,
     count: number
   ): Promise<void> {
-    this.closePopup()
-
     const {
       branchesState: { tip },
       multiCommitOperationState: mcos,
@@ -3913,6 +3915,16 @@ export class Dispatcher {
 
     this.statsStore.recordOperationSuccessful(kind)
 
+    if (isProgressAbortConfirmationStep(mcos.step)) {
+      await this.setMultiCommitOperationStep(
+        repository,
+        markProgressAbortConfirmationCompleted(mcos.step, count)
+      )
+      await this.refreshRepository(repository)
+      return
+    }
+
+    this.closePopup()
     this.endMultiCommitOperation(repository)
     await this.refreshRepository(repository)
   }

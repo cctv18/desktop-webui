@@ -22,6 +22,7 @@ interface IProgressDialogProps {
   readonly progress: IMultiCommitOperationProgress
   readonly emoji: Map<string, Emoji>
   readonly onAbort: () => Promise<void>
+  readonly onBeginAbort?: () => void
 }
 
 interface IProgressDialogState {
@@ -48,6 +49,11 @@ export class ProgressDialog extends React.Component<
   }
 
   private onBeginAbort = () => {
+    if (this.props.onBeginAbort !== undefined) {
+      this.props.onBeginAbort()
+      return
+    }
+
     this.setState({ isConfirmingAbort: true })
   }
 
@@ -99,20 +105,22 @@ export class ProgressDialog extends React.Component<
             </div>
           </DialogContent>
           <DialogFooter>
-            <Button
-              type="button"
-              disabled={this.state.isAborting}
-              onClick={this.onCancelAbort}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={this.state.isAborting}
-              onClick={this.onConfirmAbort}
-            >
-              Abort {operationLabel}
-            </Button>
+            <div className="button-group destructive">
+              <Button
+                type="button"
+                disabled={this.state.isAborting}
+                onClick={this.onCancelAbort}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={this.state.isAborting}
+                onClick={this.onConfirmAbort}
+              >
+                Abort {operationLabel}
+              </Button>
+            </div>
           </DialogFooter>
         </Dialog>
       )
