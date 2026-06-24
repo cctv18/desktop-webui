@@ -7,25 +7,46 @@ import { Banner } from './banner'
 interface ISuccessBannerProps {
   readonly timeout: number
   readonly onDismissed: () => void
-  readonly onUndo?: () => void
+  readonly onUndo?: () => void | Promise<unknown>
 }
 
-export class SuccessBanner extends React.Component<ISuccessBannerProps, {}> {
-  private undo = () => {
+interface ISuccessBannerState {
+  readonly isUndoing: boolean
+}
+
+export class SuccessBanner extends React.Component<
+  ISuccessBannerProps,
+  ISuccessBannerState
+> {
+  public constructor(props: ISuccessBannerProps) {
+    super(props)
+    this.state = { isUndoing: false }
+  }
+
+  private undo = async () => {
+    if (this.state.isUndoing) {
+      return
+    }
+
+    this.setState({ isUndoing: true })
     this.props.onDismissed()
 
     if (this.props.onUndo === undefined) {
       return
     }
 
-    this.props.onUndo()
+    await this.props.onUndo()
   }
 
   private renderUndo = () => {
     if (this.props.onUndo === undefined) {
       return
     }
-    return <LinkButton onClick={this.undo}>Undo</LinkButton>
+    return (
+      <LinkButton onClick={this.undo} disabled={this.state.isUndoing}>
+        Undo
+      </LinkButton>
+    )
   }
 
   public render() {

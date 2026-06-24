@@ -5,7 +5,7 @@ interface ISuccessfulCherryPickBannerProps {
   readonly targetBranchName: string
   readonly countCherryPicked: number
   readonly onDismissed: () => void
-  readonly onUndo: () => void
+  readonly onUndo: () => void | Promise<unknown>
 }
 
 export class SuccessfulCherryPick extends React.Component<

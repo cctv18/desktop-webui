@@ -1,4 +1,5 @@
 import { Emoji } from '../lib/emoji'
+import type { IMultiCommitOperationUndoAction } from '../ui/banners/multi-commit-undo'
 import { Popup } from './popup'
 
 export enum BannerType {
@@ -63,6 +64,8 @@ export type Banner =
       readonly count: number
       /** callback to run when user clicks undo link in banner */
       readonly onUndo: () => void
+      /** serializable undo action used by the WebUI renderer */
+      readonly undoAction?: IMultiCommitOperationUndoAction
     }
   | {
       readonly type: BannerType.CherryPickConflictsFound
@@ -90,6 +93,8 @@ export type Banner =
       readonly count: number
       /** callback to run when user clicks undo link in banner */
       readonly onUndo: () => void
+      /** serializable undo action used by the WebUI renderer */
+      readonly undoAction?: IMultiCommitOperationUndoAction
     }
   | {
       readonly type: BannerType.SquashUndone
@@ -102,6 +107,8 @@ export type Banner =
       readonly count: number
       /** callback to run when user clicks undo link in banner */
       readonly onUndo: () => void
+      /** serializable undo action used by the WebUI renderer */
+      readonly undoAction?: IMultiCommitOperationUndoAction
     }
   | {
       readonly type: BannerType.ReorderUndone

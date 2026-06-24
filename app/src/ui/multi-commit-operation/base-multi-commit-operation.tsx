@@ -247,6 +247,7 @@ export abstract class BaseMultiCommitOperation extends React.Component<IMultiCom
             progress={state.progress}
             emoji={emoji}
             operation={state.operationDetail.kind}
+            onAbort={this.onAbort}
           />
         )
       case MultiCommitOperationStepKind.ShowConflicts: {

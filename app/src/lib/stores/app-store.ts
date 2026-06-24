@@ -4520,6 +4520,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     // applicable on Windows where we draw a custom app menu.
     this._closeFoldout(FoldoutType.AppMenu)
 
+    if (popup.type === PopupType.MultiCommitOperation) {
+      this.popupManager.removePopupByType(PopupType.MultiCommitOperation)
+    }
+
     this.popupManager.addPopup(popup)
     this.emitUpdate()
   }

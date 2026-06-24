@@ -4,7 +4,7 @@ import { SuccessBanner } from './success-banner'
 interface ISuccessfulSquashedBannerProps {
   readonly count: number
   readonly onDismissed: () => void
-  readonly onUndo: () => void
+  readonly onUndo: () => void | Promise<unknown>
 }
 
 export class SuccessfulSquash extends React.Component<

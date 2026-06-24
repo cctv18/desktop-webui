@@ -129,6 +129,7 @@ import {
 } from '../../models/multi-commit-operation'
 import { getMultiCommitOperationChooseBranchStep } from '../../lib/multi-commit-operation'
 import { endCherryPickAfterUnexpectedError } from './cherry-pick-error'
+import { getPullRetryAction } from './pull-protection'
 import { ICombinedRefCheck, IRefCheck } from '../../lib/ci-checks/ci-checks'
 import { ValidNotificationPullRequestReviewState } from '../../lib/valid-notification-pull-request-review'
 import { UnreachableCommitsTab } from '../history/unreachable-commits-dialog'
@@ -778,6 +779,11 @@ export class Dispatcher {
 
   /** Pull the current branch. */
   public pull(repository: Repository): Promise<void> {
+    const retry = getPullRetryAction(repository)
+    if (this.appStore._checkForUncommittedChanges(repository, retry)) {
+      return Promise.resolve()
+    }
+
     return this.appStore._pull(repository)
   }
 
@@ -3007,7 +3013,7 @@ export class Dispatcher {
     )
 
     this.appStore._initializeCherryPickProgress(repository, commits)
-    this.switchMultiCommitOperationToShowProgress(repository)
+    await this.switchMultiCommitOperationToShowProgress(repository)
 
     const retry: RetryAction = {
       type: RetryActionType.CherryPick,
@@ -3023,6 +3029,15 @@ export class Dispatcher {
     }
 
     try {
+      if (
+        !this.isMultiCommitOperationActive(
+          repository,
+          MultiCommitOperationKind.CherryPick
+        )
+      ) {
+        return
+      }
+
       const { tip } = targetBranch
       this.repositoryStateManager.updateMultiCommitOperationUndoState(
         repository,
@@ -3044,6 +3059,15 @@ export class Dispatcher {
       if (nameAfterCheckout === undefined) {
         log.error('[cherryPick] - Failed to check out the target branch.')
         this.endMultiCommitOperation(repository)
+        return
+      }
+
+      if (
+        !this.isMultiCommitOperationActive(
+          repository,
+          MultiCommitOperationKind.CherryPick
+        )
+      ) {
         return
       }
 
@@ -3340,6 +3364,15 @@ export class Dispatcher {
     // This will update the conflict state of the app. This is needed to start
     // conflict flow if cherry pick results in conflict.
     await this.appStore._loadStatus(repository)
+
+    if (
+      !this.isMultiCommitOperationActive(
+        repository,
+        MultiCommitOperationKind.CherryPick
+      )
+    ) {
+      return
+    }
 
     switch (cherryPickResult) {
       case CherryPickResult.CompletedWithoutError:
@@ -3746,6 +3779,11 @@ export class Dispatcher {
     // This will update the conflict state of the app. This is needed to start
     // conflict flow if squash results in conflict.
     const status = await this.appStore._loadStatus(repository)
+
+    if (!this.isMultiCommitOperationActive(repository, kind)) {
+      return
+    }
+
     switch (result) {
       case RebaseResult.AlreadyUpToDate:
         sendNonFatalException(
@@ -3889,6 +3927,11 @@ export class Dispatcher {
 
     const bannerBase = {
       count,
+      undoAction: {
+        repository,
+        operationState: mcos,
+        commitsCount: count,
+      },
       onUndo: () => {
         this.undoMultiCommitOperation(mcos, repository, count)
       },
@@ -3948,6 +3991,26 @@ export class Dispatcher {
     return result
   }
 
+  public async undoMultiCommitOperationFromBanner(
+    mcos: IMultiCommitOperationState,
+    repository: Repository,
+    commitsCount: number
+  ): Promise<boolean> {
+    const result = await this.undoMultiCommitOperation(
+      mcos,
+      repository,
+      commitsCount
+    )
+
+    if (!result) {
+      await this.postError(
+        new Error(`Unable to undo ${mcos.operationDetail.kind}.`)
+      )
+    }
+
+    return result
+  }
+
   public handleConflictsDetectedOnError(
     repository: Repository,
     currentBranch: string,
@@ -3990,6 +4053,16 @@ export class Dispatcher {
   /** Method to clear multi commit operation state. */
   public endMultiCommitOperation(repository: Repository) {
     this.appStore._endMultiCommitOperation(repository)
+  }
+
+  private isMultiCommitOperationActive(
+    repository: Repository,
+    kind: MultiCommitOperationKind
+  ): boolean {
+    const { multiCommitOperationState } =
+      this.repositoryStateManager.get(repository)
+
+    return multiCommitOperationState?.operationDetail.kind === kind
   }
 
   /** Opens conflicts found banner for part of multi commit operation */

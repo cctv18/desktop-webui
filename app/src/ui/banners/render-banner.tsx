@@ -19,6 +19,7 @@ import { SuccessfulSquash } from './successful-squash'
 import { SuccessBanner } from './success-banner'
 import { ConflictsFoundBanner } from './conflicts-found-banner'
 import { OSVersionNoLongerSupportedBanner } from './os-version-no-longer-supported-banner'
+import { getMultiCommitOperationUndoHandler } from './multi-commit-undo'
 
 export function renderBanner(
   banner: Banner,
@@ -80,7 +81,12 @@ export function renderBanner(
           targetBranchName={banner.targetBranchName}
           countCherryPicked={banner.count}
           onDismissed={onDismissed}
-          onUndo={banner.onUndo}
+          onUndo={getMultiCommitOperationUndoHandler(
+            __PROCESS_KIND__,
+            dispatcher,
+            banner.onUndo,
+            banner.undoAction
+          )}
         />
       )
     case BannerType.CherryPickConflictsFound:
@@ -117,7 +123,12 @@ export function renderBanner(
           key="successful-squash"
           count={banner.count}
           onDismissed={onDismissed}
-          onUndo={banner.onUndo}
+          onUndo={getMultiCommitOperationUndoHandler(
+            __PROCESS_KIND__,
+            dispatcher,
+            banner.onUndo,
+            banner.undoAction
+          )}
         />
       )
     case BannerType.SquashUndone: {
@@ -140,7 +151,12 @@ export function renderBanner(
           key="successful-reorder"
           timeout={15000}
           onDismissed={onDismissed}
-          onUndo={banner.onUndo}
+          onUndo={getMultiCommitOperationUndoHandler(
+            __PROCESS_KIND__,
+            dispatcher,
+            banner.onUndo,
+            banner.undoAction
+          )}
         >
           <span>
             Successfully reordered {banner.count} {pluralized}.
