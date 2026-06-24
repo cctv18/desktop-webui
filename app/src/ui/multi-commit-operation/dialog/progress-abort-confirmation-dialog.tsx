@@ -1,7 +1,7 @@
 import * as React from 'react'
 
 import { Dialog, DialogContent, DialogFooter } from '../../dialog'
-import { Button } from '../../lib/button'
+import { OkCancelButtonGroup } from '../../dialog/ok-cancel-button-group'
 import { MultiCommitOperationKind } from '../../../models/multi-commit-operation'
 
 interface IProgressAbortConfirmationDialogProps {
@@ -55,6 +55,7 @@ export class ProgressAbortConfirmationDialog extends React.Component<
         }
         disabled={this.state.isAborting}
         onDismissed={this.props.onCancel}
+        onSubmit={this.onConfirmAbort}
         type="warning"
         role="alertdialog"
         ariaDescribedBy="abort-operation-confirmation"
@@ -70,22 +71,12 @@ export class ProgressAbortConfirmationDialog extends React.Component<
           </div>
         </DialogContent>
         <DialogFooter>
-          <div className="button-group destructive">
-            <Button
-              type="button"
-              disabled={this.state.isAborting}
-              onClick={this.props.onCancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={this.state.isAborting}
-              onClick={this.onConfirmAbort}
-            >
-              Abort {operationLabel}
-            </Button>
-          </div>
+          <OkCancelButtonGroup
+            destructive={true}
+            okButtonText={`Abort ${operationLabel}`}
+            okButtonDisabled={this.state.isAborting}
+            cancelButtonDisabled={this.state.isAborting}
+          />
         </DialogFooter>
       </Dialog>
     )

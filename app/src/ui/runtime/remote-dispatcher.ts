@@ -1,6 +1,8 @@
 import { Foldout, FoldoutType } from '../../lib/app-state'
 import { AppMenu, ExecutableMenuItem } from '../../models/app-menu'
+import { MultiCommitOperationStepKind } from '../../models/multi-commit-operation'
 import { Popup, PopupType } from '../../models/popup'
+import { Repository } from '../../models/repository'
 import {
   executeMenuItem,
   executeMenuItemById,
@@ -63,10 +65,18 @@ export function createRemoteDispatcher(
         }
 
         if (property === 'closePopup') {
-          return (popupType?: PopupType) =>
-            appStore.closeLocalPopup(popupType)
+          return (popupType?: PopupType) => {
+            if (
+              popupType === undefined ||
+              popupType === PopupType.MultiCommitOperation
+            ) {
+              appStore.clearMultiCommitProgressAbortConfirmation()
+            }
+
+            return appStore.closeLocalPopup(popupType)
               ? Promise.resolve()
               : rpc.invoke(property, popupType === undefined ? [] : [popupType])
+          }
         }
 
         if (property === 'closePopupById') {
@@ -74,6 +84,27 @@ export function createRemoteDispatcher(
             appStore.closeLocalPopupById(popupId)
               ? Promise.resolve()
               : rpc.invoke(property, [popupId])
+        }
+
+        if (property === 'setMultiCommitOperationStep') {
+          return (repository: Repository, step: { kind?: unknown }) => {
+            if (
+              step.kind === MultiCommitOperationStepKind.ConfirmAbortProgress
+            ) {
+              appStore.beginMultiCommitProgressAbortConfirmation(repository)
+            } else {
+              appStore.clearMultiCommitProgressAbortConfirmation(repository)
+            }
+
+            return rpc.invoke(property, [repository, step])
+          }
+        }
+
+        if (property === 'endMultiCommitOperation') {
+          return (repository: Repository) => {
+            appStore.clearMultiCommitProgressAbortConfirmation(repository)
+            return rpc.invoke(property, [repository])
+          }
         }
 
         if (property === 'executeMenuItem') {

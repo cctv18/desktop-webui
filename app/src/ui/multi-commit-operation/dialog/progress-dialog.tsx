@@ -3,6 +3,7 @@ import { formatRebaseValue } from '../../../lib/rebase'
 import { RichText } from '../../lib/rich-text'
 import { Dialog, DialogContent, DialogFooter } from '../../dialog'
 import { Button } from '../../lib/button'
+import { OkCancelButtonGroup } from '../../dialog/ok-cancel-button-group'
 import { Octicon } from '../../octicons'
 import * as octicons from '../../octicons/octicons.generated'
 import { IMultiCommitOperationProgress } from '../../../models/progress'
@@ -89,6 +90,7 @@ export class ProgressDialog extends React.Component<
           }
           disabled={this.state.isAborting}
           onDismissed={this.onCancelAbort}
+          onSubmit={this.onConfirmAbort}
           type="warning"
           role="alertdialog"
           ariaDescribedBy="abort-operation-confirmation"
@@ -105,22 +107,12 @@ export class ProgressDialog extends React.Component<
             </div>
           </DialogContent>
           <DialogFooter>
-            <div className="button-group destructive">
-              <Button
-                type="button"
-                disabled={this.state.isAborting}
-                onClick={this.onCancelAbort}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                disabled={this.state.isAborting}
-                onClick={this.onConfirmAbort}
-              >
-                Abort {operationLabel}
-              </Button>
-            </div>
+            <OkCancelButtonGroup
+              destructive={true}
+              okButtonText={`Abort ${operationLabel}`}
+              okButtonDisabled={this.state.isAborting}
+              cancelButtonDisabled={this.state.isAborting}
+            />
           </DialogFooter>
         </Dialog>
       )

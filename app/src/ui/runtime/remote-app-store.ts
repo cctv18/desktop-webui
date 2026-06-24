@@ -1,7 +1,24 @@
 import { Emitter, Disposable } from 'event-kit'
-import { IAppState } from '../../lib/app-state'
+import {
+  IAppState,
+  IMultiCommitOperationState,
+  SelectionType,
+} from '../../lib/app-state'
+import { Banner, BannerType } from '../../models/banner'
+import {
+  ConfirmAbortProgressStep,
+  MultiCommitOperationStepKind,
+} from '../../models/multi-commit-operation'
 import { Popup, PopupType } from '../../models/popup'
+import { Repository } from '../../models/repository'
 import { RemoteRPCClient } from './remote-rpc'
+
+interface IMultiCommitProgressAbortConfirmation {
+  readonly repository: Repository
+  readonly popup: Popup
+  readonly operationState: IMultiCommitOperationState
+  readonly completedOperationCount: number | null
+}
 
 export class RemoteAppStore {
   private readonly emitter = new Emitter()
@@ -9,6 +26,9 @@ export class RemoteAppStore {
   private localPopupCounter = 0
   private localPopups: ReadonlyArray<Popup> = []
   private remoteState: IAppState
+  private multiCommitProgressAbortConfirmation:
+    | IMultiCommitProgressAbortConfirmation
+    | null = null
 
   public constructor(
     private state: IAppState,
@@ -106,13 +126,129 @@ export class RemoteAppStore {
     return true
   }
 
+  public beginMultiCommitProgressAbortConfirmation(repository: Repository) {
+    const operationState = this.getSelectedMultiCommitOperationState(
+      this.state,
+      repository
+    )
+
+    if (operationState === null) {
+      return
+    }
+
+    const popup =
+      this.findMultiCommitOperationPopup(this.state, repository) ??
+      ({
+        id: --this.localPopupCounter,
+        type: PopupType.MultiCommitOperation,
+        repository,
+      } as Popup)
+
+    this.multiCommitProgressAbortConfirmation = {
+      repository,
+      popup,
+      operationState: {
+        ...operationState,
+        step: getConfirmAbortProgressStep(null),
+      },
+      completedOperationCount: null,
+    }
+
+    this.emitState()
+  }
+
+  public clearMultiCommitProgressAbortConfirmation(repository?: Repository) {
+    if (
+      this.multiCommitProgressAbortConfirmation === null ||
+      (repository !== undefined &&
+        !repositoriesAreEqual(
+          this.multiCommitProgressAbortConfirmation.repository,
+          repository
+        ))
+    ) {
+      return
+    }
+
+    this.multiCommitProgressAbortConfirmation = null
+    this.emitState()
+  }
+
   public loadEmoji() {
     return this.rpc.invoke('appStore.loadEmoji')
   }
 
   private emitState() {
-    this.state = this.applyLocalPopups(this.remoteState)
+    this.state = this.applyLocalPopups(
+      this.applyMultiCommitProgressAbortConfirmation(this.remoteState)
+    )
     this.emitter.emit('did-update', this.state)
+  }
+
+  private applyMultiCommitProgressAbortConfirmation(
+    state: IAppState
+  ): IAppState {
+    const confirmation = this.multiCommitProgressAbortConfirmation
+
+    if (confirmation === null) {
+      return state
+    }
+
+    const selectedState = state.selectedState
+    if (
+      selectedState === null ||
+      selectedState.type !== SelectionType.Repository ||
+      !repositoriesAreEqual(selectedState.repository, confirmation.repository)
+    ) {
+      return state
+    }
+
+    const completedUndoAction = getCompletedMultiCommitOperationUndoAction(
+      state.currentBanner,
+      confirmation.repository
+    )
+    const completedOperationCount =
+      completedUndoAction?.commitsCount ??
+      confirmation.completedOperationCount ??
+      null
+    const remoteOperationState = selectedState.state.multiCommitOperationState
+    const operationStateSource =
+      remoteOperationState ?? completedUndoAction?.operationState
+
+    if (operationStateSource === undefined || operationStateSource === null) {
+      return state
+    }
+
+    const operationState: IMultiCommitOperationState = {
+      ...operationStateSource,
+      step: getConfirmAbortProgressStep(completedOperationCount),
+    }
+
+    this.multiCommitProgressAbortConfirmation = {
+      ...confirmation,
+      operationState,
+      completedOperationCount,
+    }
+
+    const selectedStateWithConfirmation = {
+      ...selectedState,
+      state: {
+        ...selectedState.state,
+        multiCommitOperationState: operationState,
+      },
+    }
+
+    const popup =
+      this.findMultiCommitOperationPopup(state, confirmation.repository) ??
+      confirmation.popup
+    const allPopups = this.ensurePopup(state.allPopups, popup)
+
+    return {
+      ...state,
+      selectedState: selectedStateWithConfirmation,
+      allPopups,
+      currentPopup: allPopups.at(-1) ?? null,
+      errorCount: allPopups.filter(p => p.type === PopupType.Error).length,
+    }
   }
 
   private applyLocalPopups(state: IAppState): IAppState {
@@ -140,6 +276,22 @@ export class RemoteAppStore {
 
   private insertPopupBeforeErrors(popup: Popup): ReadonlyArray<Popup> {
     return this.mergePopupStacks(this.localPopups, [popup])
+  }
+
+  private ensurePopup(
+    popups: ReadonlyArray<Popup>,
+    popup: Popup
+  ): ReadonlyArray<Popup> {
+    const existing = popups.find(p => p === popup || p.id === popup.id)
+
+    if (existing !== undefined) {
+      return this.prioritizeRemoteMultiCommitPopup(popups, [existing])
+    }
+
+    return this.prioritizeRemoteMultiCommitPopup(
+      this.mergePopupStacks(popups, [popup]),
+      [popup]
+    )
   }
 
   private mergePopupStacks(
@@ -178,4 +330,67 @@ export class RemoteAppStore {
 
     return [...nonErrorPopups, remoteMultiCommitPopup, ...errorPopups]
   }
+
+  private getSelectedMultiCommitOperationState(
+    state: IAppState,
+    repository: Repository
+  ): IMultiCommitOperationState | null {
+    const selectedState = state.selectedState
+
+    if (
+      selectedState === null ||
+      selectedState.type !== SelectionType.Repository ||
+      !repositoriesAreEqual(selectedState.repository, repository)
+    ) {
+      return null
+    }
+
+    return selectedState.state.multiCommitOperationState
+  }
+
+  private findMultiCommitOperationPopup(
+    state: IAppState,
+    repository: Repository
+  ): Popup | null {
+    return (
+      state.allPopups.find(
+        popup =>
+          popup.type === PopupType.MultiCommitOperation &&
+          repositoriesAreEqual(popup.repository, repository)
+      ) ?? null
+    )
+  }
+}
+
+function getCompletedMultiCommitOperationUndoAction(
+  banner: Banner | null | undefined,
+  repository: Repository
+) {
+  if (
+    banner == null ||
+    (banner.type !== BannerType.SuccessfulCherryPick &&
+      banner.type !== BannerType.SuccessfulSquash &&
+      banner.type !== BannerType.SuccessfulReorder) ||
+    banner.undoAction === undefined ||
+    !repositoriesAreEqual(banner.undoAction.repository, repository)
+  ) {
+    return null
+  }
+
+  return banner.undoAction
+}
+
+function getConfirmAbortProgressStep(
+  completedOperationCount: number | null
+): ConfirmAbortProgressStep {
+  return {
+    kind: MultiCommitOperationStepKind.ConfirmAbortProgress,
+    ...(completedOperationCount !== null
+      ? { completedOperation: { count: completedOperationCount } }
+      : {}),
+  }
+}
+
+function repositoriesAreEqual(a: Repository, b: Repository): boolean {
+  return a.id === b.id || a.path === b.path
 }
