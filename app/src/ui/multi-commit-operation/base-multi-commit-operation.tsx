@@ -133,12 +133,10 @@ export abstract class BaseMultiCommitOperation extends React.Component<IMultiCom
 
     const { conflictState } = step
 
-    const operationDescription = (
-      <>
-        {operationPrefix}{' '}
-        {targetBranch !== null ? <strong>{targetBranch.name}</strong> : null}
-      </>
-    )
+    const operationDescription =
+      targetBranch !== null
+        ? `${operationPrefix} ${targetBranch.name}`
+        : operationPrefix
 
     // For Copilot steps, just close the popup and show a banner that
     // reopens it. Don't change the step — resolution continues in the
@@ -151,6 +149,7 @@ export abstract class BaseMultiCommitOperation extends React.Component<IMultiCom
       dispatcher.setBanner({
         type: BannerType.ConflictsFound,
         operationDescription,
+        repository,
         onOpenConflictsDialog: () => {
           dispatcher.showPopup({
             type: PopupType.MultiCommitOperation,

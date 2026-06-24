@@ -35,6 +35,10 @@ export class ConflictsFoundBanner extends React.Component<
   }
 
   public render() {
+    const operationDescription = getOperationDescriptionText(
+      this.props.operationDescription
+    )
+
     return (
       <Banner
         id="conflicts-found-banner"
@@ -44,11 +48,51 @@ export class ConflictsFoundBanner extends React.Component<
         <Octicon className="alert-icon" symbol={octicons.alert} />
         <div className="banner-message">
           <span>
-            Resolve conflicts to continue {this.props.operationDescription}.
+            Resolve conflicts to continue {operationDescription}.
           </span>
           <LinkButton onClick={this.openDialog}>View conflicts</LinkButton>
         </div>
       </Banner>
     )
   }
+}
+
+function getOperationDescriptionText(description: string | JSX.Element) {
+  if (typeof description === 'string') {
+    return description
+  }
+
+  if (React.isValidElement(description)) {
+    return description
+  }
+
+  const text = getTextFromSerializedReactNode(description)
+  return text.length > 0 ? text : 'the operation'
+}
+
+function getTextFromSerializedReactNode(value: unknown): string {
+  if (value === null || value === undefined || typeof value === 'boolean') {
+    return ''
+  }
+
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(getTextFromSerializedReactNode).join('')
+  }
+
+  if (typeof value !== 'object') {
+    return ''
+  }
+
+  const props = (value as { readonly props?: { readonly children?: unknown } })
+    .props
+
+  if (props === undefined) {
+    return ''
+  }
+
+  return getTextFromSerializedReactNode(props.children)
 }

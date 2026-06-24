@@ -3734,14 +3734,17 @@ export class Dispatcher {
     operationDetail: MultiCommitOperationDetail,
     targetBranch: Branch | null,
     commits: ReadonlyArray<Commit | CommitOneLine>,
-    originalBranchTip: string | null
+    originalBranchTip: string | null,
+    initialStep?: MultiCommitOperationStep
   ) {
     this.appStore._initializeMultiCommitOperation(
       repository,
       operationDetail,
       targetBranch,
       commits,
-      originalBranchTip
+      originalBranchTip,
+      true,
+      initialStep
     )
   }
 
@@ -4080,50 +4083,62 @@ export class Dispatcher {
   /** Opens conflicts found banner for part of multi commit operation */
   public onConflictsFoundBanner = (
     repository: Repository,
-    operationDescription: string | JSX.Element,
+    operationDescription: string,
     multiCommitOperationConflictState: MultiCommitOperationConflictState
   ) => {
     this.setBanner({
       type: BannerType.ConflictsFound,
       operationDescription,
+      repository,
+      multiCommitOperationConflictState,
       onOpenConflictsDialog: async () => {
-        const { changesState, multiCommitOperationState } =
-          this.repositoryStateManager.get(repository)
-        const { conflictState } = changesState
-
-        if (conflictState == null) {
-          log.error(
-            '[onConflictsFoundBanner] App is in invalid state to so conflicts dialog.'
-          )
-          return
-        }
-
-        if (
-          multiCommitOperationState !== null &&
-          multiCommitOperationState.operationDetail.kind ===
-            MultiCommitOperationKind.CherryPick
-        ) {
-          // TODO: expanded to other types - not functionally necessary; makes
-          // progress dialog more accurate; likely only regular rebase has the
-          // state data to also do this; need to evaluate it's importance
-          await this.setCherryPickProgressFromState(repository)
-        }
-
-        const { manualResolutions } = conflictState
-
-        this.setMultiCommitOperationStep(repository, {
-          kind: MultiCommitOperationStepKind.ShowConflicts,
-          conflictState: {
-            ...multiCommitOperationConflictState,
-            manualResolutions,
-          },
-        })
-
-        this.showPopup({
-          type: PopupType.MultiCommitOperation,
+        await this.openConflictsFoundDialogFromBanner(
           repository,
-        })
+          multiCommitOperationConflictState
+        )
       },
+    })
+  }
+
+  public async openConflictsFoundDialogFromBanner(
+    repository: Repository,
+    multiCommitOperationConflictState: MultiCommitOperationConflictState
+  ) {
+    const { changesState, multiCommitOperationState } =
+      this.repositoryStateManager.get(repository)
+    const { conflictState } = changesState
+
+    if (conflictState == null) {
+      log.error(
+        '[openConflictsFoundDialogFromBanner] App is in invalid state to show conflicts dialog.'
+      )
+      return
+    }
+
+    if (
+      multiCommitOperationState !== null &&
+      multiCommitOperationState.operationDetail.kind ===
+        MultiCommitOperationKind.CherryPick
+    ) {
+      // TODO: expanded to other types - not functionally necessary; makes
+      // progress dialog more accurate; likely only regular rebase has the
+      // state data to also do this; need to evaluate it's importance
+      await this.setCherryPickProgressFromState(repository)
+    }
+
+    const { manualResolutions } = conflictState
+
+    this.setMultiCommitOperationStep(repository, {
+      kind: MultiCommitOperationStepKind.ShowConflicts,
+      conflictState: {
+        ...multiCommitOperationConflictState,
+        manualResolutions,
+      },
+    })
+
+    this.showPopup({
+      type: PopupType.MultiCommitOperation,
+      repository,
     })
   }
 

@@ -5,6 +5,7 @@ import * as React from 'react'
 import { BranchAlreadyUpToDate } from '../../../src/ui/banners/branch-already-up-to-date-banner'
 import { Banner } from '../../../src/ui/banners/banner'
 import { CherryPickUndone } from '../../../src/ui/banners/cherry-pick-undone'
+import { ConflictsFoundBanner } from '../../../src/ui/banners/conflicts-found-banner'
 import { SuccessBanner } from '../../../src/ui/banners/success-banner'
 import {
   advanceTimersBy,
@@ -142,5 +143,44 @@ describe('banner surfaces', () => {
       )
     )
     assert.ok(screen.getByText('release'))
+  })
+
+  it('renders serialized conflict operation descriptions without crashing', () => {
+    function onDismissed() {}
+    function onOpenConflictsDialog() {}
+
+    const serializedDescription = {
+      key: null,
+      ref: null,
+      props: {
+        children: [
+          'cherry-picking onto',
+          ' ',
+          {
+            key: null,
+            ref: null,
+            props: { children: 'feature' },
+            _owner: null,
+            _store: {},
+          },
+        ],
+      },
+      _owner: null,
+      _store: {},
+    } as any
+
+    const view = render(
+      <ConflictsFoundBanner
+        operationDescription={serializedDescription}
+        onOpenConflictsDialog={onOpenConflictsDialog}
+        onDismissed={onDismissed}
+      />
+    )
+
+    assert.ok(
+      view.container.textContent?.includes(
+        'Resolve conflicts to continue cherry-picking onto feature.'
+      )
+    )
   })
 })

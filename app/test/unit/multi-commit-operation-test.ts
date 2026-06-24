@@ -8,6 +8,7 @@ import {
 } from '../../src/models/multi-commit-operation'
 import {
   isConflictsFlow,
+  createMultiCommitOperationState,
   getMultiCommitOperationChooseBranchStep,
 } from '../../src/lib/multi-commit-operation'
 import { TipState } from '../../src/models/tip'
@@ -148,6 +149,62 @@ describe('multi-commit-operation', () => {
       assert.equal(step.currentBranch, currentBranch)
       assert.equal(step.defaultBranch, defaultBranch)
       assert.equal(step.allBranches.length, 2)
+    })
+  })
+
+  describe('createMultiCommitOperationState', () => {
+    it('uses ShowProgress as the default initial step', () => {
+      const state = createMultiCommitOperationState(
+        {
+          kind: MultiCommitOperationKind.CherryPick,
+          sourceBranch: null,
+          branchCreated: false,
+          commits: [],
+        },
+        null,
+        [],
+        'abc123'
+      )
+
+      assert.equal(state.step.kind, MultiCommitOperationStepKind.ShowProgress)
+      assert.equal(state.progress.value, 0)
+      assert.equal(state.originalBranchTip, 'abc123')
+    })
+
+    it('can initialize directly to ChooseBranch for context-menu cherry-pick', () => {
+      const currentBranch = {
+        name: 'feature',
+        tip: { sha: 'abc123' },
+        type: 0,
+      }
+      const targetBranch = {
+        name: 'main',
+        tip: { sha: 'def456' },
+        type: 0,
+      }
+      const chooseBranchStep = {
+        kind: MultiCommitOperationStepKind.ChooseBranch,
+        defaultBranch: targetBranch,
+        currentBranch,
+        allBranches: [currentBranch, targetBranch],
+        recentBranches: [currentBranch],
+      } as any
+
+      const state = createMultiCommitOperationState(
+        {
+          kind: MultiCommitOperationKind.CherryPick,
+          sourceBranch: currentBranch as any,
+          branchCreated: false,
+          commits: [],
+        },
+        null,
+        [],
+        currentBranch.tip.sha,
+        chooseBranchStep
+      )
+
+      assert.equal(state.step, chooseBranchStep)
+      assert.equal(state.step.kind, MultiCommitOperationStepKind.ChooseBranch)
     })
   })
 })

@@ -386,7 +386,10 @@ import {
 } from '../../models/multi-commit-operation'
 import { reorder } from '../git/reorder'
 import { UseWindowsOpenSSHKey } from '../ssh/ssh'
-import { isConflictsFlow } from '../multi-commit-operation'
+import {
+  createMultiCommitOperationState,
+  isConflictsFlow,
+} from '../multi-commit-operation'
 import { clamp } from '../clamp'
 import { EndpointToken } from '../endpoint-token'
 import { IRefCheck } from '../ci-checks/ci-checks'
@@ -10151,29 +10154,19 @@ export class AppStore extends TypedBaseStore<IAppState> {
     targetBranch: Branch | null,
     commits: ReadonlyArray<Commit | CommitOneLine>,
     originalBranchTip: string | null,
-    emitUpdate: boolean = true
+    emitUpdate: boolean = true,
+    initialStep?: MultiCommitOperationStep
   ): void {
-    this.repositoryStateCache.initializeMultiCommitOperationState(repository, {
-      step: {
-        kind: MultiCommitOperationStepKind.ShowProgress,
-      },
-      operationDetail,
-      progress: {
-        kind: 'multiCommitOperation',
-        currentCommitSummary: commits.length > 0 ? commits[0].summary : '',
-        position: 1,
-        totalCommitCount: commits.length,
-        value: 0,
-      },
-      userHasResolvedConflicts: false,
-      useCopilotConflictResolution: false,
-      copilotResolutions: null,
-      copilotResolutionSummary: null,
-      copilotResolutionProgress: null,
-      copilotResolutionAbortController: null,
-      originalBranchTip,
-      targetBranch,
-    })
+    this.repositoryStateCache.initializeMultiCommitOperationState(
+      repository,
+      createMultiCommitOperationState(
+        operationDetail,
+        targetBranch,
+        commits,
+        originalBranchTip,
+        initialStep
+      )
+    )
 
     if (!emitUpdate) {
       return

@@ -1,11 +1,44 @@
 import { Branch } from '../models/branch'
+import { Commit, CommitOneLine } from '../models/commit'
 import {
   ChooseBranchStep,
   conflictSteps,
+  MultiCommitOperationDetail,
+  MultiCommitOperationStep,
   MultiCommitOperationStepKind,
 } from '../models/multi-commit-operation'
 import { TipState } from '../models/tip'
 import { IMultiCommitOperationState, IRepositoryState } from './app-state'
+
+export function createMultiCommitOperationState(
+  operationDetail: MultiCommitOperationDetail,
+  targetBranch: Branch | null,
+  commits: ReadonlyArray<Commit | CommitOneLine>,
+  originalBranchTip: string | null,
+  initialStep: MultiCommitOperationStep = {
+    kind: MultiCommitOperationStepKind.ShowProgress,
+  }
+): IMultiCommitOperationState {
+  return {
+    step: initialStep,
+    operationDetail,
+    progress: {
+      kind: 'multiCommitOperation',
+      currentCommitSummary: commits.length > 0 ? commits[0].summary : '',
+      position: 1,
+      totalCommitCount: commits.length,
+      value: 0,
+    },
+    userHasResolvedConflicts: false,
+    useCopilotConflictResolution: false,
+    copilotResolutions: null,
+    copilotResolutionSummary: null,
+    copilotResolutionProgress: null,
+    copilotResolutionAbortController: null,
+    originalBranchTip,
+    targetBranch,
+  }
+}
 
 /**
  * Setup the multi commit operation state when the user needs to select a branch as the

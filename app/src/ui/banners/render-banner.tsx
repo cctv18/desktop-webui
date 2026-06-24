@@ -3,6 +3,7 @@ import * as React from 'react'
 import { assertNever } from '../../lib/fatal-error'
 
 import { Banner, BannerType } from '../../models/banner'
+import { PopupType } from '../../models/popup'
 
 import { Dispatcher } from '../dispatcher'
 import { MergeConflictsBanner } from './merge-conflicts-banner'
@@ -176,15 +177,32 @@ export function renderBanner(
         </SuccessBanner>
       )
     }
-    case BannerType.ConflictsFound:
+    case BannerType.ConflictsFound: {
+      const onOpenConflictsDialog =
+        banner.repository !== undefined &&
+        banner.multiCommitOperationConflictState !== undefined
+          ? () =>
+              dispatcher.openConflictsFoundDialogFromBanner(
+                banner.repository!,
+                banner.multiCommitOperationConflictState!
+              )
+          : banner.repository !== undefined
+            ? () =>
+                dispatcher.showPopup({
+                  type: PopupType.MultiCommitOperation,
+                  repository: banner.repository!,
+                })
+            : banner.onOpenConflictsDialog
+
       return (
         <ConflictsFoundBanner
           operationDescription={banner.operationDescription}
-          onOpenConflictsDialog={banner.onOpenConflictsDialog}
+          onOpenConflictsDialog={onOpenConflictsDialog}
           onDismissed={onDismissed}
           key={'conflicts-found'}
         ></ConflictsFoundBanner>
       )
+    }
     case BannerType.OSVersionNoLongerSupported:
       return <OSVersionNoLongerSupportedBanner onDismissed={onDismissed} />
     default:

@@ -1,6 +1,8 @@
 import { Emoji } from '../lib/emoji'
+import { MultiCommitOperationConflictState } from '../lib/app-state'
 import type { IMultiCommitOperationUndoAction } from '../ui/banners/multi-commit-undo'
 import { Popup } from './popup'
+import { Repository } from './repository'
 
 export enum BannerType {
   SuccessfulMerge = 'SuccessfulMerge',
@@ -127,5 +129,12 @@ export type Banner =
       readonly operationDescription: string | JSX.Element
       /** callback to run when user clicks on link in banner text */
       readonly onOpenConflictsDialog: () => void
+      /** serializable repository used by the WebUI renderer to reopen conflicts */
+      readonly repository?: Repository
+      /**
+       * serializable conflict state used by the WebUI renderer when the dialog
+       * was hidden into a banner
+       */
+      readonly multiCommitOperationConflictState?: MultiCommitOperationConflictState
     }
   | { readonly type: BannerType.OSVersionNoLongerSupported }

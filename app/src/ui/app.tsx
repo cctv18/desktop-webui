@@ -3995,6 +3995,8 @@ export class App extends React.Component<IAppProps, IAppState> {
       )
     }
 
+    const initialStep = getMultiCommitOperationChooseBranchStep(repositoryState)
+
     this.props.dispatcher.initializeMultiCommitOperation(
       repository,
       {
@@ -4005,12 +4007,10 @@ export class App extends React.Component<IAppProps, IAppState> {
       },
       null,
       commits,
-      tip.branch.tip.sha
+      tip.branch.tip.sha,
+      initialStep
     )
 
-    const initialStep = getMultiCommitOperationChooseBranchStep(repositoryState)
-
-    this.props.dispatcher.setMultiCommitOperationStep(repository, initialStep)
     this.props.dispatcher.incrementMetric('cherryPickViaContextMenuCount')
 
     this.showPopup({
