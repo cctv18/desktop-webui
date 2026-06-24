@@ -137,7 +137,7 @@ export class CopilotPreferences extends React.Component<
       )
     }
 
-    const { copilotModels, byokProviders } = this.props
+    const { copilotModels } = this.props
 
     if (copilotModels === null) {
       return (
@@ -149,9 +149,6 @@ export class CopilotPreferences extends React.Component<
 
     return (
       <>
-        {copilotModels.length === 0 && byokProviders.length === 0 && (
-          <p>No models available. Check your Copilot subscription.</p>
-        )}
         <Row className="copilot-feature-hint">
           <p>
             Tailor how Copilot behaves by using{' '}
@@ -202,6 +199,7 @@ export class CopilotPreferences extends React.Component<
 
     return (
       <Select label={label} value={value} onChange={onChange}>
+        <option value={AutoCopilotModelKey}>Auto</option>
         <option value={HiddenCopilotModelKey}>
           None (hide Copilot button)
         </option>
@@ -243,7 +241,7 @@ export class CopilotPreferences extends React.Component<
     raw: string | null
   ): string {
     if (raw === null || raw === AutoCopilotModelKey) {
-      return this.getFirstSelectableModelValue(copilotModels, byokProviders)
+      return AutoCopilotModelKey
     }
 
     const key = parseModelKey(raw)

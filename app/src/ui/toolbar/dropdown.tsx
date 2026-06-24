@@ -16,6 +16,10 @@ import { Options as FocusTrapOptions } from 'focus-trap'
 import { TooltipTarget } from '../lib/tooltip'
 import { AriaHasPopupType } from '../lib/aria-types'
 import { enableResizingToolbarButtons } from '../../lib/feature-flag'
+import {
+  getCurrentToolbarDropdownZoomFactor,
+  getToolbarDropdownLayoutRect,
+} from './dropdown-geometry'
 
 export type DropdownState = 'open' | 'closed'
 
@@ -364,10 +368,15 @@ export class ToolbarDropdown extends React.Component<
   }
 
   private getFoldoutContainerStyle(): React.CSSProperties | undefined {
-    const rect = this.state.clientRect
-    if (!rect) {
+    const clientRect = this.state.clientRect
+    if (!clientRect) {
       return undefined
     }
+
+    const rect = getToolbarDropdownLayoutRect(
+      clientRect,
+      getCurrentToolbarDropdownZoomFactor()
+    )
 
     return {
       position: enableResizingToolbarButtons() ? 'fixed' : 'absolute',
@@ -384,10 +393,15 @@ export class ToolbarDropdown extends React.Component<
       return this.props.foldoutStyle
     }
 
-    const rect = this.state.clientRect
-    if (!rect) {
+    const clientRect = this.state.clientRect
+    if (!clientRect) {
       return undefined
     }
+
+    const rect = getToolbarDropdownLayoutRect(
+      clientRect,
+      getCurrentToolbarDropdownZoomFactor()
+    )
 
     const heightStyle: React.CSSProperties =
       this.props.dropdownStyle === ToolbarDropdownStyle.MultiOption
