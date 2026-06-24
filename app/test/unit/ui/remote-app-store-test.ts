@@ -139,4 +139,91 @@ describe('RemoteAppStore', () => {
     )
   })
 
+  it('does not keep progress abort confirmation over a fresh choose-branch operation', () => {
+    const repository = { id: 1, path: 'H:\\oplus\\gitdesk-webui\\win\\repo' }
+    const currentBranch = { name: 'main', tip: { sha: 'main-tip' } }
+    const commit = { sha: 'commit-a', summary: 'Commit A' }
+    const originalOperationState = {
+      step: { kind: MultiCommitOperationStepKind.ShowProgress },
+      operationDetail: {
+        kind: MultiCommitOperationKind.CherryPick,
+        sourceBranch: currentBranch,
+        branchCreated: false,
+        commits: [commit],
+      },
+      progress: {
+        kind: 'multiCommitOperation',
+        title: 'Cherry-pick in progress',
+        value: 0,
+        position: 0,
+        totalCommitCount: 1,
+      },
+      userHasResolvedConflicts: false,
+      useCopilotConflictResolution: false,
+      copilotResolutions: null,
+      copilotResolutionProgress: null,
+      copilotResolutionSummary: null,
+      copilotResolutionAbortController: null,
+      originalBranchTip: 'old-tip',
+      targetBranch: null,
+    } as any
+    const freshOperationState = {
+      ...originalOperationState,
+      step: {
+        kind: MultiCommitOperationStepKind.ChooseBranch,
+        defaultBranch: null,
+        currentBranch,
+        allBranches: [currentBranch],
+        recentBranches: [],
+      },
+      originalBranchTip: 'fresh-tip',
+    } as any
+    const multiCommitPopup = {
+      id: 1,
+      type: PopupType.MultiCommitOperation,
+      repository,
+    } as any
+    const store = new RemoteAppStore(
+      makeState({
+        selectedState: {
+          type: SelectionType.Repository,
+          repository,
+          state: {
+            multiCommitOperationState: originalOperationState,
+          },
+        } as any,
+        allPopups: [multiCommitPopup],
+        currentPopup: multiCommitPopup,
+      }),
+      { invoke() {} } as any
+    )
+
+    store.beginMultiCommitProgressAbortConfirmation(repository as any)
+
+    store.setState(
+      makeState({
+        selectedState: {
+          type: SelectionType.Repository,
+          repository,
+          state: {
+            multiCommitOperationState: freshOperationState,
+          },
+        } as any,
+        allPopups: [multiCommitPopup],
+        currentPopup: multiCommitPopup,
+      })
+    )
+
+    const selectedState = store.getState().selectedState
+    const multiCommitOperationState =
+      selectedState?.type === SelectionType.Repository
+        ? selectedState.state.multiCommitOperationState
+        : null
+
+    assert.equal(
+      multiCommitOperationState?.step.kind,
+      MultiCommitOperationStepKind.ChooseBranch
+    )
+  })
+
 })

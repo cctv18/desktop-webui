@@ -71,6 +71,7 @@ import { DiscardChanges } from './discard-changes'
 import { Welcome } from './welcome'
 import { AppMenuBar } from './app-menu'
 import { UpdateAvailable, renderBanner } from './banners'
+import { BannerErrorBoundary } from './banners/banner-error-boundary'
 import { Preferences } from './preferences'
 import { EditCopilotBYOKProviderDialog } from './copilot/edit-byok-provider-dialog'
 import { EditCopilotBYOKModelDialog } from './copilot/edit-byok-model-dialog'
@@ -3705,18 +3706,48 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
     return (
       <div role="alert" aria-atomic="false">
-        <TransitionGroup>
-          {banner && (
-            <CSSTransition
-              classNames="banner"
-              timeout={bannerTransitionTimeout}
-            >
-              {banner}
-            </CSSTransition>
-          )}
-        </TransitionGroup>
+        <BannerErrorBoundary
+          resetKey={this.getBannerErrorBoundaryResetKey()}
+          onError={this.onBannerRenderError}
+        >
+          <TransitionGroup>
+            {banner && (
+              <CSSTransition
+                classNames="banner"
+                timeout={bannerTransitionTimeout}
+              >
+                {banner}
+              </CSSTransition>
+            )}
+          </TransitionGroup>
+        </BannerErrorBoundary>
       </div>
     )
+  }
+
+  private getBannerErrorBoundaryResetKey() {
+    if (this.state.currentBanner !== null) {
+      return `banner-${this.state.currentBanner.type}`
+    }
+
+    if (
+      this.state.isUpdateAvailableBannerVisible ||
+      this.state.isUpdateShowcaseVisible
+    ) {
+      return 'update'
+    }
+
+    return 'none'
+  }
+
+  private onBannerRenderError = (
+    error: Error,
+    errorInfo: React.ErrorInfo
+  ) => {
+    log.error(
+      `[App] Unable to render banner: ${error.message}\n${errorInfo.componentStack}`
+    )
+    this.props.dispatcher.clearBanner()
   }
 
   private renderUpdateBanner() {
@@ -3978,7 +4009,7 @@ export class App extends React.Component<IAppProps, IAppState> {
    * re-run on every update. It will just keep showing the step initialized
    * there otherwise - not allowing for other flow steps.
    */
-  private startCherryPickWithoutBranch = (
+  private startCherryPickWithoutBranch = async (
     repository: Repository,
     commits: ReadonlyArray<CommitOneLine>
   ) => {
@@ -3997,7 +4028,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
     const initialStep = getMultiCommitOperationChooseBranchStep(repositoryState)
 
-    this.props.dispatcher.initializeMultiCommitOperation(
+    await this.props.dispatcher.initializeMultiCommitOperation(
       repository,
       {
         kind: MultiCommitOperationKind.CherryPick,
@@ -4013,7 +4044,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
     this.props.dispatcher.incrementMetric('cherryPickViaContextMenuCount')
 
-    this.showPopup({
+    await this.props.dispatcher.showPopup({
       type: PopupType.MultiCommitOperation,
       repository,
     })

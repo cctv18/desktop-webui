@@ -100,6 +100,13 @@ export function createRemoteDispatcher(
           }
         }
 
+        if (property === 'initializeMultiCommitOperation') {
+          return (repository: Repository, ...params: ReadonlyArray<unknown>) => {
+            appStore.clearMultiCommitProgressAbortConfirmation(repository)
+            return rpc.invoke(property, [repository, ...params])
+          }
+        }
+
         if (property === 'endMultiCommitOperation') {
           return (repository: Repository) => {
             appStore.clearMultiCommitProgressAbortConfirmation(repository)

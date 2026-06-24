@@ -202,6 +202,15 @@ export class RemoteAppStore {
       return state
     }
 
+    const remoteOperationState = selectedState.state.multiCommitOperationState
+
+    if (
+      remoteOperationState?.step.kind === MultiCommitOperationStepKind.ChooseBranch
+    ) {
+      this.multiCommitProgressAbortConfirmation = null
+      return state
+    }
+
     const completedUndoAction = getCompletedMultiCommitOperationUndoAction(
       state.currentBanner,
       confirmation.repository
@@ -210,7 +219,6 @@ export class RemoteAppStore {
       completedUndoAction?.commitsCount ??
       confirmation.completedOperationCount ??
       null
-    const remoteOperationState = selectedState.state.multiCommitOperationState
     const operationStateSource =
       remoteOperationState ?? completedUndoAction?.operationState
 

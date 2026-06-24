@@ -6,6 +6,7 @@ import { BranchAlreadyUpToDate } from '../../../src/ui/banners/branch-already-up
 import { Banner } from '../../../src/ui/banners/banner'
 import { CherryPickUndone } from '../../../src/ui/banners/cherry-pick-undone'
 import { ConflictsFoundBanner } from '../../../src/ui/banners/conflicts-found-banner'
+import { BannerErrorBoundary } from '../../../src/ui/banners/banner-error-boundary'
 import { SuccessBanner } from '../../../src/ui/banners/success-banner'
 import {
   advanceTimersBy,
@@ -182,5 +183,40 @@ describe('banner surfaces', () => {
         'Resolve conflicts to continue cherry-picking onto feature.'
       )
     )
+  })
+
+  it('isolates banner render errors and recovers when the banner changes', () => {
+    let errors = 0
+    const previousConsoleError = console.error
+
+    class ThrowingBanner extends React.Component {
+      public render() {
+        throw new Error('banner failed to render')
+      }
+    }
+
+    console.error = () => {}
+
+    try {
+      const view = render(
+        <BannerErrorBoundary resetKey="bad" onError={() => errors++}>
+          <ThrowingBanner />
+        </BannerErrorBoundary>
+      )
+
+      assert.equal(errors, 1)
+      assert.equal(view.container.textContent, '')
+
+      view.rerender(
+        <BannerErrorBoundary resetKey="good" onError={() => errors++}>
+          <div>Recovered banner</div>
+        </BannerErrorBoundary>
+      )
+
+      assert.equal(errors, 1)
+      assert.ok(screen.getByText('Recovered banner'))
+    } finally {
+      console.error = previousConsoleError
+    }
   })
 })
