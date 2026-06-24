@@ -201,34 +201,37 @@ export class GitStore extends BaseStore {
 
     this.requestsInFight.add(LoadingHistoryRequestKey)
 
-    const range = revRange('HEAD', mergeBase)
+    try {
+      const range = revRange('HEAD', mergeBase)
 
-    const commits = await this.performFailableOperation(() =>
-      getCommits(this.repository, range, CommitBatchSize)
-    )
-    if (commits == null) {
-      return
-    }
-
-    const existingHistory = this._history
-    const index = existingHistory.findIndex(c => c === mergeBase)
-
-    if (index > -1) {
-      log.debug(
-        `reconciling history - adding ${
-          commits.length
-        } commits before merge base ${mergeBase.substring(0, 8)}`
+      const commits = await this.performFailableOperation(() =>
+        getCommits(this.repository, range, CommitBatchSize)
       )
+      if (commits == null) {
+        return
+      }
 
-      // rebuild the local history state by combining the commits _before_ the
-      // merge base with the current commits on the tip of this current branch
-      const remainingHistory = existingHistory.slice(index)
-      this._history = [...commits.map(c => c.sha), ...remainingHistory]
+      const existingHistory = this._history
+      const index = existingHistory.findIndex(c => c === mergeBase)
+
+      if (index > -1) {
+        log.debug(
+          `reconciling history - adding ${
+            commits.length
+          } commits before merge base ${mergeBase.substring(0, 8)}`
+        )
+
+        // rebuild the local history state by combining the commits _before_ the
+        // merge base with the current commits on the tip of this current branch
+        const remainingHistory = existingHistory.slice(index)
+        this._history = [...commits.map(c => c.sha), ...remainingHistory]
+      }
+
+      this.storeCommits(commits)
+      this.emitUpdate()
+    } finally {
+      this.requestsInFight.delete(LoadingHistoryRequestKey)
     }
-
-    this.storeCommits(commits)
-    this.requestsInFight.delete(LoadingHistoryRequestKey)
-    this.emitUpdate()
   }
 
   /** Load a batch of commits from the repository, using a given commitish object as the starting point */

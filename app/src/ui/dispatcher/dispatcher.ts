@@ -128,6 +128,7 @@ import {
   MultiCommitOperationStepKind,
 } from '../../models/multi-commit-operation'
 import { getMultiCommitOperationChooseBranchStep } from '../../lib/multi-commit-operation'
+import { endCherryPickAfterUnexpectedError } from './cherry-pick-error'
 import { ICombinedRefCheck, IRefCheck } from '../../lib/ci-checks/ci-checks'
 import { ValidNotificationPullRequestReviewState } from '../../lib/valid-notification-pull-request-review'
 import { UnreachableCommitsTab } from '../history/unreachable-commits-dialog'
@@ -3021,43 +3022,53 @@ export class Dispatcher {
       return
     }
 
-    const { tip } = targetBranch
-    this.repositoryStateManager.updateMultiCommitOperationUndoState(
-      repository,
-      () => ({
-        undoSha: tip.sha,
-        branchName: targetBranch.name,
-      })
-    )
+    try {
+      const { tip } = targetBranch
+      this.repositoryStateManager.updateMultiCommitOperationUndoState(
+        repository,
+        () => ({
+          undoSha: tip.sha,
+          branchName: targetBranch.name,
+        })
+      )
 
-    if (commits.length > 1) {
-      this.statsStore.increment('cherryPickMultipleCommitsCount')
+      if (commits.length > 1) {
+        this.statsStore.increment('cherryPickMultipleCommitsCount')
+      }
+
+      const nameAfterCheckout = await this.appStore._checkoutBranchReturnName(
+        repository,
+        targetBranch
+      )
+
+      if (nameAfterCheckout === undefined) {
+        log.error('[cherryPick] - Failed to check out the target branch.')
+        this.endMultiCommitOperation(repository)
+        return
+      }
+
+      const result = await this.appStore._cherryPick(repository, commits)
+
+      if (result !== CherryPickResult.UnableToStart) {
+        this.logHowToRevertCherryPick(nameAfterCheckout, tip.sha)
+      }
+
+      await this.processCherryPickResult(
+        repository,
+        result,
+        nameAfterCheckout,
+        commits,
+        sourceBranch
+      )
+    } catch (error) {
+      log.error('[cherryPick] - Unexpected error during cherry-pick', error)
+      await endCherryPickAfterUnexpectedError(
+        repository,
+        error,
+        repo => this.endMultiCommitOperation(repo),
+        err => this.postError(err)
+      )
     }
-
-    const nameAfterCheckout = await this.appStore._checkoutBranchReturnName(
-      repository,
-      targetBranch
-    )
-
-    if (nameAfterCheckout === undefined) {
-      log.error('[cherryPick] - Failed to check out the target branch.')
-      this.endMultiCommitOperation(repository)
-      return
-    }
-
-    const result = await this.appStore._cherryPick(repository, commits)
-
-    if (result !== CherryPickResult.UnableToStart) {
-      this.logHowToRevertCherryPick(nameAfterCheckout, tip.sha)
-    }
-
-    await this.processCherryPickResult(
-      repository,
-      result,
-      nameAfterCheckout,
-      commits,
-      sourceBranch
-    )
   }
 
   public async startCherryPickWithBranchName(
@@ -3218,23 +3229,36 @@ export class Dispatcher {
   ): Promise<void> {
     await this.switchMultiCommitOperationToShowProgress(repository)
 
-    const result = await this.appStore._continueCherryPick(
-      repository,
-      files,
-      conflictsState.manualResolutions
-    )
+    try {
+      const result = await this.appStore._continueCherryPick(
+        repository,
+        files,
+        conflictsState.manualResolutions
+      )
 
-    if (result === CherryPickResult.CompletedWithoutError) {
-      this.statsStore.increment('cherryPickSuccessfulWithConflictsCount')
+      if (result === CherryPickResult.CompletedWithoutError) {
+        this.statsStore.increment('cherryPickSuccessfulWithConflictsCount')
+      }
+
+      await this.processCherryPickResult(
+        repository,
+        result,
+        conflictsState.targetBranchName,
+        commits,
+        sourceBranch
+      )
+    } catch (error) {
+      log.error(
+        '[continueCherryPick] - Unexpected error during cherry-pick',
+        error
+      )
+      await endCherryPickAfterUnexpectedError(
+        repository,
+        error,
+        repo => this.endMultiCommitOperation(repo),
+        err => this.postError(err)
+      )
     }
-
-    await this.processCherryPickResult(
-      repository,
-      result,
-      conflictsState.targetBranchName,
-      commits,
-      sourceBranch
-    )
   }
 
   /**

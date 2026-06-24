@@ -39,6 +39,33 @@ describe('GitStore', () => {
       assert.equal(commits.length, 100)
       assert.equal(commits[0], '708a46eac512c7b2486da2247f116d11a100b611')
     })
+
+    it('can load history after reconcileHistory cannot load commits', async t => {
+      const repository = await setupEmptyRepository(t)
+
+      await makeCommit(repository, {
+        commitMessage: 'first commit',
+        entries: [{ path: 'README.md', contents: 'hello' }],
+      })
+
+      const gitStore = new GitStore(repository, shell, new TestStatsStore())
+      const commitsBeforeFailure = await gitStore.loadCommitBatch('HEAD', 0)
+
+      assert(commitsBeforeFailure !== null)
+      ;(gitStore as any)._history = commitsBeforeFailure
+
+      const performFailableOperation = gitStore.performFailableOperation
+      ;(gitStore as any).performFailableOperation = () =>
+        Promise.resolve(undefined)
+
+      await gitStore.reconcileHistory('merge-base')
+
+      ;(gitStore as any).performFailableOperation = performFailableOperation
+
+      const commitsAfterFailure = await gitStore.loadCommitBatch('HEAD', 0)
+      assert(commitsAfterFailure !== null)
+      assert.equal(commitsAfterFailure.length, 1)
+    })
   })
 
   it('can discard changes from a repository', async t => {

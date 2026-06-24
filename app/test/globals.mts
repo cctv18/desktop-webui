@@ -13,6 +13,7 @@ Object.assign(globalThis, {
   __APP_NAME__: packageInfo.productName,
   __APP_VERSION__: packageInfo.version,
   __RELEASE_CHANNEL__: 'development',
+  __PROCESS_KIND__: 'renderer',
   __UPDATES_URL__: '',
   __SHA__: 'test',
   __DARWIN__: process.platform === 'darwin',

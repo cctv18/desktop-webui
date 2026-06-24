@@ -14,6 +14,7 @@ import {
   UpstreamRemoteName,
 } from '.'
 import type { CopilotFeature, CopilotModelSelections } from './copilot-store'
+import { shouldRefreshRepositoryBeforeCherryPick } from './cherry-pick-refresh'
 import {
   IBYOKProvider,
   loadBYOKProviders,
@@ -9559,7 +9560,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
     const orderedCommits = this.orderCommitsByHistory(repository, commits)
 
-    await this._refreshRepository(repository)
+    if (shouldRefreshRepositoryBeforeCherryPick(__PROCESS_KIND__)) {
+      await this._refreshRepository(repository)
+    }
 
     const progressCallback =
       this.getMultiCommitOperationProgressCallBack(repository)
