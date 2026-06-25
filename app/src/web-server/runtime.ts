@@ -252,7 +252,8 @@ export class WebRuntime {
         return this.notificationsDebugStore
       case 'git':
         return {
-          addSafeDirectory: (path: string) => this.addAllowedSafeDirectory(path),
+          addSafeDirectory: (path: string) =>
+            this.addAllowedSafeDirectory(path),
           doMergeCommitsExistAfterCommit,
           filesNotTrackedByLFS,
           getAuthors,
@@ -300,6 +301,11 @@ export class WebRuntime {
       case 'clipboard':
         return {
           writeText: (text: string) => this.writeClipboardText(text),
+        }
+      case 'codeEditor':
+        return {
+          listRepositoryFiles: (path: string) =>
+            this.listAllowedRepositoryFiles(path),
         }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
@@ -420,9 +426,9 @@ export class WebRuntime {
       await this.pathGuard.assertAllowed(path)
     } catch (error) {
       return {
-        message: `${getErrorMessage(error)}. Allowed roots: ${this.pathGuard.allowedRoots.join(
-          ', '
-        )}`,
+        message: `${getErrorMessage(
+          error
+        )}. Allowed roots: ${this.pathGuard.allowedRoots.join(', ')}`,
       }
     }
 
@@ -462,7 +468,11 @@ export class WebRuntime {
     }
   }
 
-  private async readAllowedPartialFile(path: string, start: number, end: number) {
+  private async readAllowedPartialFile(
+    path: string,
+    start: number,
+    end: number
+  ) {
     await this.pathGuard.assertAllowed(path)
     return readPartialFile(path, start, end)
   }
@@ -566,6 +576,75 @@ export class WebRuntime {
   private async pathExists(path: string) {
     await this.pathGuard.assertAllowed(path)
     return pathExistsOnDisk(path)
+  }
+
+  private async listAllowedRepositoryFiles(path: string) {
+    await this.pathGuard.assertAllowed(path)
+
+    const root = Path.resolve(path)
+    const files = new Array<string>()
+    const ignoredDirectoryNames = new Set([
+      '.git',
+      '.hg',
+      '.svn',
+      'node_modules',
+      'out',
+      'dist',
+      'build',
+      '.next',
+      '.vite',
+      'coverage',
+    ])
+    const maxFiles = 10000
+
+    const walk = async (directory: string) => {
+      if (files.length >= maxFiles) {
+        return
+      }
+
+      let entries: ReadonlyArray<string>
+      try {
+        entries = await readdir(directory)
+      } catch (error) {
+        log.warn(`Unable to read repository directory '${directory}'`, error)
+        return
+      }
+
+      for (const entry of entries) {
+        if (files.length >= maxFiles) {
+          return
+        }
+
+        if (ignoredDirectoryNames.has(entry)) {
+          continue
+        }
+
+        const fullPath = Path.join(directory, entry)
+        let stats
+        try {
+          stats = await lstat(fullPath)
+        } catch {
+          continue
+        }
+
+        if (stats.isSymbolicLink()) {
+          continue
+        }
+
+        if (stats.isDirectory()) {
+          await walk(fullPath)
+          continue
+        }
+
+        if (stats.isFile()) {
+          files.push(Path.relative(root, fullPath).replace(/\\/g, '/'))
+        }
+      }
+    }
+
+    await walk(root)
+    files.sort((a, b) => a.localeCompare(b))
+    return files
   }
 
   private async writeClipboardText(text: string) {

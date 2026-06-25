@@ -10,13 +10,10 @@ import { IDiff, ImageDiffType } from '../../models/diff'
 import { encodePathAsUrl } from '../../lib/path'
 import { revealInFileManager } from '../../lib/app-shell'
 
-import { openFile } from '../lib/open-file'
 import {
   isSafeFileExtension,
   CopyFilePathLabel,
-  DefaultEditorLabel,
   RevealInFileManagerLabel,
-  OpenWithDefaultProgramLabel,
   CopyRelativeFilePathLabel,
 } from '../lib/context-menu'
 import { ThrottledScheduler } from '../lib/throttled-scheduler'
@@ -55,7 +52,7 @@ interface ISelectedCommitsProps {
   readonly externalEditorLabel?: string
 
   /**
-   * Called to open a file using the user's configured applications
+   * Called to open a file in the embedded CodeMirror editor.
    *
    * @param path The path of the file relative to the root of the repository
    */
@@ -284,16 +281,6 @@ export class SelectedCommits extends React.Component<
     )
   }
 
-  /**
-   * Open file with default application.
-   *
-   * @param path The path of the file relative to the root of the repository
-   */
-  private onOpenItem = (path: string) => {
-    const fullPath = Path.join(this.props.repository.path, path)
-    openFile(fullPath, this.props.dispatcher)
-  }
-
   public render() {
     const { selectedCommits, isContiguous } = this.props
 
@@ -375,21 +362,13 @@ export class SelectedCommits extends React.Component<
     event.preventDefault()
     event.stopPropagation()
 
-    const {
-      selectedCommits,
-      localCommitSHAs,
-      repository,
-      externalEditorLabel,
-    } = this.props
+    const { selectedCommits, localCommitSHAs, repository } = this.props
 
     const fullPath = Path.join(repository.path, file.path)
     const fileExistsOnDisk = await pathExists(fullPath)
     const extension = Path.extname(file.path)
 
     const isSafeExtension = isSafeFileExtension(extension)
-    const openInExternalEditor = externalEditorLabel
-      ? `Open in ${externalEditorLabel}`
-      : DefaultEditorLabel
 
     const items: IMenuItem[] = []
 
@@ -400,12 +379,8 @@ export class SelectedCommits extends React.Component<
           action: () => revealInFileManager(repository, file.path),
         },
         {
-          label: openInExternalEditor,
+          label: 'Open with CodeMirror Editor',
           action: () => this.props.onOpenInExternalEditor(file.path),
-        },
-        {
-          label: OpenWithDefaultProgramLabel,
-          action: () => this.onOpenItem(file.path),
           enabled: isSafeExtension,
         },
         { type: 'separator' }

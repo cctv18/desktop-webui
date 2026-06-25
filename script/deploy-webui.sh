@@ -331,6 +331,8 @@ project_dependencies_present() {
     -d "$PROJECT_ROOT/node_modules/webpack" &&
     -d "$PROJECT_ROOT/app/node_modules/react" &&
     -d "$PROJECT_ROOT/app/node_modules/dugite" &&
+    -d "$PROJECT_ROOT/app/node_modules/@codemirror/view" &&
+    -d "$PROJECT_ROOT/app/node_modules/@codemirror/state" &&
     -d "$PROJECT_ROOT/app/node_modules/@github/copilot"
   ]]
 }

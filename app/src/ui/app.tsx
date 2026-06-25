@@ -57,7 +57,7 @@ import {
   WorktreeDropdown,
   RevertProgress,
 } from './toolbar'
-import { iconForRepository, OcticonSymbol } from './octicons'
+import { iconForRepository, Octicon, OcticonSymbol } from './octicons'
 import * as octicons from './octicons/octicons.generated'
 import {
   showCertificateTrustDialog,
@@ -76,10 +76,7 @@ import { Preferences } from './preferences'
 import { EditCopilotBYOKProviderDialog } from './copilot/edit-byok-provider-dialog'
 import { EditCopilotBYOKModelDialog } from './copilot/edit-byok-model-dialog'
 import { ConfirmDeleteCopilotBYOKProviderDialog } from './copilot/confirm-delete-byok-provider-dialog'
-import {
-  HiddenCopilotModelKey,
-  type IBYOKProvider,
-} from '../lib/copilot/byok'
+import { HiddenCopilotModelKey, type IBYOKProvider } from '../lib/copilot/byok'
 import { getConflictResolutionModelDisplay } from '../lib/copilot/conflict-resolution-model'
 import { OpenWithExternalEditor } from './open-with-external-editor/open-with-external-editor'
 import { RepositorySettings } from './repository-settings'
@@ -178,6 +175,10 @@ import { getRepositoryType } from '../lib/git'
 import { SSHUserPassword } from './ssh/ssh-user-password'
 import { showContextualMenu } from '../lib/menu-item'
 import { UnreachableCommitsDialog } from './history/unreachable-commits-dialog'
+import {
+  CodeEditorPanel as CodeEditorPanelView,
+  ICodeEditorOpenFileRequest,
+} from './code-editor'
 import { OpenPullRequestDialog } from './open-pull-request/open-pull-request-dialog'
 import { sendNonFatalException } from '../lib/helpers/non-fatal-exception'
 import { ICustomIntegration } from '../lib/custom-integration'
@@ -258,6 +259,10 @@ export const bannerTransitionTimeout = { enter: 500, exit: 400 }
  * changes. See https://github.com/desktop/desktop/issues/1398.
  */
 const ReadyDelay = 100
+
+type RepositoryPanelKind = 'commit-management' | 'code-editor'
+const repositoryPanelStorageKey = 'gitdesk-webui:selected-repository-panel'
+
 export class App extends React.Component<IAppProps, IAppState> {
   private loading = true
 
@@ -271,6 +276,11 @@ export class App extends React.Component<IAppProps, IAppState> {
   private updateIntervalHandle?: number
 
   private repositoryViewRef = React.createRef<RepositoryView>()
+  private selectedRepositoryPanel: RepositoryPanelKind =
+    readSelectedRepositoryPanel()
+  private panelDropdownState: DropdownState = 'closed'
+  private codeEditorOpenFileRequest: ICodeEditorOpenFileRequest | null = null
+  private nextCodeEditorOpenFileRequestID = 1
 
   /**
    * Gets a value indicating whether or not we're currently showing a
@@ -3255,7 +3265,7 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 
   private openFileInExternalEditor = (fullPath: string) => {
-    this.props.dispatcher.openInExternalEditor(fullPath)
+    this.openPathInCodeEditor(fullPath)
   }
 
   private openInExternalEditor = (
@@ -3285,13 +3295,37 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 
   private onOpenInExternalEditor = (path: string) => {
+    this.openPathInCodeEditor(path)
+  }
+
+  private openPathInCodeEditor = (path: string) => {
     const repository = this.state.selectedState?.repository
     if (repository === undefined) {
       return
     }
 
-    const fullPath = Path.join(repository.path, path)
-    this.props.dispatcher.openInExternalEditor(fullPath)
+    const relativePath = Path.isAbsolute(path)
+      ? Path.relative(repository.path, path)
+      : path
+
+    if (
+      relativePath.length === 0 ||
+      relativePath.startsWith('..') ||
+      Path.isAbsolute(relativePath)
+    ) {
+      return
+    }
+
+    this.selectedRepositoryPanel = 'code-editor'
+    localStorage.setItem(
+      repositoryPanelStorageKey,
+      this.selectedRepositoryPanel
+    )
+    this.codeEditorOpenFileRequest = {
+      id: this.nextCodeEditorOpenFileRequestID++,
+      relativePath,
+    }
+    this.forceUpdate()
   }
 
   private showRepository = (repository: Repository | CloningRepository) => {
@@ -3433,6 +3467,75 @@ export class App extends React.Component<IAppProps, IAppState> {
     })
 
     showContextualMenu(items)
+  }
+
+  private onPanelDropdownStateChanged = (newState: DropdownState) => {
+    this.panelDropdownState = newState
+    this.forceUpdate()
+  }
+
+  private renderPanelToolbarButton(): JSX.Element | null {
+    const selection = this.state.selectedState
+    if (selection == null || selection.type !== SelectionType.Repository) {
+      return null
+    }
+
+    const label =
+      this.selectedRepositoryPanel === 'code-editor'
+        ? 'Code Editor'
+        : 'Commit management'
+
+    return (
+      <ToolbarDropdown
+        icon={octicons.columns}
+        title="Panel"
+        description={label}
+        tooltip="Switch repository panel"
+        dropdownState={this.panelDropdownState}
+        onDropdownStateChanged={this.onPanelDropdownStateChanged}
+        dropdownContentRenderer={this.renderPanelSwitcher}
+        foldoutStyleOverrides={{ width: 240 }}
+        enableFocusTrap={this.state.currentPopup === null}
+      />
+    )
+  }
+
+  private renderPanelSwitcher = () => {
+    return (
+      <div className="panel-switcher-menu">
+        <button
+          type="button"
+          className={
+            this.selectedRepositoryPanel === 'commit-management'
+              ? 'selected'
+              : undefined
+          }
+          onClick={() => this.selectRepositoryPanel('commit-management')}
+        >
+          <Octicon symbol={octicons.repo} />
+          <span>Commit management</span>
+        </button>
+        <button
+          type="button"
+          className={
+            this.selectedRepositoryPanel === 'code-editor'
+              ? 'selected'
+              : undefined
+          }
+          onClick={() => this.selectRepositoryPanel('code-editor')}
+        >
+          <Octicon symbol={octicons.code} />
+          <span>Code Editor</span>
+        </button>
+      </div>
+    )
+  }
+
+  private selectRepositoryPanel = (panel: RepositoryPanelKind) => {
+    this.selectedRepositoryPanel = panel
+    this.panelDropdownState = 'closed'
+    localStorage.setItem(repositoryPanelStorageKey, panel)
+    this.forceUpdate()
   }
 
   private renderPushPullToolbarButton() {
@@ -3740,10 +3843,7 @@ export class App extends React.Component<IAppProps, IAppState> {
     return 'none'
   }
 
-  private onBannerRenderError = (
-    error: Error,
-    errorInfo: React.ErrorInfo
-  ) => {
+  private onBannerRenderError = (error: Error, errorInfo: React.ErrorInfo) => {
     log.error(
       `[App] Unable to render banner: ${error.message}\n${errorInfo.componentStack}`
     )
@@ -3789,6 +3889,7 @@ export class App extends React.Component<IAppProps, IAppState> {
         </div>
         {this.renderWorktreeToolbarButton()}
         {this.renderBranchToolbarButton()}
+        {this.renderPanelToolbarButton()}
         {this.renderPushPullToolbarButton()}
       </Toolbar>
     )
@@ -3821,6 +3922,19 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
 
     if (selectedState.type === SelectionType.Repository) {
+      if (this.selectedRepositoryPanel === 'code-editor') {
+        return (
+          <CodeEditorPanelView
+            key={selectedState.repository.hash}
+            repository={selectedState.repository}
+            repositoryState={selectedState.state}
+            dispatcher={this.props.dispatcher}
+            currentTheme={state.currentTheme}
+            openFileRequest={this.codeEditorOpenFileRequest}
+          />
+        )
+      }
+
       return (
         <RepositoryView
           ref={this.repositoryViewRef}
@@ -4134,6 +4248,11 @@ export class App extends React.Component<IAppProps, IAppState> {
       this.props.dispatcher.incrementMetric('dragStartedAndCanceledCount')
     }
   }
+}
+
+function readSelectedRepositoryPanel(): RepositoryPanelKind {
+  const value = localStorage.getItem(repositoryPanelStorageKey)
+  return value === 'code-editor' ? 'code-editor' : 'commit-management'
 }
 
 function NoRepositorySelected() {

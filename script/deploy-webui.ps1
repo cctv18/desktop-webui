@@ -191,6 +191,8 @@ function Test-ProjectDependencies {
     (Test-Path (Join-Path $ProjectRoot "node_modules\webpack")) -and
     (Test-Path (Join-Path $ProjectRoot "app\node_modules\react")) -and
     (Test-Path (Join-Path $ProjectRoot "app\node_modules\dugite")) -and
+    (Test-Path (Join-Path $ProjectRoot "app\node_modules\@codemirror\view")) -and
+    (Test-Path (Join-Path $ProjectRoot "app\node_modules\@codemirror\state")) -and
     (Test-Path (Join-Path $ProjectRoot "app\node_modules\@github\copilot"))
   )
 }
