@@ -1,5 +1,18 @@
 export type CodeEditorPanel = 'commit-management' | 'code-editor'
 export type CodeEditorLineEnding = 'lf' | 'crlf'
+export type CodeEditorLanguage =
+  | 'cpp'
+  | 'css'
+  | 'go'
+  | 'html'
+  | 'java'
+  | 'javascript'
+  | 'json'
+  | 'markdown'
+  | 'python'
+  | 'rust'
+  | 'yaml'
+  | 'unknown'
 
 export interface ICodeEditorSearchOptions {
   readonly caseSensitive: boolean
@@ -11,6 +24,22 @@ export interface ICodeEditorSearchMatch {
   readonly from: number
   readonly to: number
   readonly text: string
+}
+
+export interface ICodeEditorLineDiffRow {
+  readonly kind: 'context' | 'added' | 'removed'
+  readonly oldLineNumber: number | null
+  readonly newLineNumber: number | null
+  readonly oldText: string
+  readonly newText: string
+}
+
+export interface ICodeEditorSideBySideDiffRow {
+  readonly kind: 'context' | 'added' | 'removed' | 'modified'
+  readonly oldLineNumber: number | null
+  readonly newLineNumber: number | null
+  readonly oldText: string
+  readonly newText: string
 }
 
 export type CodeEditorTreeNode =
@@ -34,6 +63,19 @@ type MutableDirectoryNode = {
 }
 
 const draftStoragePrefix = 'gitdesk-webui:code-editor:draft:'
+
+export const defaultCodeEditorIgnoredPaths = [
+  '.git',
+  '.hg',
+  '.svn',
+  'node_modules',
+  'out',
+  'dist',
+  'build',
+  '.next',
+  '.vite',
+  'coverage',
+]
 
 export function normalizeRepositoryRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
@@ -99,6 +141,83 @@ export function buildFileTreeFromPaths(
 
   sortTree(root.children)
   return root.children
+}
+
+export function parseIgnoredPathList(value: string): ReadonlyArray<string> {
+  const paths = new Array<string>()
+  const seen = new Set<string>()
+
+  for (const part of value.split(/[,\n]/)) {
+    const normalized = normalizeRepositoryRelativePath(part.trim()).replace(
+      /\/+$/,
+      ''
+    )
+
+    if (normalized.length === 0) {
+      continue
+    }
+
+    const key = normalized.toLowerCase()
+    if (!seen.has(key)) {
+      seen.add(key)
+      paths.push(normalized)
+    }
+  }
+
+  return paths
+}
+
+export function serializeIgnoredPathList(paths: ReadonlyArray<string>) {
+  return parseIgnoredPathList(paths.join('\n')).join('\n')
+}
+
+export function isRepositoryPathIgnored(
+  relativePath: string,
+  ignoredPaths: ReadonlyArray<string>
+) {
+  const normalizedPath =
+    normalizeRepositoryRelativePath(relativePath).toLowerCase()
+  const segments = normalizedPath.split('/').filter(x => x.length > 0)
+
+  for (const ignoredPath of ignoredPaths) {
+    const normalizedIgnoredPath = normalizeRepositoryRelativePath(ignoredPath)
+      .replace(/\/+$/, '')
+      .toLowerCase()
+
+    if (normalizedIgnoredPath.length === 0) {
+      continue
+    }
+
+    if (!normalizedIgnoredPath.includes('/')) {
+      if (segments.includes(normalizedIgnoredPath)) {
+        return true
+      }
+      continue
+    }
+
+    if (
+      normalizedPath === normalizedIgnoredPath ||
+      normalizedPath.startsWith(`${normalizedIgnoredPath}/`)
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+export function filterRepositoryFilePaths(
+  paths: ReadonlyArray<string>,
+  ignoredPaths: ReadonlyArray<string>,
+  showIgnoredPaths: boolean
+) {
+  return paths
+    .map(normalizeRepositoryRelativePath)
+    .filter(path => path.length > 0)
+    .filter(
+      path => showIgnoredPaths || !isRepositoryPathIgnored(path, ignoredPaths)
+    )
+    .sort((a, b) => a.localeCompare(b))
 }
 
 export function detectLineEnding(text: string): CodeEditorLineEnding {
@@ -181,36 +300,202 @@ export function createUnifiedDiff(
     return `No changes in ${relativePath}`
   }
 
-  const oldLines = normalizeEditorText(original).split('\n')
-  const newLines = normalizeEditorText(current).split('\n')
+  const oldLines = splitEditorLines(original)
+  const newLines = splitEditorLines(current)
   const rows = [
     `--- a/${relativePath}`,
     `+++ b/${relativePath}`,
     `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
   ]
-  const max = Math.max(oldLines.length, newLines.length)
 
-  for (let index = 0; index < max; index++) {
-    const oldLine = oldLines[index]
-    const newLine = newLines[index]
-
-    if (oldLine === newLine) {
-      if (oldLine !== undefined) {
-        rows.push(` ${oldLine}`)
-      }
-      continue
-    }
-
-    if (oldLine !== undefined) {
-      rows.push(`-${oldLine}`)
-    }
-
-    if (newLine !== undefined) {
-      rows.push(`+${newLine}`)
+  for (const row of createLineDiffRows(original, current)) {
+    if (row.kind === 'context') {
+      rows.push(` ${row.oldText}`)
+    } else if (row.kind === 'removed') {
+      rows.push(`-${row.oldText}`)
+    } else {
+      rows.push(`+${row.newText}`)
     }
   }
 
   return rows.join('\n')
+}
+
+export function createLineDiffRows(
+  original: string,
+  current: string
+): ReadonlyArray<ICodeEditorLineDiffRow> {
+  const oldLines = splitEditorLines(original)
+  const newLines = splitEditorLines(current)
+  const operations = createLineDiffOperations(oldLines, newLines)
+  const rows = new Array<ICodeEditorLineDiffRow>()
+  let oldLineNumber = 1
+  let newLineNumber = 1
+
+  for (const operation of operations) {
+    switch (operation.kind) {
+      case 'context':
+        rows.push({
+          kind: 'context',
+          oldLineNumber,
+          newLineNumber,
+          oldText: operation.text,
+          newText: operation.text,
+        })
+        oldLineNumber++
+        newLineNumber++
+        break
+      case 'removed':
+        rows.push({
+          kind: 'removed',
+          oldLineNumber,
+          newLineNumber: null,
+          oldText: operation.text,
+          newText: '',
+        })
+        oldLineNumber++
+        break
+      case 'added':
+        rows.push({
+          kind: 'added',
+          oldLineNumber: null,
+          newLineNumber,
+          oldText: '',
+          newText: operation.text,
+        })
+        newLineNumber++
+        break
+    }
+  }
+
+  return rows
+}
+
+export function createSideBySideDiffRows(
+  original: string,
+  current: string
+): ReadonlyArray<ICodeEditorSideBySideDiffRow> {
+  const rows = createLineDiffRows(original, current)
+  const sideBySideRows = new Array<ICodeEditorSideBySideDiffRow>()
+
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index]
+    if (row.kind === 'context') {
+      sideBySideRows.push({
+        kind: 'context',
+        oldLineNumber: row.oldLineNumber,
+        newLineNumber: row.newLineNumber,
+        oldText: row.oldText,
+        newText: row.newText,
+      })
+      continue
+    }
+
+    const removed = new Array<ICodeEditorLineDiffRow>()
+    const added = new Array<ICodeEditorLineDiffRow>()
+    while (index < rows.length && rows[index].kind !== 'context') {
+      const changed = rows[index]
+      if (changed.kind === 'removed') {
+        removed.push(changed)
+      } else {
+        added.push(changed)
+      }
+      index++
+    }
+    index--
+
+    const count = Math.max(removed.length, added.length)
+    for (let pairIndex = 0; pairIndex < count; pairIndex++) {
+      const oldRow = removed[pairIndex]
+      const newRow = added[pairIndex]
+      sideBySideRows.push({
+        kind:
+          oldRow !== undefined && newRow !== undefined
+            ? 'modified'
+            : oldRow !== undefined
+            ? 'removed'
+            : 'added',
+        oldLineNumber: oldRow?.oldLineNumber ?? null,
+        newLineNumber: newRow?.newLineNumber ?? null,
+        oldText: oldRow?.oldText ?? '',
+        newText: newRow?.newText ?? '',
+      })
+    }
+  }
+
+  return sideBySideRows
+}
+
+export function detectLanguageFromPathAndContent(
+  relativePath: string | null,
+  contents: string
+): CodeEditorLanguage {
+  const pathLanguage = detectLanguageFromPath(relativePath)
+  if (pathLanguage !== 'unknown') {
+    return pathLanguage
+  }
+
+  const sample = normalizeEditorText(contents).trimStart().slice(0, 4000)
+  const firstLine = sample.split('\n')[0] ?? ''
+
+  if (/^#!.*\bpython(?:\d+(?:\.\d+)*)?\b/i.test(firstLine)) {
+    return 'python'
+  }
+  if (/^#!.*\b(?:node|deno|bun)\b/i.test(firstLine)) {
+    return 'javascript'
+  }
+  if (/^#!.*\b(?:sh|bash|zsh|fish)\b/i.test(firstLine)) {
+    return 'unknown'
+  }
+  if (/^\s*<!doctype\s+html/i.test(sample) || /<html[\s>]/i.test(sample)) {
+    return 'html'
+  }
+  if (/^\s*[{[]/.test(sample) && /"[^"]+"\s*:/.test(sample)) {
+    return 'json'
+  }
+  if (
+    /\b(import|export)\s.+from\s+['"]/.test(sample) ||
+    /\bconst\s+\w+\s*=/.test(sample) ||
+    /=>/.test(sample)
+  ) {
+    return 'javascript'
+  }
+  if (
+    /^\s*(from\s+\S+\s+import\s+\S+|import\s+\S+|def\s+\w+\(|class\s+\w+[:(])/m.test(
+      sample
+    )
+  ) {
+    return 'python'
+  }
+  if (/^\s*package\s+\w+/m.test(sample) && /\bfunc\s+\w+\(/.test(sample)) {
+    return 'go'
+  }
+  if (/\bfn\s+\w+\s*\(/.test(sample) && /\b(let|use|pub|impl)\b/.test(sample)) {
+    return 'rust'
+  }
+  if (/^\s*#include\s+[<"]/.test(sample) || /\bstd::\w+/.test(sample)) {
+    return 'cpp'
+  }
+  if (
+    /\bpublic\s+(?:final\s+)?class\s+\w+/.test(sample) ||
+    /^\s*package\s+[\w.]+;/m.test(sample)
+  ) {
+    return 'java'
+  }
+  if (
+    /^\s*[-\w]+\s*:\s+.+$/m.test(sample) &&
+    !/[{};]/.test(sample.slice(0, 500))
+  ) {
+    return 'yaml'
+  }
+  if (/^\s*#\s+\S+/m.test(sample) || /^\s*```/.test(sample)) {
+    return 'markdown'
+  }
+  if (/[.#]?[-_a-zA-Z][-_a-zA-Z0-9]*\s*\{[^}]*:[^}]*\}/s.test(sample)) {
+    return 'css'
+  }
+
+  return 'unknown'
 }
 
 function sortTree(nodes: CodeEditorTreeNode[]) {
@@ -227,6 +512,168 @@ function sortTree(nodes: CodeEditorTreeNode[]) {
       sortTree(node.children as CodeEditorTreeNode[])
     }
   }
+}
+
+function detectLanguageFromPath(
+  relativePath: string | null
+): CodeEditorLanguage {
+  if (relativePath === null) {
+    return 'unknown'
+  }
+
+  const lower = relativePath.toLowerCase()
+  if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(lower)) {
+    return 'javascript'
+  }
+  if (lower.endsWith('.json')) {
+    return 'json'
+  }
+  if (/\.(html|htm)$/.test(lower)) {
+    return 'html'
+  }
+  if (/\.(css|scss|sass|less)$/.test(lower)) {
+    return 'css'
+  }
+  if (/\.(md|markdown)$/.test(lower)) {
+    return 'markdown'
+  }
+  if (lower.endsWith('.py')) {
+    return 'python'
+  }
+  if (/\.(c|cc|cpp|cxx|h|hpp)$/.test(lower)) {
+    return 'cpp'
+  }
+  if (lower.endsWith('.java')) {
+    return 'java'
+  }
+  if (lower.endsWith('.go')) {
+    return 'go'
+  }
+  if (lower.endsWith('.rs')) {
+    return 'rust'
+  }
+  if (/\.(yml|yaml)$/.test(lower)) {
+    return 'yaml'
+  }
+
+  return 'unknown'
+}
+
+type LineDiffOperation =
+  | { readonly kind: 'context'; readonly text: string }
+  | { readonly kind: 'removed'; readonly text: string }
+  | { readonly kind: 'added'; readonly text: string }
+
+function createLineDiffOperations(
+  oldLines: ReadonlyArray<string>,
+  newLines: ReadonlyArray<string>
+): ReadonlyArray<LineDiffOperation> {
+  let prefix = 0
+  while (
+    prefix < oldLines.length &&
+    prefix < newLines.length &&
+    oldLines[prefix] === newLines[prefix]
+  ) {
+    prefix++
+  }
+
+  let oldEnd = oldLines.length
+  let newEnd = newLines.length
+  while (
+    oldEnd > prefix &&
+    newEnd > prefix &&
+    oldLines[oldEnd - 1] === newLines[newEnd - 1]
+  ) {
+    oldEnd--
+    newEnd--
+  }
+
+  const operations = new Array<LineDiffOperation>()
+  for (let index = 0; index < prefix; index++) {
+    operations.push({ kind: 'context', text: oldLines[index] })
+  }
+
+  operations.push(
+    ...createMiddleLineDiffOperations(
+      oldLines.slice(prefix, oldEnd),
+      newLines.slice(prefix, newEnd)
+    )
+  )
+
+  for (let index = oldEnd; index < oldLines.length; index++) {
+    operations.push({ kind: 'context', text: oldLines[index] })
+  }
+
+  return operations
+}
+
+function createMiddleLineDiffOperations(
+  oldLines: ReadonlyArray<string>,
+  newLines: ReadonlyArray<string>
+): ReadonlyArray<LineDiffOperation> {
+  if (oldLines.length === 0) {
+    return newLines.map(text => ({ kind: 'added', text }))
+  }
+  if (newLines.length === 0) {
+    return oldLines.map(text => ({ kind: 'removed', text }))
+  }
+
+  const cellCount = oldLines.length * newLines.length
+  if (cellCount > 200000) {
+    return [
+      ...oldLines.map(text => ({ kind: 'removed' as const, text })),
+      ...newLines.map(text => ({ kind: 'added' as const, text })),
+    ]
+  }
+
+  const scores = Array.from({ length: oldLines.length + 1 }, () =>
+    new Array<number>(newLines.length + 1).fill(0)
+  )
+
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex--) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex--) {
+      scores[oldIndex][newIndex] =
+        oldLines[oldIndex] === newLines[newIndex]
+          ? scores[oldIndex + 1][newIndex + 1] + 1
+          : Math.max(
+              scores[oldIndex + 1][newIndex],
+              scores[oldIndex][newIndex + 1]
+            )
+    }
+  }
+
+  const operations = new Array<LineDiffOperation>()
+  let oldIndex = 0
+  let newIndex = 0
+
+  while (oldIndex < oldLines.length && newIndex < newLines.length) {
+    if (oldLines[oldIndex] === newLines[newIndex]) {
+      operations.push({ kind: 'context', text: oldLines[oldIndex] })
+      oldIndex++
+      newIndex++
+    } else if (
+      scores[oldIndex + 1][newIndex] >= scores[oldIndex][newIndex + 1]
+    ) {
+      operations.push({ kind: 'removed', text: oldLines[oldIndex] })
+      oldIndex++
+    } else {
+      operations.push({ kind: 'added', text: newLines[newIndex] })
+      newIndex++
+    }
+  }
+
+  while (oldIndex < oldLines.length) {
+    operations.push({ kind: 'removed', text: oldLines[oldIndex++] })
+  }
+  while (newIndex < newLines.length) {
+    operations.push({ kind: 'added', text: newLines[newIndex++] })
+  }
+
+  return operations
+}
+
+function splitEditorLines(text: string) {
+  return normalizeEditorText(text).split('\n')
 }
 
 function createSearchExpression(

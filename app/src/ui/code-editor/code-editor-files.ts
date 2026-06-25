@@ -10,10 +10,18 @@ import {
 
 const maxPreviewBlobBytes = 5 * 1024 * 1024
 
-export async function listRepositoryFiles(repository: Repository) {
+export interface ICodeEditorFileListOptions {
+  readonly ignoredPaths: ReadonlyArray<string>
+  readonly showIgnoredPaths: boolean
+}
+
+export async function listRepositoryFiles(
+  repository: Repository,
+  options: ICodeEditorFileListOptions
+) {
   return invokeWebUIRPC<ReadonlyArray<string>>(
     'codeEditor.listRepositoryFiles',
-    [repository.path]
+    [repository.path, options]
   )
 }
 

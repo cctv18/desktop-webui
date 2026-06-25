@@ -33,6 +33,21 @@
     }
   }
 
+  .panel-toolbar-section {
+    display: flex;
+    flex: 0 0 auto;
+    min-width: 0;
+
+    & > .toolbar-dropdown {
+      width: 100%;
+      flex-grow: 0;
+
+      &.resizable {
+        flex-grow: 0;
+      }
+    }
+  }
+
   .toolbar-button {
     &.resizable {
       // Fill the available height of the parent
@@ -60,6 +75,9 @@
       &.resizable {
         width: 100%;
       }
+    }
+    &.panel-toolbar-button {
+      width: 100%;
     }
     &.toolbar-dropdown-arrow-button {
       width: 39px;

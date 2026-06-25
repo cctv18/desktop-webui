@@ -8,6 +8,7 @@ import {
   defaultKeymap,
   deleteLine,
   history,
+  historyField,
   historyKeymap,
   indentWithTab,
 } from '@codemirror/commands'
@@ -22,6 +23,7 @@ import {
 import { Compartment, EditorState, Extension } from '@codemirror/state'
 import {
   Decoration,
+  type DOMEventHandlers,
   EditorView,
   ViewUpdate,
   drawSelection,
@@ -46,6 +48,8 @@ import { yaml } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { ApplicationTheme } from '../lib/application-theme'
 import {
+  type CodeEditorLanguage,
+  detectLanguageFromPathAndContent,
   findSearchMatches,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
@@ -54,6 +58,7 @@ import {
 interface ICodeMirrorEditorProps {
   readonly value: string
   readonly relativePath: string | null
+  readonly stateStorageKey: string
   readonly searchQuery: string
   readonly searchOptions: ICodeEditorSearchOptions
   readonly searchMatches: ReadonlyArray<ICodeEditorSearchMatch>
@@ -82,10 +87,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
 
     this.view = new EditorView({
       parent,
-      state: EditorState.create({
-        doc: this.props.value,
-        extensions: this.getExtensions(),
-      }),
+      state: this.createEditorState(),
     })
 
     this.focusActiveMatch()
@@ -93,6 +95,13 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
 
   public componentDidUpdate(previousProps: ICodeMirrorEditorProps) {
     if (this.view === null) {
+      return
+    }
+
+    if (previousProps.stateStorageKey !== this.props.stateStorageKey) {
+      this.writeCachedEditorState(previousProps.stateStorageKey)
+      this.view.setState(this.createEditorState())
+      this.focusActiveMatch()
       return
     }
 
@@ -110,13 +119,19 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
             insert: this.props.value,
           },
         })
+        this.writeCachedEditorState()
       }
     }
 
-    if (previousProps.relativePath !== this.props.relativePath) {
+    if (
+      getLanguage(previousProps.relativePath, previousProps.value) !==
+      getLanguage(this.props.relativePath, this.props.value)
+    ) {
       this.view.dispatch({
         effects: this.languageCompartment.reconfigure(
-          getLanguageExtension(this.props.relativePath)
+          getLanguageExtension(
+            getLanguage(this.props.relativePath, this.props.value)
+          )
         ),
       })
     }
@@ -156,6 +171,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
   }
 
   public componentWillUnmount() {
+    this.writeCachedEditorState()
     this.view?.destroy()
     this.view = null
   }
@@ -195,6 +211,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
       drawSelection(),
       dropCursor(),
       rectangularSelection(),
+      EditorView.domEventHandlers(disabledDragDropHandlers),
       indentOnInput(),
       bracketMatching(),
       closeBrackets(),
@@ -225,7 +242,9 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
       ]),
       EditorView.updateListener.of(this.onEditorUpdated),
       this.languageCompartment.of(
-        getLanguageExtension(this.props.relativePath)
+        getLanguageExtension(
+          getLanguage(this.props.relativePath, this.props.value)
+        )
       ),
       this.preferencesCompartment.of(
         getPreferenceExtensions(
@@ -251,11 +270,61 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
 
     if (this.ignoreNextUpdate) {
       this.ignoreNextUpdate = false
+      this.writeCachedEditorState()
       return
     }
 
     this.props.onChange(update.state.doc.toString())
+    this.writeCachedEditorState()
   }
+
+  private createEditorState() {
+    const cachedState = readCachedEditorState(this.props.stateStorageKey)
+    const extensions = this.getExtensions()
+
+    if (cachedState !== null) {
+      try {
+        const state = EditorState.fromJSON(
+          cachedState,
+          { extensions },
+          { history: historyField }
+        )
+
+        if (state.doc.toString() === this.props.value) {
+          return state
+        }
+      } catch {
+        removeCachedEditorState(this.props.stateStorageKey)
+      }
+    }
+
+    return EditorState.create({
+      doc: this.props.value,
+      extensions,
+    })
+  }
+
+  private writeCachedEditorState(key = this.props.stateStorageKey) {
+    if (this.view === null) {
+      return
+    }
+
+    writeCachedEditorState(
+      key,
+      this.view.state.toJSON({ history: historyField })
+    )
+  }
+}
+
+const disabledDragDropHandlers: DOMEventHandlers<unknown> = {
+  dragstart: event => {
+    event.preventDefault()
+    return true
+  },
+  drop: event => {
+    event.preventDefault()
+    return true
+  },
 }
 
 function getPreferenceExtensions(
@@ -273,9 +342,16 @@ function getPreferenceExtensions(
       },
       '.cm-scroller': {
         fontFamily: 'var(--font-family-monospace)',
+        overflow: 'auto',
+        maxWidth: '100%',
       },
       '.cm-content': {
         caretColor: 'var(--text-color)',
+        fontFamily: 'var(--font-family-monospace)',
+        userSelect: 'text',
+      },
+      '.cm-line': {
+        fontFamily: 'var(--font-family-monospace)',
       },
       '.cm-gutters': {
         backgroundColor: 'var(--box-alt-background-color)',
@@ -332,48 +408,63 @@ function getSearchHighlightExtension(
   })
 }
 
-function getLanguageExtension(relativePath: string | null): Extension {
-  if (relativePath === null) {
-    return []
-  }
+function getLanguage(
+  relativePath: string | null,
+  contents: string
+): CodeEditorLanguage {
+  return detectLanguageFromPathAndContent(relativePath, contents)
+}
 
-  const lower = relativePath.toLowerCase()
-  if (/\.(ts|tsx)$/.test(lower)) {
-    return javascript({ typescript: true, jsx: lower.endsWith('.tsx') })
+function getLanguageExtension(language: CodeEditorLanguage): Extension {
+  switch (language) {
+    case 'javascript':
+      return javascript({ typescript: true, jsx: true })
+    case 'json':
+      return json()
+    case 'html':
+      return html()
+    case 'css':
+      return css()
+    case 'markdown':
+      return markdown()
+    case 'python':
+      return python()
+    case 'cpp':
+      return cpp()
+    case 'java':
+      return java()
+    case 'go':
+      return go()
+    case 'rust':
+      return rust()
+    case 'yaml':
+      return yaml()
+    case 'unknown':
+      return []
   }
-  if (/\.(js|jsx|mjs|cjs)$/.test(lower)) {
-    return javascript({ jsx: lower.endsWith('.jsx') })
-  }
-  if (lower.endsWith('.json')) {
-    return json()
-  }
-  if (/\.(html|htm)$/.test(lower)) {
-    return html()
-  }
-  if (/\.(css|scss|sass|less)$/.test(lower)) {
-    return css()
-  }
-  if (/\.(md|markdown)$/.test(lower)) {
-    return markdown()
-  }
-  if (lower.endsWith('.py')) {
-    return python()
-  }
-  if (/\.(c|cc|cpp|cxx|h|hpp)$/.test(lower)) {
-    return cpp()
-  }
-  if (lower.endsWith('.java')) {
-    return java()
-  }
-  if (lower.endsWith('.go')) {
-    return go()
-  }
-  if (lower.endsWith('.rs')) {
-    return rust()
-  }
-  if (/\.(yml|yaml)$/.test(lower)) {
-    return yaml()
-  }
+}
 
-  return []
+function readCachedEditorState(key: string): unknown | null {
+  try {
+    const raw = sessionStorage.getItem(key)
+    return raw === null ? null : JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function writeCachedEditorState(key: string, value: unknown) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Ignore storage quota errors. The editor still keeps its in-memory history.
+  }
+}
+
+function removeCachedEditorState(key: string) {
+  try {
+    sessionStorage.removeItem(key)
+  } catch {
+    // Ignore storage errors while recovering from stale cached state.
+  }
 }

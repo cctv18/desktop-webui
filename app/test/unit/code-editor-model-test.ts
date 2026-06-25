@@ -4,9 +4,13 @@ import { describe, it } from 'node:test'
 import {
   buildFileTreeFromPaths,
   createCodeEditorDraftKey,
+  createUnifiedDiff,
   detectLineEnding,
+  detectLanguageFromPathAndContent,
+  filterRepositoryFilePaths,
   findSearchMatches,
   normalizeRepositoryRelativePath,
+  parseIgnoredPathList,
 } from '../../src/ui/code-editor/code-editor-model'
 
 describe('Code editor model helpers', () => {
@@ -73,6 +77,76 @@ describe('Code editor model helpers', () => {
         useRegex: true,
       }).length,
       2
+    )
+  })
+
+  it('creates stable line diffs when a line is deleted', () => {
+    const diff = createUnifiedDiff(
+      ['alpha', 'beta', 'gamma', 'delta'].join('\n'),
+      ['alpha', 'gamma', 'delta'].join('\n'),
+      'src/example.ts'
+    )
+
+    assert.ok(diff.includes('-beta'))
+    assert.ok(diff.includes(' gamma'))
+    assert.ok(diff.includes(' delta'))
+    assert.ok(!diff.includes('-gamma'))
+    assert.ok(!diff.includes('+gamma'))
+  })
+
+  it('filters repository paths with editable ignore patterns', () => {
+    const paths = [
+      'src/app.ts',
+      'node_modules/pkg/index.js',
+      'dist/app.js',
+      'docs/readme.md',
+    ]
+
+    assert.deepEqual(
+      filterRepositoryFilePaths(paths, ['node_modules', 'dist'], false),
+      ['docs/readme.md', 'src/app.ts']
+    )
+
+    assert.deepEqual(
+      filterRepositoryFilePaths(paths, ['node_modules', 'dist'], true),
+      [
+        'dist/app.js',
+        'docs/readme.md',
+        'node_modules/pkg/index.js',
+        'src/app.ts',
+      ]
+    )
+  })
+
+  it('parses ignored path lists from user editable text', () => {
+    assert.deepEqual(parseIgnoredPathList('node_modules, dist\n.git\n'), [
+      'node_modules',
+      'dist',
+      '.git',
+    ])
+  })
+
+  it('detects likely languages from code content when extensions are unknown', () => {
+    assert.equal(
+      detectLanguageFromPathAndContent(
+        'script.tool',
+        '#!/usr/bin/env python\nprint("hi")'
+      ),
+      'python'
+    )
+    assert.equal(
+      detectLanguageFromPathAndContent(
+        'component.view',
+        'import React from "react"\nexport const A = () => <div />'
+      ),
+      'javascript'
+    )
+    assert.equal(
+      detectLanguageFromPathAndContent(
+        'program.source',
+        '#include <iostream>\nint main() { return 0; }'
+      ),
+      'cpp'
     )
   })
 })

@@ -56,6 +56,7 @@ import {
   BranchDropdown,
   WorktreeDropdown,
   RevertProgress,
+  ToolbarButtonStyle,
 } from './toolbar'
 import { iconForRepository, Octicon, OcticonSymbol } from './octicons'
 import * as octicons from './octicons/octicons.generated'
@@ -3338,6 +3339,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
   private onRepositoryDropdownStateChanged = (newState: DropdownState) => {
     if (newState === 'open') {
+      this.panelDropdownState = 'closed'
       this.props.dispatcher.showFoldout({ type: FoldoutType.Repository })
     } else {
       this.props.dispatcher.closeFoldout(FoldoutType.Repository)
@@ -3470,6 +3472,9 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 
   private onPanelDropdownStateChanged = (newState: DropdownState) => {
+    if (newState === 'open') {
+      this.props.dispatcher.closeCurrentFoldout()
+    }
     this.panelDropdownState = newState
     this.forceUpdate()
   }
@@ -3485,18 +3490,25 @@ export class App extends React.Component<IAppProps, IAppState> {
         ? 'Code Editor'
         : 'Commit management'
 
+    const width = clamp(this.state.pushPullButtonWidth)
+
     return (
-      <ToolbarDropdown
-        icon={octicons.columns}
-        title="Panel"
-        description={label}
-        tooltip="Switch repository panel"
-        dropdownState={this.panelDropdownState}
-        onDropdownStateChanged={this.onPanelDropdownStateChanged}
-        dropdownContentRenderer={this.renderPanelSwitcher}
-        foldoutStyleOverrides={{ width: 240 }}
-        enableFocusTrap={this.state.currentPopup === null}
-      />
+      <div className="panel-toolbar-section" style={{ width }}>
+        <ToolbarDropdown
+          className="panel-button"
+          buttonClassName="panel-toolbar-button"
+          icon={octicons.columns}
+          title="Panel"
+          description={label}
+          tooltip="Switch repository panel"
+          dropdownState={this.panelDropdownState}
+          onDropdownStateChanged={this.onPanelDropdownStateChanged}
+          dropdownContentRenderer={this.renderPanelSwitcher}
+          foldoutStyleOverrides={{ width: 240 }}
+          enableFocusTrap={this.state.currentPopup === null}
+          style={ToolbarButtonStyle.Subtitle}
+        />
+      </div>
     )
   }
 
@@ -3677,6 +3689,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
   private onPushPullDropdownStateChanged = (newState: DropdownState) => {
     if (newState === 'open') {
+      this.panelDropdownState = 'closed'
       this.props.dispatcher.showFoldout({ type: FoldoutType.PushPull })
     } else {
       this.props.dispatcher.closeFoldout(FoldoutType.PushPull)
@@ -3685,6 +3698,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
   private onBranchDropdownStateChanged = (newState: DropdownState) => {
     if (newState === 'open') {
+      this.panelDropdownState = 'closed'
       this.props.dispatcher.showFoldout({ type: FoldoutType.Branch })
     } else {
       this.props.dispatcher.closeFoldout(FoldoutType.Branch)
@@ -3693,6 +3707,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
   private onWorktreeDropdownStateChanged = (newState: DropdownState) => {
     if (newState === 'open') {
+      this.panelDropdownState = 'closed'
       this.props.dispatcher.showFoldout({ type: FoldoutType.Worktree })
     } else {
       this.props.dispatcher.closeFoldout(FoldoutType.Worktree)

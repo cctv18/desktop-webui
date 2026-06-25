@@ -6,20 +6,25 @@ import { TipState } from '../../models/tip'
 import { ApplicationTheme } from '../lib/application-theme'
 import { Octicon } from '../octicons'
 import * as octicons from '../octicons/octicons.generated'
-import { TabBar } from '../tab-bar'
+import { TabBar, TabBarType } from '../tab-bar'
 import {
   buildFileTreeFromPaths,
   CodeEditorLineEnding,
   CodeEditorTreeNode,
   createCodeEditorDraftKey,
+  createSideBySideDiffRows,
   createUnifiedDiff,
+  defaultCodeEditorIgnoredPaths,
   detectLineEnding,
   findSearchMatches,
+  ICodeEditorSideBySideDiffRow,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
   normalizeEditorText,
+  parseIgnoredPathList,
   replaceAllSearchMatches,
   replaceSearchMatch,
+  serializeIgnoredPathList,
 } from './code-editor-model'
 import {
   listRepositoryFiles,
@@ -51,6 +56,18 @@ interface ICodeEditorDraft {
 interface ICodeEditorPreferences {
   readonly fontSize: number
   readonly lineWrapping: boolean
+  readonly diffMode: CodeEditorDiffMode
+  readonly ignoredPaths: ReadonlyArray<string>
+  readonly showIgnoredPaths: boolean
+}
+
+type CodeEditorDiffMode = 'unified' | 'split'
+
+interface ICodeEditorSession {
+  readonly selectedPath: string | null
+  readonly expandedDirectoryPaths: ReadonlyArray<string>
+  readonly treeVisible: boolean
+  readonly activeTab: 'edit' | 'preview'
 }
 
 interface ICodeEditorPanelState {
@@ -67,6 +84,8 @@ interface ICodeEditorPanelState {
   readonly searchOptions: ICodeEditorSearchOptions
   readonly activeSearchMatchIndex: number
   readonly pendingDraft: ICodeEditorDraft | null
+  readonly ignoreSettingsVisible: boolean
+  readonly ignoredPathListText: string
   readonly treeVisible: boolean
   readonly loadingTree: boolean
   readonly loadingFile: boolean
@@ -76,6 +95,8 @@ interface ICodeEditorPanelState {
 }
 
 const editorPreferenceKey = 'gitdesk-webui:code-editor:preferences'
+const editorSessionStoragePrefix = 'gitdesk-webui:code-editor:session:'
+const editorStateStoragePrefix = 'gitdesk-webui:code-editor:state:'
 
 export class CodeEditorPanel extends React.Component<
   ICodeEditorPanelProps,
@@ -88,15 +109,21 @@ export class CodeEditorPanel extends React.Component<
   public constructor(props: ICodeEditorPanelProps) {
     super(props)
 
+    const preferences = readPreferences()
+    const session = readSession(
+      props.repository.path,
+      getBranchKey(props.repositoryState)
+    )
+
     this.state = {
       fileTree: [],
-      expandedDirectoryPaths: new Set(),
-      selectedPath: null,
+      expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
+      selectedPath: session.selectedPath,
       diskContents: '',
       headContents: '',
       editorContents: '',
       lineEnding: 'lf',
-      activeTab: 'edit',
+      activeTab: session.activeTab,
       searchQuery: '',
       replacement: '',
       searchOptions: {
@@ -106,18 +133,22 @@ export class CodeEditorPanel extends React.Component<
       },
       activeSearchMatchIndex: 0,
       pendingDraft: null,
-      treeVisible: true,
+      ignoreSettingsVisible: false,
+      ignoredPathListText: serializeIgnoredPathList(preferences.ignoredPaths),
+      treeVisible: session.treeVisible,
       loadingTree: false,
       loadingFile: false,
       saving: false,
       error: null,
-      preferences: readPreferences(),
+      preferences,
     }
   }
 
   public componentDidMount() {
     this.refreshRepositoryTree()
-    this.openRequestedFileIfNeeded()
+    if (!this.openRequestedFileIfNeeded() && this.state.selectedPath !== null) {
+      this.openFile(this.state.selectedPath)
+    }
   }
 
   public componentDidUpdate(previousProps: ICodeEditorPanelProps) {
@@ -126,14 +157,40 @@ export class CodeEditorPanel extends React.Component<
       getBranchKey(previousProps.repositoryState) !==
         getBranchKey(this.props.repositoryState)
     ) {
-      this.refreshRepositoryTree()
-
-      if (this.state.selectedPath !== null) {
-        this.openFile(this.state.selectedPath)
-      }
+      const session = readSession(
+        this.props.repository.path,
+        getBranchKey(this.props.repositoryState)
+      )
+      this.setState(
+        {
+          expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
+          selectedPath: session.selectedPath,
+          diskContents: '',
+          headContents: '',
+          editorContents: '',
+          pendingDraft: null,
+          activeTab: session.activeTab,
+          treeVisible: session.treeVisible,
+          activeSearchMatchIndex: 0,
+        },
+        () => {
+          this.refreshRepositoryTree()
+          if (
+            !this.openRequestedFileIfNeeded() &&
+            this.state.selectedPath !== null
+          ) {
+            this.openFile(this.state.selectedPath)
+          }
+        }
+      )
+      return
     }
 
     this.openRequestedFileIfNeeded()
+  }
+
+  public componentWillUnmount() {
+    this.persistSession()
   }
 
   public render() {
@@ -157,10 +214,26 @@ export class CodeEditorPanel extends React.Component<
       <div className="code-editor-sidebar">
         <div className="code-editor-sidebar-header">
           <span>Files</span>
-          <button type="button" onClick={this.toggleTreeVisible}>
-            <Octicon symbol={octicons.sidebarCollapse} />
-          </button>
+          <div className="code-editor-sidebar-buttons">
+            <button
+              type="button"
+              className="code-editor-icon-button"
+              onClick={this.toggleIgnoreSettingsVisible}
+              title="File tree options"
+            >
+              <Octicon symbol={octicons.gear} />
+            </button>
+            <button
+              type="button"
+              className="code-editor-icon-button"
+              onClick={this.toggleTreeVisible}
+              title="Hide file tree"
+            >
+              <Octicon symbol={octicons.sidebarCollapse} />
+            </button>
+          </div>
         </div>
+        {this.renderIgnoreSettings()}
         <div className="code-editor-file-tree">
           {this.state.loadingTree ? (
             <div className="code-editor-empty">Loading files...</div>
@@ -168,6 +241,33 @@ export class CodeEditorPanel extends React.Component<
             this.renderTreeNodes(this.state.fileTree, 0)
           )}
         </div>
+      </div>
+    )
+  }
+
+  private renderIgnoreSettings() {
+    if (!this.state.ignoreSettingsVisible) {
+      return null
+    }
+
+    return (
+      <div className="code-editor-ignore-settings">
+        <label>
+          <input
+            type="checkbox"
+            checked={this.state.preferences.showIgnoredPaths}
+            onChange={this.onShowIgnoredPathsChanged}
+          />
+          <span>Show ignored paths</span>
+        </label>
+        <label>
+          <span>Ignored paths</span>
+          <textarea
+            value={this.state.ignoredPathListText}
+            spellCheck={false}
+            onChange={this.onIgnoredPathListChanged}
+          />
+        </label>
       </div>
     )
   }
@@ -181,7 +281,12 @@ export class CodeEditorPanel extends React.Component<
       <div className="code-editor-header">
         <div className="code-editor-title-row">
           {!this.state.treeVisible && (
-            <button type="button" onClick={this.toggleTreeVisible}>
+            <button
+              type="button"
+              className="code-editor-icon-button"
+              onClick={this.toggleTreeVisible}
+              title="Show file tree"
+            >
               <Octicon symbol={octicons.sidebarExpand} />
             </button>
           )}
@@ -208,6 +313,7 @@ export class CodeEditorPanel extends React.Component<
         </div>
         <div className="code-editor-controls-row">
           <TabBar
+            type={TabBarType.Switch}
             selectedIndex={this.state.activeTab === 'edit' ? 0 : 1}
             onTabClicked={this.onTabClicked}
           >
@@ -245,7 +351,7 @@ export class CodeEditorPanel extends React.Component<
             </label>
           </div>
         </div>
-        {this.renderSearchRow(matches)}
+        {this.state.activeTab === 'edit' ? this.renderSearchRow(matches) : null}
         {this.renderDraftPrompt()}
         {this.state.error !== null && (
           <div className="code-editor-error">{this.state.error}</div>
@@ -363,9 +469,28 @@ export class CodeEditorPanel extends React.Component<
       return <div className="code-editor-empty-state">Loading file...</div>
     }
 
-    return this.state.activeTab === 'edit'
-      ? this.renderEditor()
-      : this.renderPreview()
+    return (
+      <div className="code-editor-body">
+        <div
+          className={
+            this.state.activeTab === 'edit'
+              ? 'code-editor-edit-pane active'
+              : 'code-editor-edit-pane hidden'
+          }
+        >
+          {this.renderEditor()}
+        </div>
+        <div
+          className={
+            this.state.activeTab === 'preview'
+              ? 'code-editor-preview-pane active'
+              : 'code-editor-preview-pane hidden'
+          }
+        >
+          {this.renderPreview()}
+        </div>
+      </div>
+    )
   }
 
   private renderEditor() {
@@ -376,6 +501,11 @@ export class CodeEditorPanel extends React.Component<
         ref={this.editorRef}
         value={this.state.editorContents}
         relativePath={this.state.selectedPath}
+        stateStorageKey={createCodeEditorStateStorageKey(
+          this.props.repository.path,
+          getBranchKey(this.props.repositoryState),
+          this.state.selectedPath
+        )}
         searchQuery={this.state.searchQuery}
         searchOptions={this.state.searchOptions}
         searchMatches={matches}
@@ -392,6 +522,50 @@ export class CodeEditorPanel extends React.Component<
 
   private renderPreview() {
     const selectedPath = this.state.selectedPath ?? ''
+
+    return (
+      <div className="code-editor-preview">
+        {this.renderPreviewToolbar()}
+        {this.state.preferences.diffMode === 'split'
+          ? this.renderSplitDiff()
+          : this.renderUnifiedDiff(selectedPath)}
+      </div>
+    )
+  }
+
+  private renderPreviewToolbar() {
+    return (
+      <div className="code-editor-preview-toolbar">
+        <span>Diff view</span>
+        <div className="code-editor-segmented-control">
+          <button
+            type="button"
+            className={
+              this.state.preferences.diffMode === 'unified'
+                ? 'selected'
+                : undefined
+            }
+            onClick={() => this.onDiffModeChanged('unified')}
+          >
+            Unified
+          </button>
+          <button
+            type="button"
+            className={
+              this.state.preferences.diffMode === 'split'
+                ? 'selected'
+                : undefined
+            }
+            onClick={() => this.onDiffModeChanged('split')}
+          >
+            Split
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  private renderUnifiedDiff(selectedPath: string) {
     const diff = createUnifiedDiff(
       normalizeEditorText(this.state.headContents),
       this.state.editorContents,
@@ -399,7 +573,7 @@ export class CodeEditorPanel extends React.Component<
     )
 
     return (
-      <pre className="code-editor-diff-preview">
+      <pre className="code-editor-diff-preview unified">
         {diff.split('\n').map((line, index) => (
           <div
             key={index}
@@ -417,6 +591,36 @@ export class CodeEditorPanel extends React.Component<
           </div>
         ))}
       </pre>
+    )
+  }
+
+  private renderSplitDiff() {
+    const rows = createSideBySideDiffRows(
+      normalizeEditorText(this.state.headContents),
+      this.state.editorContents
+    )
+
+    return (
+      <div className="code-editor-split-diff">
+        <div className="code-editor-split-diff-header">
+          <span>HEAD</span>
+          <span>Current</span>
+        </div>
+        <div className="code-editor-split-diff-rows">
+          {rows.map((row, index) => this.renderSplitDiffRow(row, index))}
+        </div>
+      </div>
+    )
+  }
+
+  private renderSplitDiffRow(row: ICodeEditorSideBySideDiffRow, index: number) {
+    return (
+      <div key={index} className={`code-editor-split-diff-row ${row.kind}`}>
+        <span className="line-number">{row.oldLineNumber ?? ''}</span>
+        <pre className="old">{row.oldText || ' '}</pre>
+        <span className="line-number">{row.newLineNumber ?? ''}</span>
+        <pre className="new">{row.newText || ' '}</pre>
+      </div>
     )
   }
 
@@ -487,7 +691,10 @@ export class CodeEditorPanel extends React.Component<
     this.setState({ loadingTree: true, error: null })
 
     try {
-      const files = await listRepositoryFiles(this.props.repository)
+      const files = await listRepositoryFiles(this.props.repository, {
+        ignoredPaths: this.state.preferences.ignoredPaths,
+        showIgnoredPaths: this.state.preferences.showIgnoredPaths,
+      })
       this.setState({
         fileTree: buildFileTreeFromPaths(files),
         loadingTree: false,
@@ -503,11 +710,12 @@ export class CodeEditorPanel extends React.Component<
   private openRequestedFileIfNeeded() {
     const request = this.props.openFileRequest
     if (request === null || request.id === this.lastOpenRequestID) {
-      return
+      return false
     }
 
     this.lastOpenRequestID = request.id
     this.openFile(request.relativePath)
+    return true
   }
 
   private openFile = async (relativePath: string) => {
@@ -536,16 +744,19 @@ export class CodeEditorPanel extends React.Component<
       )
 
       this.expandParents(relativePath)
-      this.setState({
-        diskContents: editorContents,
-        headContents: normalizeEditorText(headContents),
-        editorContents,
-        lineEnding,
-        pendingDraft:
-          draft !== null && draft.contents !== editorContents ? draft : null,
-        loadingFile: false,
-        activeSearchMatchIndex: 0,
-      })
+      this.setState(
+        {
+          diskContents: editorContents,
+          headContents: normalizeEditorText(headContents),
+          editorContents,
+          lineEnding,
+          pendingDraft:
+            draft !== null && draft.contents !== editorContents ? draft : null,
+          loadingFile: false,
+          activeSearchMatchIndex: 0,
+        },
+        () => this.persistSession()
+      )
     } catch (error) {
       this.setState({
         loadingFile: false,
@@ -564,7 +775,9 @@ export class CodeEditorPanel extends React.Component<
     for (let index = 1; index < parts.length; index++) {
       expanded.add(parts.slice(0, index).join('/'))
     }
-    this.setState({ expandedDirectoryPaths: expanded })
+    this.setState({ expandedDirectoryPaths: expanded }, () =>
+      this.persistSession()
+    )
   }
 
   private toggleDirectory = (path: string) => {
@@ -574,15 +787,28 @@ export class CodeEditorPanel extends React.Component<
     } else {
       expanded.add(path)
     }
-    this.setState({ expandedDirectoryPaths: expanded })
+    this.setState({ expandedDirectoryPaths: expanded }, () =>
+      this.persistSession()
+    )
   }
 
   private toggleTreeVisible = () => {
-    this.setState(state => ({ treeVisible: !state.treeVisible }))
+    this.setState(
+      state => ({ treeVisible: !state.treeVisible }),
+      () => this.persistSession()
+    )
+  }
+
+  private toggleIgnoreSettingsVisible = () => {
+    this.setState(state => ({
+      ignoreSettingsVisible: !state.ignoreSettingsVisible,
+    }))
   }
 
   private onTabClicked = (tab: number) => {
-    this.setState({ activeTab: tab === 0 ? 'edit' : 'preview' })
+    this.setState({ activeTab: tab === 0 ? 'edit' : 'preview' }, () =>
+      this.persistSession()
+    )
   }
 
   private onEditorChanged = (contents: string) => {
@@ -802,6 +1028,36 @@ export class CodeEditorPanel extends React.Component<
     })
   }
 
+  private onDiffModeChanged = (diffMode: CodeEditorDiffMode) => {
+    this.updatePreferences({ ...this.state.preferences, diffMode })
+  }
+
+  private onShowIgnoredPathsChanged = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    this.updatePreferences(
+      {
+        ...this.state.preferences,
+        showIgnoredPaths: event.currentTarget.checked,
+      },
+      this.refreshRepositoryTree
+    )
+  }
+
+  private onIgnoredPathListChanged = (
+    event: React.ChangeEvent<HTMLTextAreaElement>
+  ) => {
+    const ignoredPathListText = event.currentTarget.value
+    this.setState({ ignoredPathListText })
+    this.updatePreferences(
+      {
+        ...this.state.preferences,
+        ignoredPaths: parseIgnoredPathList(ignoredPathListText),
+      },
+      this.refreshRepositoryTree
+    )
+  }
+
   private onSearchCaseChanged = (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -838,9 +1094,29 @@ export class CodeEditorPanel extends React.Component<
     })
   }
 
-  private updatePreferences(preferences: ICodeEditorPreferences) {
+  private updatePreferences(
+    preferences: ICodeEditorPreferences,
+    callback?: () => void
+  ) {
     localStorage.setItem(editorPreferenceKey, JSON.stringify(preferences))
-    this.setState({ preferences })
+    this.setState({ preferences }, callback)
+  }
+
+  private persistSession() {
+    const session: ICodeEditorSession = {
+      selectedPath: this.state.selectedPath,
+      expandedDirectoryPaths: Array.from(this.state.expandedDirectoryPaths),
+      treeVisible: this.state.treeVisible,
+      activeTab: this.state.activeTab,
+    }
+
+    localStorage.setItem(
+      createCodeEditorSessionKey(
+        this.props.repository.path,
+        getBranchKey(this.props.repositoryState)
+      ),
+      JSON.stringify(session)
+    )
   }
 }
 
@@ -901,7 +1177,13 @@ function removeDraft(
 }
 
 function readPreferences(): ICodeEditorPreferences {
-  const fallback = { fontSize: 13, lineWrapping: false }
+  const fallback: ICodeEditorPreferences = {
+    fontSize: 13,
+    lineWrapping: false,
+    diffMode: 'unified',
+    ignoredPaths: defaultCodeEditorIgnoredPaths,
+    showIgnoredPaths: false,
+  }
   const raw = localStorage.getItem(editorPreferenceKey)
   if (raw === null) {
     return fallback
@@ -916,10 +1198,67 @@ function readPreferences(): ICodeEditorPreferences {
         24
       ),
       lineWrapping: value.lineWrapping === true,
+      diffMode: value.diffMode === 'split' ? 'split' : 'unified',
+      ignoredPaths: Array.isArray(value.ignoredPaths)
+        ? parseIgnoredPathList(value.ignoredPaths.join('\n'))
+        : fallback.ignoredPaths,
+      showIgnoredPaths: value.showIgnoredPaths === true,
     }
   } catch {
     return fallback
   }
+}
+
+function readSession(
+  repositoryPath: string,
+  branchName: string
+): ICodeEditorSession {
+  const fallback: ICodeEditorSession = {
+    selectedPath: null,
+    expandedDirectoryPaths: [],
+    treeVisible: true,
+    activeTab: 'edit',
+  }
+  const raw = localStorage.getItem(
+    createCodeEditorSessionKey(repositoryPath, branchName)
+  )
+  if (raw === null) {
+    return fallback
+  }
+
+  try {
+    const value = JSON.parse(raw) as Partial<ICodeEditorSession>
+    return {
+      selectedPath:
+        typeof value.selectedPath === 'string' ? value.selectedPath : null,
+      expandedDirectoryPaths: Array.isArray(value.expandedDirectoryPaths)
+        ? value.expandedDirectoryPaths.filter(path => typeof path === 'string')
+        : [],
+      treeVisible: value.treeVisible !== false,
+      activeTab: value.activeTab === 'preview' ? 'preview' : 'edit',
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function createCodeEditorSessionKey(
+  repositoryPath: string,
+  branchName: string
+) {
+  return `${editorSessionStoragePrefix}${encodeURIComponent(
+    JSON.stringify({ repositoryPath, branchName })
+  )}`
+}
+
+function createCodeEditorStateStorageKey(
+  repositoryPath: string,
+  branchName: string,
+  relativePath: string | null
+) {
+  return `${editorStateStoragePrefix}${encodeURIComponent(
+    JSON.stringify({ repositoryPath, branchName, relativePath })
+  )}`
 }
 
 function clampNumber(value: number, min: number, max: number) {

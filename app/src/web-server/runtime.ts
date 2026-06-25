@@ -42,6 +42,11 @@ import { NotificationsStore } from '../lib/stores/notifications-store'
 import { NotificationsDebugStore } from '../lib/stores/notifications-debug-store'
 import { Dispatcher } from '../ui/dispatcher'
 import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
+import {
+  filterRepositoryFilePaths,
+  isRepositoryPathIgnored,
+  normalizeRepositoryRelativePath,
+} from '../ui/code-editor/code-editor-model'
 import { IAppState } from '../lib/app-state'
 import { reviveFromWeb } from '../lib/webui-serialization'
 import { Account } from '../models/account'
@@ -102,6 +107,11 @@ interface ICreateLocalRepositoryOptions {
 interface IClipboardCommand {
   readonly command: string
   readonly args: ReadonlyArray<string>
+}
+
+interface ICodeEditorFileListOptions {
+  readonly ignoredPaths: ReadonlyArray<string>
+  readonly showIgnoredPaths: boolean
 }
 
 class ServerActivityMonitor implements IUiActivityMonitor {
@@ -304,8 +314,10 @@ export class WebRuntime {
         }
       case 'codeEditor':
         return {
-          listRepositoryFiles: (path: string) =>
-            this.listAllowedRepositoryFiles(path),
+          listRepositoryFiles: (
+            path: string,
+            options?: ICodeEditorFileListOptions
+          ) => this.listAllowedRepositoryFiles(path, options),
         }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
@@ -578,23 +590,16 @@ export class WebRuntime {
     return pathExistsOnDisk(path)
   }
 
-  private async listAllowedRepositoryFiles(path: string) {
+  private async listAllowedRepositoryFiles(
+    path: string,
+    options?: ICodeEditorFileListOptions
+  ) {
     await this.pathGuard.assertAllowed(path)
 
     const root = Path.resolve(path)
     const files = new Array<string>()
-    const ignoredDirectoryNames = new Set([
-      '.git',
-      '.hg',
-      '.svn',
-      'node_modules',
-      'out',
-      'dist',
-      'build',
-      '.next',
-      '.vite',
-      'coverage',
-    ])
+    const ignoredPaths = options?.ignoredPaths ?? []
+    const showIgnoredPaths = options?.showIgnoredPaths === true
     const maxFiles = 10000
 
     const walk = async (directory: string) => {
@@ -615,11 +620,18 @@ export class WebRuntime {
           return
         }
 
-        if (ignoredDirectoryNames.has(entry)) {
+        const fullPath = Path.join(directory, entry)
+        const relativePath = normalizeRepositoryRelativePath(
+          Path.relative(root, fullPath)
+        )
+
+        if (
+          !showIgnoredPaths &&
+          isRepositoryPathIgnored(relativePath, ignoredPaths)
+        ) {
           continue
         }
 
-        const fullPath = Path.join(directory, entry)
         let stats
         try {
           stats = await lstat(fullPath)
@@ -637,14 +649,13 @@ export class WebRuntime {
         }
 
         if (stats.isFile()) {
-          files.push(Path.relative(root, fullPath).replace(/\\/g, '/'))
+          files.push(relativePath)
         }
       }
     }
 
     await walk(root)
-    files.sort((a, b) => a.localeCompare(b))
-    return files
+    return filterRepositoryFilePaths(files, ignoredPaths, showIgnoredPaths)
   }
 
   private async writeClipboardText(text: string) {
