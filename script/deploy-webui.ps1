@@ -1,23 +1,8 @@
 param(
-  [string]$HostAddress = "127.0.0.1",
-  [int]$Port = 8080,
-  [string]$PublicUrl = "",
-  [string]$AllowedRoot = "",
-  [string]$Platform = "all",
-  [switch]$DebugBuild,
   [switch]$DeleteSourceMaps,
   [switch]$Production,
-  [switch]$NoStart,
   [switch]$SkipInstall,
   [switch]$FullNativeInstall,
-  [string]$GitPath = "",
-  [string]$GitDirectory = "",
-  [string]$GitExecPath = "",
-  [string]$GitConfigGlobal = "",
-  [string]$DataDir = "",
-  [string]$StaticRoot = "",
-  [string]$CopilotCliPath = "",
-  [string]$OAuthCallbackUrl = "",
   [string]$LogFile = "out\webui-deploy.log"
 )
 
@@ -28,10 +13,6 @@ $PreferredNodeMajor = 22
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
 Set-Location $ProjectRoot
-
-if ([string]::IsNullOrWhiteSpace($AllowedRoot)) {
-  $AllowedRoot = $ProjectRoot.Path
-}
 
 $script:ResolvedLogFile = $null
 
@@ -95,47 +76,6 @@ function Refresh-Path {
 function Test-Command {
   param([string]$Name)
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
-}
-
-function Get-NormalizedPlatform {
-  param([string]$Value)
-
-  switch ($Value.ToLowerInvariant()) {
-    "" { return "all" }
-    "all" { return "all" }
-    "current" { return (& node -p "process.platform").Trim() }
-    "host" { return (& node -p "process.platform").Trim() }
-    "windows" { return "win32" }
-    "win" { return "win32" }
-    "win32" { return "win32" }
-    "mac" { return "darwin" }
-    "macos" { return "darwin" }
-    "darwin" { return "darwin" }
-    "linux" { return "linux" }
-    "android" { return "android" }
-    default {
-      throw "Unsupported platform: $Value. Use all, current, win32/windows, linux, darwin/macos, or android."
-    }
-  }
-}
-
-function Test-ShouldIgnoreYarnPlatform {
-  param([string]$NormalizedPlatform)
-
-  $hostPlatform = (& node -p "process.platform").Trim()
-  return $NormalizedPlatform -eq "all" -or $NormalizedPlatform -ne $hostPlatform
-}
-
-function Get-DefaultPublicUrl {
-  $urlHost = $HostAddress
-
-  if ($urlHost -eq "0.0.0.0" -or $urlHost -eq "::" -or $urlHost -eq "[::]") {
-    $urlHost = "127.0.0.1"
-  } elseif ($urlHost.Contains(":") -and -not $urlHost.StartsWith("[")) {
-    $urlHost = "[$urlHost]"
-  }
-
-  return "http://$urlHost`:$Port"
 }
 
 function Invoke-Step {
@@ -285,7 +225,6 @@ trap {
 Start-DeployLog
 
 Write-Step "Project root: $($ProjectRoot.Path)"
-Write-Step "Allowed root: $AllowedRoot"
 if (-not [string]::IsNullOrWhiteSpace($script:ResolvedLogFile)) {
   Write-Step "Detailed WebUI build log: $script:ResolvedLogFile"
   Write-Step "Detailed WebUI diagnostics log: $env:WEBUI_DIAGNOSTICS_LOG"
@@ -293,15 +232,10 @@ if (-not [string]::IsNullOrWhiteSpace($script:ResolvedLogFile)) {
 }
 
 Ensure-Node
-$Platform = Get-NormalizedPlatform $Platform
-$ignoreYarnPlatform = Test-ShouldIgnoreYarnPlatform $Platform
-$env:WEBUI_TARGET_PLATFORM = $Platform
-$env:WEBUI_DEBUG_BUILD = if ($DebugBuild) { "1" } else { "0" }
+$ignoreYarnPlatform = $true
 $env:WEBUI_DELETE_SOURCE_MAPS = if ($DeleteSourceMaps) { "1" } else { "0" }
-$debugBuildText = if ($DebugBuild) { "yes" } else { "no" }
 $deleteSourceMapsText = if ($DeleteSourceMaps) { "yes" } else { "no" }
-Write-Step "Target platform: $Platform"
-Write-Step "Debug build: $debugBuildText"
+Write-Step "Target platform: all supported WebUI runtimes"
 Write-Step "Delete source maps: $deleteSourceMapsText"
 Ensure-Yarn
 
@@ -340,68 +274,11 @@ if (-not (Test-Path $serverBundle)) {
   throw "WebUI server bundle was not produced: $serverBundle"
 }
 
-if ($NoStart) {
-  Write-Step "Build completed. Skipping server start because -NoStart was set."
-  Stop-DeployLog
-  exit 0
-}
-
 $runScript = Join-Path $ProjectRoot "out\run-webui.ps1"
 if (-not (Test-Path $runScript)) {
   throw "WebUI runtime launcher was not produced: $runScript"
 }
 
-if ([string]::IsNullOrWhiteSpace($PublicUrl)) {
-  $PublicUrl = Get-DefaultPublicUrl
-}
-
-Write-Step "Starting GitDesk WebUI via out\run-webui.ps1 on $PublicUrl"
-$runArguments = @(
-  "-HostAddress",
-  $HostAddress,
-  "-Port",
-  "$Port",
-  "-PublicUrl",
-  $PublicUrl,
-  "-AllowedRoot",
-  $AllowedRoot
-)
-
-if (-not [string]::IsNullOrWhiteSpace($GitPath)) {
-  $runArguments += @("-GitPath", $GitPath)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($GitDirectory)) {
-  $runArguments += @("-GitDirectory", $GitDirectory)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($GitExecPath)) {
-  $runArguments += @("-GitExecPath", $GitExecPath)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($GitConfigGlobal)) {
-  $runArguments += @("-GitConfigGlobal", $GitConfigGlobal)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($DataDir)) {
-  $runArguments += @("-DataDir", $DataDir)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($StaticRoot)) {
-  $runArguments += @("-StaticRoot", $StaticRoot)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($CopilotCliPath)) {
-  $runArguments += @("-CopilotCliPath", $CopilotCliPath)
-}
-
-if (-not [string]::IsNullOrWhiteSpace($OAuthCallbackUrl)) {
-  $runArguments += @("-OAuthCallbackUrl", $OAuthCallbackUrl)
-}
-
-& $runScript @runArguments
-if ($LASTEXITCODE -ne 0) {
-  throw "Command failed with exit code ${LASTEXITCODE}: $runScript $($runArguments -join ' ')"
-}
+Write-Step "WebUI build completed. Configure out\server.conf, then start with out\run-webui.ps1."
 
 Stop-DeployLog

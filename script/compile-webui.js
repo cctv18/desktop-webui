@@ -2,16 +2,18 @@
 
 const fs = require('fs')
 const path = require('path')
+const {
+  copyFilteredDirectory,
+  parseCompileOptions,
+  removeDeployDiagnosticsOnSuccess,
+  shouldCopyWebStaticAsset,
+  writeEmptyWebEmojiMetadata,
+} = require('./webui-build-utils')
 
 const compileOptions = parseCompileOptions(process.argv.slice(2))
 const mode = compileOptions.mode
 const projectRoot = path.resolve(__dirname, '..')
 const outDir = path.join(projectRoot, 'out')
-const targetPlatform = normalizeTargetPlatform(
-  compileOptions.platform || process.env.WEBUI_TARGET_PLATFORM || 'all'
-)
-const debugBuild =
-  compileOptions.debugBuild || isTruthy(process.env.WEBUI_DEBUG_BUILD)
 const deleteSourceMaps =
   compileOptions.deleteSourceMaps ||
   isTruthy(process.env.WEBUI_DELETE_SOURCE_MAPS)
@@ -79,6 +81,14 @@ webpack(config, (error, stats) => {
 
   if (!stats.hasErrors()) {
     copyWebRuntimeAssets()
+    if (removeDeployDiagnosticsOnSuccess(outDir, true)) {
+      appendBuildLog(
+        `Removed successful deploy diagnostics JSON: ${path.join(
+          outDir,
+          'webui-deploy.diagnostics.json'
+        )}\n`
+      )
+    }
   }
 
   emitLogPaths()
@@ -136,92 +146,6 @@ function getSummaryStatsOptions() {
   }
 }
 
-function parseCompileOptions(values) {
-  const result = {
-    mode: 'development',
-    platform: undefined,
-    debugBuild: false,
-    deleteSourceMaps: false,
-  }
-
-  for (let index = 0; index < values.length; index++) {
-    const value = values[index]
-
-    if (value === 'production' || value === 'development') {
-      result.mode = value
-      continue
-    }
-
-    if (value === '--debug-build' || value === '--debugBuild') {
-      result.debugBuild = true
-      continue
-    }
-
-    if (
-      value === '--delete-source-maps' ||
-      value === '--deleteSourceMaps' ||
-      value === '--delete-sourcemaps'
-    ) {
-      result.deleteSourceMaps = true
-      continue
-    }
-
-    if (value === '--platform' || value === '--Platform') {
-      result.platform = values[index + 1]
-      index++
-      continue
-    }
-
-    if (value.startsWith('--platform=')) {
-      result.platform = value.slice('--platform='.length)
-      continue
-    }
-
-    if (value.startsWith('--Platform=')) {
-      result.platform = value.slice('--Platform='.length)
-    }
-  }
-
-  return result
-}
-
-function normalizeTargetPlatform(value) {
-  const normalized = `${value || 'all'}`.trim().toLowerCase()
-
-  switch (normalized) {
-    case '':
-    case 'all':
-      return 'all'
-    case 'current':
-    case 'host':
-      return normalizeNodePlatform(process.platform)
-    case 'windows':
-    case 'win':
-    case 'win32':
-      return 'win32'
-    case 'mac':
-    case 'macos':
-    case 'darwin':
-      return 'darwin'
-    case 'linux':
-      return 'linux'
-    case 'android':
-      return 'android'
-    default:
-      throw new Error(
-        `Unsupported WebUI target platform "${value}". Use all, current, win32/windows, linux, darwin/macos, or android.`
-      )
-  }
-}
-
-function normalizeNodePlatform(value) {
-  return value === 'win32' || value === 'darwin' || value === 'linux'
-    ? value
-    : value === 'android'
-      ? 'android'
-      : 'all'
-}
-
 function isTruthy(value) {
   if (value === undefined) {
     return false
@@ -245,8 +169,6 @@ function initializeLogs() {
     '================ WEBUI BUILD LOG ================',
     `Started at: ${new Date().toISOString()}`,
     `Mode: ${mode}`,
-    `Target platform: ${targetPlatform}`,
-    `Debug build: ${debugBuild ? 'yes' : 'no'}`,
     `Delete source maps: ${deleteSourceMaps ? 'yes' : 'no'}`,
     `Project root: ${projectRoot}`,
     `Working directory: ${process.cwd()}`,
@@ -269,9 +191,7 @@ function copyWebRuntimeAssets() {
     'static',
     process.platform
   )
-  const emojiImagesSource = path.join(projectRoot, 'gemoji', 'images', 'emoji')
   const emojiImagesDestination = path.join(webOutDir, 'emoji')
-  const emojiJsonSource = path.join(projectRoot, 'gemoji', 'db', 'emoji.json')
   const emojiJsonDestination = path.join(webOutDir, 'emoji.json')
   const faviconSource = path.join(commonStaticSource, 'favicon.ico')
   const faviconDestination = path.join(webOutDir, 'favicon.ico')
@@ -282,27 +202,24 @@ function copyWebRuntimeAssets() {
 
   fs.rmSync(staticDestination, { recursive: true, force: true })
   if (fs.existsSync(platformStaticSource)) {
-    fs.cpSync(platformStaticSource, staticDestination, {
-      recursive: true,
-      verbatimSymlinks: true,
-    })
+    copyFilteredDirectory(
+      platformStaticSource,
+      staticDestination,
+      shouldCopyWebStaticAsset
+    )
   }
-  fs.cpSync(commonStaticSource, staticDestination, {
-    recursive: true,
-    force: false,
-    verbatimSymlinks: true,
-  })
+  copyFilteredDirectory(
+    commonStaticSource,
+    staticDestination,
+    shouldCopyWebStaticAsset
+  )
   if (fs.existsSync(faviconSource)) {
     fs.copyFileSync(faviconSource, faviconDestination)
   }
   generateLicenseMetadata(webOutDir)
 
   fs.rmSync(emojiImagesDestination, { recursive: true, force: true })
-  fs.cpSync(emojiImagesSource, emojiImagesDestination, {
-    recursive: true,
-    verbatimSymlinks: true,
-  })
-  fs.copyFileSync(emojiJsonSource, emojiJsonDestination)
+  writeEmptyWebEmojiMetadata(emojiJsonDestination)
 
   fs.rmSync(copilotDestination, { recursive: true, force: true })
 
@@ -310,14 +227,14 @@ function copyWebRuntimeAssets() {
     '================ WEBUI RUNTIME ASSETS ================',
     `Copied static assets to: ${staticDestination}`,
     `Copied favicon to: ${faviconDestination}`,
-    `Copied emoji images to: ${emojiImagesDestination}`,
-    `Copied emoji metadata to: ${emojiJsonDestination}`,
+    `Removed emoji image bundle from: ${emojiImagesDestination}`,
+    `Wrote empty emoji metadata placeholder to: ${emojiJsonDestination}`,
     `Wrote runtime config to: ${runtimeFiles.serverConfigPath}`,
     `Wrote log timestamp hook to: ${runtimeFiles.timestampHookPath}`,
     `Wrote POSIX launcher to: ${runtimeFiles.shellLauncherPath}`,
     `Wrote PowerShell launcher to: ${runtimeFiles.powershellLauncherPath}`,
     `Copilot CLI will be installed by the runtime launcher when needed: ${copilotRuntimePackageSpec}`,
-    `Runtime cleanup: ${debugBuild ? 'disabled (DebugBuild)' : 'enabled'}`,
+    'Runtime package pruning: disabled; WebUI builds are cross-platform by default',
     `Source map cleanup: ${deleteSourceMaps ? 'enabled' : 'disabled'}`,
     '============== END WEBUI RUNTIME ASSETS ==============',
     '',
@@ -328,30 +245,6 @@ function copyWebRuntimeAssets() {
   if (deleteSourceMaps) {
     removeSourceMaps(outDir)
   }
-
-  if (!debugBuild) {
-    pruneReleaseRuntimeAssets()
-  }
-}
-
-function getCopilotPackagePlatformsForTarget(platform) {
-  switch (platform) {
-    case 'win32':
-      return ['win32']
-    case 'darwin':
-      return ['darwin']
-    case 'android':
-      return ['linux', 'linuxmusl']
-    case 'linux':
-      return ['linux', 'linuxmusl']
-    default:
-      return ['darwin', 'linux', 'linuxmusl', 'win32']
-  }
-}
-
-function pruneReleaseRuntimeAssets() {
-  pruneCopilotPlatformDirectories(path.join(outDir, 'copilot'))
-  pruneCopilotExecutablePackages()
 }
 
 function removeSourceMaps(directory) {
@@ -366,63 +259,6 @@ function removeSourceMaps(directory) {
       removeSourceMaps(fullPath)
     } else if (entry.isFile() && entry.name.endsWith('.map')) {
       fs.rmSync(fullPath, { force: true })
-    }
-  }
-}
-
-function pruneCopilotPlatformDirectories(rootDir) {
-  if (targetPlatform === 'all' || !fs.existsSync(rootDir)) {
-    return
-  }
-
-  const allowedPlatforms = new Set(
-    getCopilotPackagePlatformsForTarget(targetPlatform)
-  )
-  const platformTokens = ['darwin', 'linux', 'linuxmusl', 'win32']
-
-  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
-    const fullPath = path.join(rootDir, entry.name)
-
-    if (!entry.isDirectory()) {
-      continue
-    }
-
-    const matchedPlatform = platformTokens.find(platform =>
-      entry.name.includes(platform)
-    )
-
-    if (
-      matchedPlatform !== undefined &&
-      !allowedPlatforms.has(matchedPlatform)
-    ) {
-      fs.rmSync(fullPath, { recursive: true, force: true })
-      continue
-    }
-
-    pruneCopilotPlatformDirectories(fullPath)
-  }
-}
-
-function pruneCopilotExecutablePackages() {
-  if (targetPlatform === 'all') {
-    return
-  }
-
-  const githubDestinationDir = path.join(outDir, 'node_modules', '@github')
-
-  if (!fs.existsSync(githubDestinationDir)) {
-    return
-  }
-
-  for (const entry of fs.readdirSync(githubDestinationDir)) {
-    if (
-      isCopilotExecutablePackage(entry) &&
-      !shouldIncludeCopilotExecutablePackage(entry)
-    ) {
-      fs.rmSync(path.join(githubDestinationDir, entry), {
-        recursive: true,
-        force: true,
-      })
     }
   }
 }
@@ -1019,7 +855,7 @@ function getRunWebUIPowerShell() {
     'function Disable-ConsoleQuickEdit {',
     '  if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) { return }',
     '',
-    '  $signature = @\'',
+    "  $signature = @'",
     'using System;',
     'using System.Runtime.InteropServices;',
     'public static class GitDeskConsoleMode {',
@@ -1027,7 +863,7 @@ function getRunWebUIPowerShell() {
     '  [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out int lpMode);',
     '  [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, int dwMode);',
     '}',
-    '\'@',
+    "'@",
     '',
     '  try {',
     '    Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue | Out-Null',
@@ -1140,10 +976,10 @@ function getRunWebUIPowerShell() {
     '  param([string[]]$Arguments)',
     '',
     '  return ($Arguments | ForEach-Object {',
-    '    if ($_ -notmatch \'[\\s"]\') {',
+    "    if ($_ -notmatch '[\\s\"]') {",
     '      $_',
     '    } else {',
-    '      \'"\' + ($_ -replace \'(\\\\*)"\', \'$1$1\\"\') + \'"\'',
+    "      '\"' + ($_ -replace '(\\\\*)\"', '$1$1\\\"') + '\"'",
     '    }',
     '  }) -join " "',
     '}',
@@ -1245,7 +1081,7 @@ function getRunWebUIPowerShell() {
     '    try {',
     '      & $writeLine "[$((Get-Date).ToString(\'yyyy-MM-dd HH:mm:ss.ffffff\'))] GitDesk WebUI backend failed to start or log output: $($_.Exception.ToString())"',
     '    } catch {',
-      '      [Console]::Error.WriteLine($_.Exception.ToString())',
+    '      [Console]::Error.WriteLine($_.Exception.ToString())',
     '    }',
     '    return 1',
     '  } finally {',
@@ -1414,7 +1250,7 @@ function getRunWebUIPowerShell() {
     '  }',
     '',
     '  if ($null -ne $nodeCommand) {',
-    "    $nodeMajor = [int](& $nodeCommand.Source -p \"Number(process.versions.node.split('.')[0])\")",
+    '    $nodeMajor = [int](& $nodeCommand.Source -p "Number(process.versions.node.split(\'.\')[0])")',
     '  } else {',
     '    $nodeMajor = 0',
     '  }',
@@ -1428,7 +1264,7 @@ function getRunWebUIPowerShell() {
     '    throw "Node.js is still not available. Open a new PowerShell window and rerun this script."',
     '  }',
     '',
-    "  $nodeMajor = [int](& $nodeCommand.Source -p \"Number(process.versions.node.split('.')[0])\")",
+    '  $nodeMajor = [int](& $nodeCommand.Source -p "Number(process.versions.node.split(\'.\')[0])")',
     `  if ($nodeMajor -lt ${requiredRuntimeNodeMajor}) {`,
     `    throw "Node.js ${requiredRuntimeNodeMajor} or newer is required. Node.js ${preferredRuntimeNodeMajor} LTS is recommended."`,
     '  }',
@@ -1633,11 +1469,7 @@ function getRunWebUIPowerShell() {
 }
 
 function generateLicenseMetadata(webOutDir) {
-  const chooseALicense = path.join(
-    webOutDir,
-    'static',
-    'choosealicense.com'
-  )
+  const chooseALicense = path.join(webOutDir, 'static', 'choosealicense.com')
   const licensesDir = path.join(chooseALicense, '_licenses')
 
   if (!fs.existsSync(licensesDir)) {
@@ -1824,7 +1656,10 @@ function emitDiagnostics(diagnostics) {
   emitDiagnosticText(header, 'log')
 
   diagnostics.forEach((entry, index) => {
-    emitDiagnosticText(formatDiagnostic(entry, index, diagnostics.length), 'log')
+    emitDiagnosticText(
+      formatDiagnostic(entry, index, diagnostics.length),
+      'log'
+    )
   })
 
   emitDiagnosticText(
@@ -2031,9 +1866,11 @@ function requireLocal(moduleName) {
         'Install project dependencies from the desktop-webui root first:',
         '  yarn install --network-timeout 600000',
         '',
-        'Or run one of the WebUI deployment helpers:',
-        '  powershell -ExecutionPolicy Bypass -File script/deploy-webui.ps1 -NoStart',
-        '  bash script/deploy-webui.sh --no-start',
+        'Then run a WebUI build:',
+        '  yarn run compile:webui',
+        '  yarn run compile:webui:prod',
+        '',
+        'For deploy/runtime configuration, see docs/technical/webui-build-and-deploy.md.',
         '',
         `Build log: ${buildLogPath}`,
       ].join('\n')

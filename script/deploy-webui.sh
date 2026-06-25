@@ -2,27 +2,12 @@
 
 set -euo pipefail
 
-HOST_ADDRESS="127.0.0.1"
-PORT="8080"
-PUBLIC_URL=""
-ALLOWED_ROOT=""
-PLATFORM="all"
-DEBUG_BUILD=0
 DELETE_SOURCE_MAPS=0
 PRODUCTION=0
-NO_START=0
 SKIP_INSTALL=0
 FULL_NATIVE_INSTALL=0
 SKIP_SYSTEM_PROXY=0
 LOG_FILE="out/webui-deploy.log"
-GIT_PATH=""
-GIT_DIRECTORY=""
-GIT_EXEC_PATH_ARG=""
-GIT_CONFIG_GLOBAL=""
-DATA_DIR=""
-STATIC_ROOT=""
-COPILOT_CLI_PATH=""
-OAUTH_CALLBACK_URL=""
 REQUIRED_NODE_MAJOR=20
 PREFERRED_NODE_MAJOR=22
 
@@ -34,29 +19,11 @@ usage() {
 Usage: bash script/deploy-webui.sh [options]
 
 Options:
-  --host <host>            Host to bind. Default: 127.0.0.1
-  --port <port>            Port to bind. Default: 8080
-  --public-url <url>       Browser-visible WebUI base URL
-  --allowed-root <path>    Filesystem root WebUI may access. Default: project root
-  --platform <platform>    Target runtime platform: all, current, win32/windows, linux, darwin/macos, android. Default: all
-  --debug-build            Keep raw build output and unpruned runtime files
   --delete-source-maps     Delete generated .map files after the build
   --production             Build production WebUI bundle
-  --no-start               Install and compile only
   --skip-install           Do not run yarn install; fail if local deps are missing
   --full-native-install    Run package install scripts for full Desktop native dependencies
   --skip-system-proxy      Do not auto-configure proxy variables during deploy
-  --git-path <path>        Exact Git executable path for the WebUI server
-  --git-directory <path>   Git installation root for the WebUI server
-  --git-exec-path <path>   Git helper directory, e.g. /usr/lib/git-core
-  --git-config-global <path>
-                           Independent WebUI global gitconfig path
-  --data-dir <path>        Independent WebUI account/token data directory
-  --static-root <path>     Web static asset directory
-  --copilot-cli-path <path>
-                           Copilot CLI index.js path or package directory
-  --oauth-callback-url <url>
-                           GitHub OAuth callback URL
   --log-file <path>        Write full deploy output to a log file. Default: out/webui-deploy.log
   --no-log-file            Do not write a deploy log file
   -h, --help               Show this help
@@ -65,40 +32,12 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --host)
-      HOST_ADDRESS="$2"
-      shift 2
-      ;;
-    --port)
-      PORT="$2"
-      shift 2
-      ;;
-    --public-url)
-      PUBLIC_URL="$2"
-      shift 2
-      ;;
-    --allowed-root)
-      ALLOWED_ROOT="$2"
-      shift 2
-      ;;
-    --platform)
-      PLATFORM="$2"
-      shift 2
-      ;;
-    --debug-build)
-      DEBUG_BUILD=1
-      shift
-      ;;
     --delete-source-maps|--delete-sourcemaps)
       DELETE_SOURCE_MAPS=1
       shift
       ;;
     --production)
       PRODUCTION=1
-      shift
-      ;;
-    --no-start)
-      NO_START=1
       shift
       ;;
     --skip-install)
@@ -112,38 +51,6 @@ while [[ $# -gt 0 ]]; do
     --skip-system-proxy)
       SKIP_SYSTEM_PROXY=1
       shift
-      ;;
-    --git-path)
-      GIT_PATH="$2"
-      shift 2
-      ;;
-    --git-directory)
-      GIT_DIRECTORY="$2"
-      shift 2
-      ;;
-    --git-exec-path)
-      GIT_EXEC_PATH_ARG="$2"
-      shift 2
-      ;;
-    --git-config-global)
-      GIT_CONFIG_GLOBAL="$2"
-      shift 2
-      ;;
-    --data-dir)
-      DATA_DIR="$2"
-      shift 2
-      ;;
-    --static-root)
-      STATIC_ROOT="$2"
-      shift 2
-      ;;
-    --copilot-cli-path)
-      COPILOT_CLI_PATH="$2"
-      shift 2
-      ;;
-    --oauth-callback-url)
-      OAUTH_CALLBACK_URL="$2"
-      shift 2
       ;;
     --log-file)
       LOG_FILE="$2"
@@ -164,10 +71,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-if [[ -z "$ALLOWED_ROOT" ]]; then
-  ALLOWED_ROOT="$PROJECT_ROOT"
-fi
 
 step() {
   printf '==> %s\n' "$1"
@@ -304,54 +207,6 @@ initialize_proxy_environment() {
   if set_proxy_environment "$system_proxy"; then
     step "Detected system proxy for Node/Copilot: $system_proxy"
   fi
-}
-
-normalize_platform() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-    ""|all)
-      printf 'all'
-      ;;
-    current|host)
-      node -p "process.platform"
-      ;;
-    windows|win|win32)
-      printf 'win32'
-      ;;
-    mac|macos|darwin)
-      printf 'darwin'
-      ;;
-    linux)
-      printf 'linux'
-      ;;
-    android)
-      printf 'android'
-      ;;
-    *)
-      echo "Unsupported platform: $1" >&2
-      exit 1
-      ;;
-  esac
-}
-
-should_ignore_yarn_platform() {
-  local normalized_platform="$1"
-  local host_platform
-
-  host_platform="$(node -p "process.platform")"
-
-  [[ "$normalized_platform" == "all" || "$normalized_platform" != "$host_platform" ]]
-}
-
-default_public_url() {
-  local url_host="$HOST_ADDRESS"
-
-  if [[ "$url_host" == "0.0.0.0" || "$url_host" == "::" || "$url_host" == "[::]" ]]; then
-    url_host="127.0.0.1"
-  elif [[ "$url_host" == *:* && "$url_host" != \[* ]]; then
-    url_host="[$url_host]"
-  fi
-
-  printf 'http://%s:%s' "$url_host" "$PORT"
 }
 
 run() {
@@ -517,7 +372,6 @@ if [[ -n "$LOG_FILE" ]]; then
 fi
 
 step "Project root: $PROJECT_ROOT"
-step "Allowed root: $ALLOWED_ROOT"
 if [[ -n "$LOG_FILE" ]]; then
   step "Detailed WebUI build log: $WEBUI_BUILD_LOG"
   step "Detailed WebUI diagnostics log: $WEBUI_DIAGNOSTICS_LOG"
@@ -530,16 +384,9 @@ else
   initialize_proxy_environment
 fi
 ensure_node
-PLATFORM="$(normalize_platform "$PLATFORM")"
-YARN_IGNORE_PLATFORM=0
-if should_ignore_yarn_platform "$PLATFORM"; then
-  YARN_IGNORE_PLATFORM=1
-fi
-export WEBUI_TARGET_PLATFORM="$PLATFORM"
-export WEBUI_DEBUG_BUILD="$DEBUG_BUILD"
+YARN_IGNORE_PLATFORM=1
 export WEBUI_DELETE_SOURCE_MAPS="$DELETE_SOURCE_MAPS"
-step "Target platform: $PLATFORM"
-step "Debug build: $([[ "$DEBUG_BUILD" -eq 1 ]] && printf yes || printf no)"
+step "Target platform: all supported WebUI runtimes"
 step "Delete source maps: $([[ "$DELETE_SOURCE_MAPS" -eq 1 ]] && printf yes || printf no)"
 ensure_yarn
 
@@ -580,63 +427,13 @@ if [[ ! -f "$PROJECT_ROOT/out/web-server.js" ]]; then
   exit 1
 fi
 
-if [[ "$NO_START" -eq 1 ]]; then
-  step "Build completed. Skipping server start because --no-start was set."
-  exit 0
-fi
-
-runtime_script="$PROJECT_ROOT/out/run-webui.sh"
-if [[ ! -f "$runtime_script" ]]; then
-  echo "WebUI runtime launcher was not produced: $runtime_script" >&2
+if [[ ! -f "$PROJECT_ROOT/out/run-webui.sh" ]]; then
+  echo "WebUI runtime launcher was not produced: $PROJECT_ROOT/out/run-webui.sh" >&2
   exit 1
 fi
 
-if [[ ! -x "$runtime_script" ]]; then
-  chmod +x "$runtime_script" || true
+if [[ ! -x "$PROJECT_ROOT/out/run-webui.sh" ]]; then
+  chmod +x "$PROJECT_ROOT/out/run-webui.sh" || true
 fi
 
-if [[ -z "$PUBLIC_URL" ]]; then
-  PUBLIC_URL="$(default_public_url)"
-fi
-
-step "Starting GitDesk WebUI via out/run-webui.sh on $PUBLIC_URL"
-run_args=(
-  --host "$HOST_ADDRESS"
-  --port "$PORT"
-  --public-url "$PUBLIC_URL"
-  --allowedRoot "$ALLOWED_ROOT"
-)
-
-if [[ -n "$GIT_PATH" ]]; then
-  run_args+=(--git-path "$GIT_PATH")
-fi
-
-if [[ -n "$GIT_DIRECTORY" ]]; then
-  run_args+=(--git-directory "$GIT_DIRECTORY")
-fi
-
-if [[ -n "$GIT_EXEC_PATH_ARG" ]]; then
-  run_args+=(--git-exec-path "$GIT_EXEC_PATH_ARG")
-fi
-
-if [[ -n "$GIT_CONFIG_GLOBAL" ]]; then
-  run_args+=(--git-config-global "$GIT_CONFIG_GLOBAL")
-fi
-
-if [[ -n "$DATA_DIR" ]]; then
-  run_args+=(--data-dir "$DATA_DIR")
-fi
-
-if [[ -n "$STATIC_ROOT" ]]; then
-  run_args+=(--static-root "$STATIC_ROOT")
-fi
-
-if [[ -n "$COPILOT_CLI_PATH" ]]; then
-  run_args+=(--copilot-cli-path "$COPILOT_CLI_PATH")
-fi
-
-if [[ -n "$OAUTH_CALLBACK_URL" ]]; then
-  run_args+=(--oauth-callback-url "$OAUTH_CALLBACK_URL")
-fi
-
-run "$runtime_script" "${run_args[@]}"
+step "WebUI build completed. Configure out/server.conf, then start with out/run-webui.sh."
