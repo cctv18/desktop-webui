@@ -9,6 +9,7 @@ export type CodeEditorLanguage =
   | 'javascript'
   | 'json'
   | 'markdown'
+  | 'patch'
   | 'python'
   | 'rust'
   | 'yaml'
@@ -220,7 +221,14 @@ export function filterRepositoryFilePaths(
     .sort((a, b) => a.localeCompare(b))
 }
 
-export function detectLineEnding(text: string): CodeEditorLineEnding {
+export function detectLineEnding(
+  text: string,
+  fallback: CodeEditorLineEnding = 'lf'
+): CodeEditorLineEnding {
+  if (text.length === 0) {
+    return fallback
+  }
+
   return text.includes('\r\n') ? 'crlf' : 'lf'
 }
 
@@ -437,6 +445,7 @@ export function detectLanguageFromPathAndContent(
 
   const sample = normalizeEditorText(contents).trimStart().slice(0, 4000)
   const firstLine = sample.split('\n')[0] ?? ''
+  const codeSample = removeLikelyCommentOnlyLines(sample)
 
   if (/^#!.*\bpython(?:\d+(?:\.\d+)*)?\b/i.test(firstLine)) {
     return 'python'
@@ -447,6 +456,9 @@ export function detectLanguageFromPathAndContent(
   if (/^#!.*\b(?:sh|bash|zsh|fish)\b/i.test(firstLine)) {
     return 'unknown'
   }
+  if (looksLikePatch(sample)) {
+    return 'patch'
+  }
   if (/^\s*<!doctype\s+html/i.test(sample) || /<html[\s>]/i.test(sample)) {
     return 'html'
   }
@@ -454,44 +466,54 @@ export function detectLanguageFromPathAndContent(
     return 'json'
   }
   if (
-    /\b(import|export)\s.+from\s+['"]/.test(sample) ||
-    /\bconst\s+\w+\s*=/.test(sample) ||
-    /=>/.test(sample)
+    /\b(import|export)\s.+from\s+['"]/.test(codeSample) ||
+    /\bconst\s+\w+\s*=/.test(codeSample) ||
+    /=>/.test(codeSample)
   ) {
     return 'javascript'
   }
   if (
     /^\s*(from\s+\S+\s+import\s+\S+|import\s+\S+|def\s+\w+\(|class\s+\w+[:(])/m.test(
-      sample
+      codeSample
     )
   ) {
     return 'python'
   }
-  if (/^\s*package\s+\w+/m.test(sample) && /\bfunc\s+\w+\(/.test(sample)) {
+  if (
+    /^\s*package\s+\w+/m.test(codeSample) &&
+    /\bfunc\s+\w+\(/.test(codeSample)
+  ) {
     return 'go'
   }
-  if (/\bfn\s+\w+\s*\(/.test(sample) && /\b(let|use|pub|impl)\b/.test(sample)) {
+  if (
+    /\bfn\s+\w+\s*\(/.test(codeSample) &&
+    /\b(let|use|pub|impl)\b/.test(codeSample)
+  ) {
     return 'rust'
   }
-  if (/^\s*#include\s+[<"]/.test(sample) || /\bstd::\w+/.test(sample)) {
+  if (/^\s*#include\s+[<"]/.test(sample) || /\bstd::\w+/.test(codeSample)) {
     return 'cpp'
   }
   if (
-    /\bpublic\s+(?:final\s+)?class\s+\w+/.test(sample) ||
-    /^\s*package\s+[\w.]+;/m.test(sample)
+    /\bpublic\s+(?:final\s+)?class\s+\w+/.test(codeSample) ||
+    /^\s*package\s+[\w.]+;/m.test(codeSample)
   ) {
     return 'java'
   }
   if (
-    /^\s*[-\w]+\s*:\s+.+$/m.test(sample) &&
-    !/[{};]/.test(sample.slice(0, 500))
+    /^\s*[-\w]+\s*:\s+.+$/m.test(codeSample) &&
+    !/[{};]/.test(codeSample.slice(0, 500))
   ) {
     return 'yaml'
   }
   if (/^\s*#\s+\S+/m.test(sample) || /^\s*```/.test(sample)) {
     return 'markdown'
   }
-  if (/[.#]?[-_a-zA-Z][-_a-zA-Z0-9]*\s*\{[^}]*:[^}]*\}/s.test(sample)) {
+  if (
+    /(?:[.#][-_a-zA-Z][-_a-zA-Z0-9]*|[a-zA-Z][-_a-zA-Z0-9]*)\s*\{[^}]*:[^}]*\}/s.test(
+      codeSample
+    )
+  ) {
     return 'css'
   }
 
@@ -537,6 +559,9 @@ function detectLanguageFromPath(
   if (/\.(md|markdown)$/.test(lower)) {
     return 'markdown'
   }
+  if (/\.(diff|patch)$/.test(lower)) {
+    return 'patch'
+  }
   if (lower.endsWith('.py')) {
     return 'python'
   }
@@ -557,6 +582,29 @@ function detectLanguageFromPath(
   }
 
   return 'unknown'
+}
+
+function looksLikePatch(sample: string) {
+  return (
+    /^(diff --git|Index: )/m.test(sample) ||
+    /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(sample) ||
+    (/^---\s+\S+/m.test(sample) && /^\+\+\+\s+\S+/m.test(sample))
+  )
+}
+
+function removeLikelyCommentOnlyLines(sample: string) {
+  return sample
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trimStart()
+      return !(
+        trimmed.startsWith('//') ||
+        trimmed.startsWith('/*') ||
+        trimmed.startsWith('*') ||
+        (trimmed.startsWith('#') && !trimmed.startsWith('#include'))
+      )
+    })
+    .join('\n')
 }
 
 type LineDiffOperation =

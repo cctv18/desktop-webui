@@ -4,6 +4,7 @@ import * as Path from 'path'
 import { TransitionGroup, CSSTransition } from 'react-transition-group'
 import {
   IAppState,
+  IRepositoryState,
   RepositorySectionTab,
   FoldoutType,
   SelectionType,
@@ -35,7 +36,12 @@ import {
 } from '../models/repository'
 import { Branch } from '../models/branch'
 import { PreferencesTab } from '../models/preferences'
-import { findItemByAccessKey, itemIsSelectable } from '../models/app-menu'
+import {
+  findItemByAccessKey,
+  IMenu,
+  itemIsSelectable,
+  MenuItem,
+} from '../models/app-menu'
 import { Account, isDotComAccount } from '../models/account'
 import { TipState } from '../models/tip'
 import { CloneRepositoryTab } from '../models/clone-repository-tab'
@@ -222,6 +228,7 @@ import { RenameWorktreeDialog } from './worktrees/rename-worktree-dialog'
 import { DeleteWorktreeDialog } from './worktrees/delete-worktree-dialog'
 import { DeleteWorktreeFailedDialog } from './worktrees/delete-worktree-failed-dialog'
 import { WorktreeEntry } from '../models/worktree'
+import { pathExists } from '../lib/path-exists'
 
 const MinuteInMilliseconds = 1000 * 60
 const HourInMilliseconds = MinuteInMilliseconds * 60
@@ -262,7 +269,7 @@ export const bannerTransitionTimeout = { enter: 500, exit: 400 }
 const ReadyDelay = 100
 
 type RepositoryPanelKind = 'commit-management' | 'code-editor'
-const repositoryPanelStorageKey = 'gitdesk-webui:selected-repository-panel'
+const repositoryPanelStoragePrefix = 'gitdesk-webui:selected-repository-panel:'
 
 export class App extends React.Component<IAppProps, IAppState> {
   private loading = true
@@ -277,11 +284,11 @@ export class App extends React.Component<IAppProps, IAppState> {
   private updateIntervalHandle?: number
 
   private repositoryViewRef = React.createRef<RepositoryView>()
-  private selectedRepositoryPanel: RepositoryPanelKind =
-    readSelectedRepositoryPanel()
   private panelDropdownState: DropdownState = 'closed'
   private codeEditorOpenFileRequest: ICodeEditorOpenFileRequest | null = null
   private nextCodeEditorOpenFileRequestID = 1
+  private selectedCodeEditorMenuFileKey: string | null = null
+  private selectedCodeEditorMenuFileExists = false
 
   /**
    * Gets a value indicating whether or not we're currently showing a
@@ -543,7 +550,7 @@ export class App extends React.Component<IAppProps, IAppState> {
       case 'uninstall-windows-cli':
         return uninstallWindowsCLI()
       case 'open-external-editor':
-        return this.openCurrentRepositoryInExternalEditor()
+        return this.openSelectedRepositoryFileInCodeEditor()
       case 'open-with-external-editor':
         return this.showOpenWithExternalEditor()
       case 'select-all':
@@ -1093,6 +1100,11 @@ export class App extends React.Component<IAppProps, IAppState> {
     document.addEventListener('focus', this.onDocumentFocus, {
       capture: true,
     })
+    this.refreshSelectedCodeEditorMenuFileExists()
+  }
+
+  public componentDidUpdate() {
+    this.refreshSelectedCodeEditorMenuFileExists()
   }
 
   private onDocumentFocus = (event: FocusEvent) => {
@@ -1383,13 +1395,86 @@ export class App extends React.Component<IAppProps, IAppState> {
       : this.state.selectedExternalEditor ?? undefined
   }
 
-  private openCurrentRepositoryInExternalEditor() {
-    const repository = this.getRepository()
-    if (!repository) {
+  private async openSelectedRepositoryFileInCodeEditor() {
+    const selection = this.state.selectedState
+    if (selection === null || selection.type !== SelectionType.Repository) {
       return
     }
 
-    this.openInExternalEditor(repository)
+    const relativePath = this.getSelectedHistoryFilePathForCodeEditor()
+    if (relativePath === null) {
+      return
+    }
+
+    const fullPath = Path.join(selection.repository.path, relativePath)
+    if (!(await pathExists(fullPath))) {
+      return
+    }
+
+    this.openPathInCodeEditor(relativePath)
+  }
+
+  private getSelectedHistoryFilePathForCodeEditor(): string | null {
+    const selection = this.state.selectedState
+    if (selection === null || selection.type !== SelectionType.Repository) {
+      return null
+    }
+
+    if (selection.state.selectedSection !== RepositorySectionTab.History) {
+      return null
+    }
+
+    const file = selection.state.commitSelection.file
+    if (file === null || file.isDeleted()) {
+      return null
+    }
+
+    return file.path
+  }
+
+  private getSelectedCodeEditorMenuFileKey(): string | null {
+    const selection = this.state.selectedState
+    if (selection === null || selection.type !== SelectionType.Repository) {
+      return null
+    }
+
+    const relativePath = this.getSelectedHistoryFilePathForCodeEditor()
+    return relativePath === null
+      ? null
+      : Path.join(selection.repository.path, relativePath)
+  }
+
+  private async refreshSelectedCodeEditorMenuFileExists() {
+    const fileKey = this.getSelectedCodeEditorMenuFileKey()
+    if (fileKey === this.selectedCodeEditorMenuFileKey) {
+      return
+    }
+
+    this.selectedCodeEditorMenuFileKey = fileKey
+    this.selectedCodeEditorMenuFileExists = false
+
+    if (fileKey === null) {
+      this.forceUpdate()
+      return
+    }
+
+    const exists = await pathExists(fileKey)
+    if (this.selectedCodeEditorMenuFileKey !== fileKey) {
+      return
+    }
+
+    this.selectedCodeEditorMenuFileExists = exists
+    this.forceUpdate()
+  }
+
+  private getAppMenuStateWithCodeEditorFileAvailability() {
+    const shouldEnable =
+      this.getSelectedHistoryFilePathForCodeEditor() !== null &&
+      this.selectedCodeEditorMenuFileExists
+
+    return this.state.appMenuState.map(menu =>
+      setMenuItemEnabled(menu, 'open-external-editor', shouldEnable)
+    )
   }
 
   /**
@@ -1414,6 +1499,7 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
 
     const currentFoldout = this.state.currentFoldout
+    const appMenuState = this.getAppMenuStateWithCodeEditorFileAvailability()
 
     // AppMenuBar requires us to pass a strongly typed AppMenuFoldout state or
     // null if the AppMenu foldout is not currently active.
@@ -1424,7 +1510,7 @@ export class App extends React.Component<IAppProps, IAppState> {
 
     return (
       <AppMenuBar
-        appMenu={this.state.appMenuState}
+        appMenu={appMenuState}
         dispatcher={this.props.dispatcher}
         highlightAppMenuAccessKeys={this.state.highlightAccessKeys}
         foldoutState={foldoutState}
@@ -3265,10 +3351,6 @@ export class App extends React.Component<IAppProps, IAppState> {
     this.props.dispatcher.openShell(repository.path)
   }
 
-  private openFileInExternalEditor = (fullPath: string) => {
-    this.openPathInCodeEditor(fullPath)
-  }
-
   private openInExternalEditor = (
     repository: Repository | CloningRepository
   ) => {
@@ -3277,6 +3359,10 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
 
     this.props.dispatcher.openInExternalEditor(repository.path)
+  }
+
+  private openFileInExternalEditor = (fullPath: string) => {
+    this.openPathInCodeEditor(fullPath)
   }
 
   private openRepositoryInSelectedEditor = async (
@@ -3317,11 +3403,7 @@ export class App extends React.Component<IAppProps, IAppState> {
       return
     }
 
-    this.selectedRepositoryPanel = 'code-editor'
-    localStorage.setItem(
-      repositoryPanelStorageKey,
-      this.selectedRepositoryPanel
-    )
+    this.writeSelectedRepositoryPanel('code-editor')
     this.codeEditorOpenFileRequest = {
       id: this.nextCodeEditorOpenFileRequestID++,
       relativePath,
@@ -3485,9 +3567,10 @@ export class App extends React.Component<IAppProps, IAppState> {
       return null
     }
 
+    const selectedRepositoryPanel = this.getSelectedRepositoryPanel()
     const label =
-      this.selectedRepositoryPanel === 'code-editor'
-        ? 'Code Editor'
+      selectedRepositoryPanel === 'code-editor'
+        ? 'Code editor'
         : 'Commit management'
 
     const width = clamp(this.state.pushPullButtonWidth)
@@ -3504,7 +3587,6 @@ export class App extends React.Component<IAppProps, IAppState> {
           dropdownState={this.panelDropdownState}
           onDropdownStateChanged={this.onPanelDropdownStateChanged}
           dropdownContentRenderer={this.renderPanelSwitcher}
-          foldoutStyleOverrides={{ width: 240 }}
           enableFocusTrap={this.state.currentPopup === null}
           style={ToolbarButtonStyle.Subtitle}
         />
@@ -3513,12 +3595,14 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 
   private renderPanelSwitcher = () => {
+    const selectedRepositoryPanel = this.getSelectedRepositoryPanel()
+
     return (
       <div className="panel-switcher-menu">
         <button
           type="button"
           className={
-            this.selectedRepositoryPanel === 'commit-management'
+            selectedRepositoryPanel === 'commit-management'
               ? 'selected'
               : undefined
           }
@@ -3530,24 +3614,46 @@ export class App extends React.Component<IAppProps, IAppState> {
         <button
           type="button"
           className={
-            this.selectedRepositoryPanel === 'code-editor'
-              ? 'selected'
-              : undefined
+            selectedRepositoryPanel === 'code-editor' ? 'selected' : undefined
           }
           onClick={() => this.selectRepositoryPanel('code-editor')}
         >
           <Octicon symbol={octicons.code} />
-          <span>Code Editor</span>
+          <span>Code editor</span>
         </button>
       </div>
     )
   }
 
   private selectRepositoryPanel = (panel: RepositoryPanelKind) => {
-    this.selectedRepositoryPanel = panel
     this.panelDropdownState = 'closed'
-    localStorage.setItem(repositoryPanelStorageKey, panel)
+    this.writeSelectedRepositoryPanel(panel)
     this.forceUpdate()
+  }
+
+  private getSelectedRepositoryPanel(): RepositoryPanelKind {
+    const selection = this.state.selectedState
+    if (selection === null || selection.type !== SelectionType.Repository) {
+      return 'commit-management'
+    }
+
+    return readSelectedRepositoryPanel(
+      selection.repository.path,
+      getRepositoryPanelBranchKey(selection.state)
+    )
+  }
+
+  private writeSelectedRepositoryPanel(panel: RepositoryPanelKind) {
+    const selection = this.state.selectedState
+    if (selection === null || selection.type !== SelectionType.Repository) {
+      return
+    }
+
+    writeSelectedRepositoryPanel(
+      selection.repository.path,
+      getRepositoryPanelBranchKey(selection.state),
+      panel
+    )
   }
 
   private renderPushPullToolbarButton() {
@@ -3937,7 +4043,7 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
 
     if (selectedState.type === SelectionType.Repository) {
-      if (this.selectedRepositoryPanel === 'code-editor') {
+      if (this.getSelectedRepositoryPanel() === 'code-editor') {
         return (
           <CodeEditorPanelView
             key={selectedState.repository.hash}
@@ -4265,9 +4371,88 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 }
 
-function readSelectedRepositoryPanel(): RepositoryPanelKind {
-  const value = localStorage.getItem(repositoryPanelStorageKey)
+function readSelectedRepositoryPanel(
+  repositoryPath: string,
+  branchName: string
+): RepositoryPanelKind {
+  const value = localStorage.getItem(
+    createRepositoryPanelStorageKey(repositoryPath, branchName)
+  )
   return value === 'code-editor' ? 'code-editor' : 'commit-management'
+}
+
+function writeSelectedRepositoryPanel(
+  repositoryPath: string,
+  branchName: string,
+  panel: RepositoryPanelKind
+) {
+  localStorage.setItem(
+    createRepositoryPanelStorageKey(repositoryPath, branchName),
+    panel
+  )
+}
+
+function createRepositoryPanelStorageKey(
+  repositoryPath: string,
+  branchName: string
+) {
+  return `${repositoryPanelStoragePrefix}${encodeURIComponent(
+    JSON.stringify({ repositoryPath, branchName })
+  )}`
+}
+
+function getRepositoryPanelBranchKey(repositoryState: IRepositoryState) {
+  const tip = repositoryState.branchesState.tip
+  switch (tip.kind) {
+    case TipState.Valid:
+      return tip.branch.name
+    case TipState.Unborn:
+      return tip.ref
+    case TipState.Detached:
+      return `detached:${tip.currentSha}`
+    default:
+      return 'unknown'
+  }
+}
+
+function setMenuItemEnabled(
+  menu: IMenu,
+  itemID: string,
+  enabled: boolean
+): IMenu {
+  let changed = false
+  const items = menu.items.map(item => {
+    let nextItem: MenuItem = item
+
+    if (item.type === 'submenuItem') {
+      const nextMenu = setMenuItemEnabled(item.menu, itemID, enabled)
+      if (nextMenu !== item.menu) {
+        nextItem = { ...item, menu: nextMenu }
+      }
+    }
+
+    if (
+      nextItem.id === itemID &&
+      nextItem.type !== 'separator' &&
+      nextItem.enabled !== enabled
+    ) {
+      nextItem = { ...nextItem, enabled }
+    }
+
+    changed ||= nextItem !== item
+    return nextItem
+  })
+
+  if (!changed) {
+    return menu
+  }
+
+  const selectedItem =
+    menu.selectedItem === undefined
+      ? undefined
+      : items.find(item => item.id === menu.selectedItem?.id)
+
+  return { ...menu, items, selectedItem }
 }
 
 function NoRepositorySelected() {

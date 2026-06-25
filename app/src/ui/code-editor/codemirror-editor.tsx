@@ -20,7 +20,7 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from '@codemirror/language'
-import { Compartment, EditorState, Extension } from '@codemirror/state'
+import { Compartment, EditorState, Extension, Range } from '@codemirror/state'
 import {
   Decoration,
   type DOMEventHandlers,
@@ -152,11 +152,13 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
       })
     }
 
-    if (
+    const searchConfigurationChanged =
       previousProps.searchQuery !== this.props.searchQuery ||
-      previousProps.searchOptions !== this.props.searchOptions ||
+      previousProps.searchOptions !== this.props.searchOptions
+    const activeSearchMatchChanged =
       previousProps.activeSearchMatchIndex !== this.props.activeSearchMatchIndex
-    ) {
+
+    if (searchConfigurationChanged || activeSearchMatchChanged) {
       this.view.dispatch({
         effects: this.searchCompartment.reconfigure(
           getSearchHighlightExtension(
@@ -166,6 +168,9 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
           )
         ),
       })
+    }
+
+    if (activeSearchMatchChanged && !searchConfigurationChanged) {
       this.focusActiveMatch()
     }
   }
@@ -350,6 +355,13 @@ function getPreferenceExtensions(
         fontFamily: 'var(--font-family-monospace)',
         userSelect: 'text',
       },
+      '.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+        {
+          backgroundColor:
+            theme === ApplicationTheme.Dark
+              ? 'rgba(255, 209, 102, 0.45) !important'
+              : 'rgba(0, 95, 184, 0.28) !important',
+        },
       '.cm-line': {
         fontFamily: 'var(--font-family-monospace)',
       },
@@ -365,13 +377,26 @@ function getPreferenceExtensions(
         backgroundColor: 'var(--list-item-hover-background-color)',
       },
       '.cm-code-editor-search-match': {
-        backgroundColor: 'var(--diff-hunk-background-color)',
-        outline: '1px solid var(--diff-hunk-border-color)',
+        backgroundColor: '#fff176',
+        color: '#111111',
+        outline: '1px solid #f9a825',
       },
       '.cm-code-editor-search-current': {
-        backgroundColor: 'var(--diff-selected-background-color)',
-        color: 'var(--diff-selected-text-color)',
-        outline: '1px solid var(--diff-selected-border-color)',
+        backgroundColor: '#ffb74d',
+        color: '#111111',
+        outline: '1px solid #ef6c00',
+      },
+      '.cm-code-editor-patch-added': {
+        backgroundColor: 'var(--diff-add-background-color)',
+        color: 'var(--diff-add-text-color)',
+      },
+      '.cm-code-editor-patch-removed': {
+        backgroundColor: 'var(--diff-delete-background-color)',
+        color: 'var(--diff-delete-text-color)',
+      },
+      '.cm-code-editor-patch-hunk': {
+        backgroundColor: 'var(--diff-hunk-background-color)',
+        color: 'var(--diff-hunk-text-color)',
       },
     },
     { dark: theme === ApplicationTheme.Dark }
@@ -427,6 +452,8 @@ function getLanguageExtension(language: CodeEditorLanguage): Extension {
       return css()
     case 'markdown':
       return markdown()
+    case 'patch':
+      return patchLineHighlightExtension
     case 'python':
       return python()
     case 'cpp':
@@ -443,6 +470,40 @@ function getLanguageExtension(language: CodeEditorLanguage): Extension {
       return []
   }
 }
+
+const patchLineHighlightExtension = EditorView.decorations.compute(
+  ['doc'],
+  state => {
+    const decorations = new Array<Range<Decoration>>()
+
+    for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber++) {
+      const line = state.doc.line(lineNumber)
+      const text = line.text
+
+      if (text.startsWith('@@')) {
+        decorations.push(
+          Decoration.line({ class: 'cm-code-editor-patch-hunk' }).range(
+            line.from
+          )
+        )
+      } else if (text.startsWith('+') && !text.startsWith('+++')) {
+        decorations.push(
+          Decoration.line({ class: 'cm-code-editor-patch-added' }).range(
+            line.from
+          )
+        )
+      } else if (text.startsWith('-') && !text.startsWith('---')) {
+        decorations.push(
+          Decoration.line({ class: 'cm-code-editor-patch-removed' }).range(
+            line.from
+          )
+        )
+      }
+    }
+
+    return Decoration.set(decorations)
+  }
+)
 
 function readCachedEditorState(key: string): unknown | null {
   try {

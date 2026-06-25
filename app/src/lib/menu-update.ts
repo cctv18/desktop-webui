@@ -1,6 +1,10 @@
 import { MenuIDs } from '../models/menu-ids'
 import { merge } from './merge'
-import { IAppState, SelectionType } from '../lib/app-state'
+import {
+  IAppState,
+  RepositorySectionTab,
+  SelectionType,
+} from '../lib/app-state'
 import {
   Repository,
   isRepositoryWithGitHubRepository,
@@ -176,6 +180,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
   let branchHasStashEntry = false
   let onContributionTargetDefaultBranch = false
   let hasContributionTargetDefaultBranch = false
+  let hasHistoryFileSelectionForCodeEditor = false
 
   // check that its a github repo and if so, that is has issues enabled
   const repoIssuesEnabled =
@@ -223,6 +228,10 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
 
     networkActionInProgress = selectedState.state.isPushPullFetchInProgress
     hasRemote = selectedState.state.remote !== null
+    hasHistoryFileSelectionForCodeEditor =
+      selectedState.state.selectedSection === RepositorySectionTab.History &&
+      selectedState.state.commitSelection.file !== null &&
+      !selectedState.state.commitSelection.file.isDeleted()
 
     const { conflictState, workingDirectory } = selectedState.state.changesState
 
@@ -340,6 +349,10 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
 
     menuStateBuilder.setEnabled('compare-to-branch', !onDetachedHead)
     menuStateBuilder.setEnabled('toggle-stashed-changes', branchHasStashEntry)
+    menuStateBuilder.setEnabled(
+      'open-external-editor',
+      hasHistoryFileSelectionForCodeEditor
+    )
 
     if (
       selectedState &&

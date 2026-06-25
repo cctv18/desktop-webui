@@ -157,6 +157,7 @@ export class CodeEditorPanel extends React.Component<
       getBranchKey(previousProps.repositoryState) !==
         getBranchKey(this.props.repositoryState)
     ) {
+      this.persistDraftIfNeeded()
       const session = readSession(
         this.props.repository.path,
         getBranchKey(this.props.repositoryState)
@@ -190,6 +191,7 @@ export class CodeEditorPanel extends React.Component<
   }
 
   public componentWillUnmount() {
+    this.persistDraftIfNeeded()
     this.persistSession()
   }
 
@@ -719,6 +721,10 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private openFile = async (relativePath: string) => {
+    if (this.state.selectedPath !== relativePath) {
+      this.persistDraftIfNeeded()
+    }
+
     this.setState({
       selectedPath: relativePath,
       loadingFile: true,
@@ -735,23 +741,27 @@ export class CodeEditorPanel extends React.Component<
         this.props.repository,
         relativePath
       )
-      const lineEnding = detectLineEnding(rawContents)
+      const diskLineEnding = detectLineEnding(
+        rawContents,
+        getSystemDefaultLineEnding()
+      )
       const editorContents = normalizeEditorText(rawContents)
       const draft = readDraft(
         this.props.repository.path,
         getBranchKey(this.props.repositoryState),
         relativePath
       )
+      const shouldRestoreDraft =
+        draft !== null && draft.contents !== editorContents
 
       this.expandParents(relativePath)
       this.setState(
         {
           diskContents: editorContents,
           headContents: normalizeEditorText(headContents),
-          editorContents,
-          lineEnding,
-          pendingDraft:
-            draft !== null && draft.contents !== editorContents ? draft : null,
+          editorContents: shouldRestoreDraft ? draft!.contents : editorContents,
+          lineEnding: shouldRestoreDraft ? draft!.lineEnding : diskLineEnding,
+          pendingDraft: null,
           loadingFile: false,
           activeSearchMatchIndex: 0,
         },
@@ -806,6 +816,7 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private onTabClicked = (tab: number) => {
+    this.persistDraftIfNeeded()
     this.setState({ activeTab: tab === 0 ? 'edit' : 'preview' }, () =>
       this.persistSession()
     )
@@ -1132,6 +1143,10 @@ function getBranchKey(repositoryState: IRepositoryState) {
     default:
       return 'unknown'
   }
+}
+
+function getSystemDefaultLineEnding(): CodeEditorLineEnding {
+  return __WIN32__ ? 'crlf' : 'lf'
 }
 
 function readDraft(

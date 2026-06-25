@@ -58,6 +58,7 @@ describe('Code editor model helpers', () => {
     assert.equal(detectLineEnding('one\r\ntwo\r\n'), 'crlf')
     assert.equal(detectLineEnding('one\ntwo\n'), 'lf')
     assert.equal(detectLineEnding(''), 'lf')
+    assert.equal(detectLineEnding('', 'crlf'), 'crlf')
   })
 
   it('finds search matches with case, whole-word, and regex options', () => {
@@ -147,6 +148,33 @@ describe('Code editor model helpers', () => {
         '#include <iostream>\nint main() { return 0; }'
       ),
       'cpp'
+    )
+  })
+
+  it('detects patch files from path and content', () => {
+    assert.equal(
+      detectLanguageFromPathAndContent(
+        'changes.patch',
+        'diff --git a/a b/a\n+added'
+      ),
+      'patch'
+    )
+    assert.equal(
+      detectLanguageFromPathAndContent(
+        'unknown.file',
+        '@@ -1,2 +1,2 @@\n-old\n+new'
+      ),
+      'patch'
+    )
+  })
+
+  it('keeps ambiguous comment-heavy unknown files unhighlighted', () => {
+    assert.equal(
+      detectLanguageFromPathAndContent(
+        'notes.unknown',
+        '// import value from "somewhere"\n// const sample = () => {}'
+      ),
+      'unknown'
     )
   })
 })

@@ -41,7 +41,6 @@ export function buildDefaultMenu(params: MenuLabelsEvent): Electron.Menu {
 }
 
 export function buildDefaultMenuTemplate({
-  selectedExternalEditor,
   selectedShell,
   askForConfirmationOnForcePush,
   askForConfirmationOnRepositoryRemoval,
@@ -366,8 +365,8 @@ export function buildDefaultMenuTemplate({
       },
       {
         label: __DARWIN__
-          ? `Open in ${selectedExternalEditor ?? 'External Editor'}`
-          : `&Open in ${selectedExternalEditor ?? 'external editor'}`,
+          ? 'Open in Codemirror editor'
+          : '&Open in Codemirror editor',
         id: 'open-external-editor',
         accelerator: 'CmdOrCtrl+Shift+A',
         click: emit('open-external-editor'),

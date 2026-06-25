@@ -23,7 +23,6 @@ export function getDefaultWebAppMenu(
   labels: MenuLabelsEvent = defaultLabels
 ): IMenu {
   const selectedShell = labels.selectedShell ?? 'shell'
-  const selectedExternalEditor = labels.selectedExternalEditor ?? 'external editor'
   const contributionTargetDefaultBranch = truncate(
     labels.contributionTargetDefaultBranch ?? 'default branch',
     25
@@ -81,8 +80,16 @@ export function getDefaultWebAppMenu(
         item('zoom-in', 'Zoom in', 'Ctrl+='),
         item('zoom-out', 'Zoom out', 'Ctrl+-'),
         separator('view-separator-3'),
-        item('increase-active-resizable-width', 'Expand active resizable', 'Ctrl+9'),
-        item('decrease-active-resizable-width', 'Contract active resizable', 'Ctrl+8'),
+        item(
+          'increase-active-resizable-width',
+          'Expand active resizable',
+          'Ctrl+9'
+        ),
+        item(
+          'decrease-active-resizable-width',
+          'Contract active resizable',
+          'Ctrl+8'
+        ),
       ]),
       submenu('repository', '&Repository', [
         item('push', pushLabel, 'Ctrl+P'),
@@ -95,7 +102,7 @@ export function getDefaultWebAppMenu(
         item('open-working-directory', 'Show in file &manager', 'Ctrl+Shift+F'),
         item(
           'open-external-editor',
-          `&Open in ${selectedExternalEditor}`,
+          '&Open in Codemirror editor',
           'Ctrl+Shift+A'
         ),
         item('open-with-external-editor', 'Open &with...', 'Ctrl+Shift+Alt+A'),
@@ -115,7 +122,11 @@ export function getDefaultWebAppMenu(
         item('rename-branch', '&Rename...', 'Ctrl+Shift+R'),
         item('delete-branch', '&Delete...', 'Ctrl+Shift+D'),
         separator('branch-separator-1'),
-        item('discard-all-changes', 'Discard all changes...', 'Ctrl+Shift+Backspace'),
+        item(
+          'discard-all-changes',
+          'Discard all changes...',
+          'Ctrl+Shift+Backspace'
+        ),
         item('stash-all-changes', stashAllChangesLabel, 'Ctrl+Shift+S'),
         separator('branch-separator-2'),
         item(
