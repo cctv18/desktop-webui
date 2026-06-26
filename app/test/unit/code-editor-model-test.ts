@@ -3,8 +3,7 @@ import { describe, it } from 'node:test'
 
 import {
   buildFileTreeFromPaths,
-  createCodeEditorDraftKey,
-  createUnifiedDiff,
+  createLineDiffRows,
   detectLineEnding,
   detectLanguageFromPathAndContent,
   filterRepositoryFilePaths,
@@ -42,18 +41,6 @@ describe('Code editor model helpers', () => {
     )
   })
 
-  it('keys unsaved drafts by repository, branch, and file path', () => {
-    const mainKey = createCodeEditorDraftKey('C:/repo', 'main', 'src/app.ts')
-    const featureKey = createCodeEditorDraftKey(
-      'C:/repo',
-      'feature/a',
-      'src/app.ts'
-    )
-
-    assert.notEqual(mainKey, featureKey)
-    assert.ok(mainKey.includes('code-editor:draft:'))
-  })
-
   it('detects CRLF only when the document already uses it', () => {
     assert.equal(detectLineEnding('one\r\ntwo\r\n'), 'crlf')
     assert.equal(detectLineEnding('one\ntwo\n'), 'lf')
@@ -82,17 +69,15 @@ describe('Code editor model helpers', () => {
   })
 
   it('creates stable line diffs when a line is deleted', () => {
-    const diff = createUnifiedDiff(
+    const diff = createLineDiffRows(
       ['alpha', 'beta', 'gamma', 'delta'].join('\n'),
-      ['alpha', 'gamma', 'delta'].join('\n'),
-      'src/example.ts'
+      ['alpha', 'gamma', 'delta'].join('\n')
     )
 
-    assert.ok(diff.includes('-beta'))
-    assert.ok(diff.includes(' gamma'))
-    assert.ok(diff.includes(' delta'))
-    assert.ok(!diff.includes('-gamma'))
-    assert.ok(!diff.includes('+gamma'))
+    assert.deepEqual(
+      diff.map(row => `${row.kind}:${row.oldText || row.newText}`),
+      ['context:alpha', 'removed:beta', 'context:gamma', 'context:delta']
+    )
   })
 
   it('filters repository paths with editable ignore patterns', () => {

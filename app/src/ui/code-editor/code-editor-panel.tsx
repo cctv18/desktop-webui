@@ -11,12 +11,12 @@ import {
   buildFileTreeFromPaths,
   CodeEditorLineEnding,
   CodeEditorTreeNode,
-  createCodeEditorDraftKey,
+  createLineDiffRows,
   createSideBySideDiffRows,
-  createUnifiedDiff,
   defaultCodeEditorIgnoredPaths,
   detectLineEnding,
   findSearchMatches,
+  ICodeEditorLineDiffRow,
   ICodeEditorSideBySideDiffRow,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
@@ -27,15 +27,22 @@ import {
   serializeIgnoredPathList,
 } from './code-editor-model'
 import {
+  activateRepositoryEditorBranchCache,
   listRepositoryFiles,
   readHeadTextFile,
+  readRepositoryConflictTextFile,
+  readRepositoryTempFileStatus,
   readRepositoryTextFile,
+  removeRepositoryConflictTextFile,
+  removeRepositoryTempTextFile,
+  writeRepositoryTempTextFile,
   writeRepositoryTextFile,
 } from './code-editor-files'
 import { CodeMirrorEditor } from './codemirror-editor'
 import {
+  ICodeEditorConflictFile,
+  purgeLegacyCodeEditorStorage,
   readCodeEditorStorageItem,
-  removeCodeEditorStorageItem,
   writeCodeEditorStorageItem,
 } from './code-editor-storage'
 
@@ -53,10 +60,9 @@ interface ICodeEditorPanelProps {
   readonly onOpenFileRequestHandled: (id: number) => void
 }
 
-interface ICodeEditorDraft {
+interface ICodeEditorConflictDraft extends ICodeEditorConflictFile {
   readonly contents: string
   readonly lineEnding: CodeEditorLineEnding
-  readonly updatedAt: number
 }
 
 interface ICodeEditorPreferences {
@@ -89,7 +95,8 @@ interface ICodeEditorPanelState {
   readonly replacement: string
   readonly searchOptions: ICodeEditorSearchOptions
   readonly activeSearchMatchIndex: number
-  readonly pendingDraft: ICodeEditorDraft | null
+  readonly conflictDraft: ICodeEditorConflictDraft | null
+  readonly conflictComparisonVisible: boolean
   readonly ignoreSettingsVisible: boolean
   readonly ignoredPathListText: string
   readonly treeVisible: boolean
@@ -102,7 +109,6 @@ interface ICodeEditorPanelState {
 
 const editorPreferenceKey = 'gitdesk-webui:code-editor:preferences'
 const editorSessionStoragePrefix = 'gitdesk-webui:code-editor:session:'
-const editorStateStoragePrefix = 'gitdesk-webui:code-editor:state:'
 
 export class CodeEditorPanel extends React.Component<
   ICodeEditorPanelProps,
@@ -136,7 +142,8 @@ export class CodeEditorPanel extends React.Component<
         useRegex: false,
       },
       activeSearchMatchIndex: 0,
-      pendingDraft: null,
+      conflictDraft: null,
+      conflictComparisonVisible: false,
       ignoreSettingsVisible: false,
       ignoredPathListText: serializeIgnoredPathList(preferences.ignoredPaths),
       treeVisible: session.treeVisible,
@@ -159,7 +166,7 @@ export class CodeEditorPanel extends React.Component<
       getBranchKey(previousProps.repositoryState) !==
         getBranchKey(this.props.repositoryState)
     ) {
-      void this.handleRepositoryContextChanged()
+      void this.handleRepositoryContextChanged(previousProps)
       return
     }
 
@@ -168,7 +175,7 @@ export class CodeEditorPanel extends React.Component<
 
   public componentWillUnmount() {
     this.isMounted = false
-    this.persistDraftIfNeeded()
+    void this.persistTempFileIfNeeded()
     this.persistSession()
   }
 
@@ -274,6 +281,17 @@ export class CodeEditorPanel extends React.Component<
             {dirty ? <span className="code-editor-dirty-dot" /> : null}
           </div>
           <div className="code-editor-actions">
+            {this.state.conflictDraft !== null &&
+            this.state.conflictComparisonVisible ? (
+              <>
+                <button type="button" onClick={this.restoreConflictDraft}>
+                  Restore cache
+                </button>
+                <button type="button" onClick={this.discardConflictDraft}>
+                  Discard cache
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               disabled={!dirty || this.state.saving}
@@ -331,7 +349,7 @@ export class CodeEditorPanel extends React.Component<
           </div>
         </div>
         {this.state.activeTab === 'edit' ? this.renderSearchRow(matches) : null}
-        {this.renderDraftPrompt()}
+        {this.renderConflictPrompt()}
         {this.state.error !== null && (
           <div className="code-editor-error">{this.state.error}</div>
         )}
@@ -416,20 +434,25 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private renderDraftPrompt() {
-    const draft = this.state.pendingDraft
-    if (draft === null) {
+  private renderConflictPrompt() {
+    const conflict = this.state.conflictDraft
+    if (conflict === null) {
       return null
     }
 
     return (
       <div className="code-editor-draft-prompt">
-        <span>Unsaved draft found for this branch.</span>
-        <button type="button" onClick={this.restoreDraft}>
-          Restore
+        <span>
+          Cached editor changes conflict with the current repository file.
+        </span>
+        <button type="button" onClick={this.showConflictComparison}>
+          Review
         </button>
-        <button type="button" onClick={this.discardDraft}>
-          Discard
+        <button type="button" onClick={this.restoreConflictDraft}>
+          Restore cache
+        </button>
+        <button type="button" onClick={this.discardConflictDraft}>
+          Discard cache
         </button>
       </div>
     )
@@ -458,6 +481,7 @@ export class CodeEditorPanel extends React.Component<
           }
         >
           {this.renderEditor()}
+          {this.renderConflictComparison()}
         </div>
         <div
           className={
@@ -480,11 +504,6 @@ export class CodeEditorPanel extends React.Component<
         ref={this.editorRef}
         value={this.state.editorContents}
         relativePath={this.state.selectedPath}
-        stateStorageKey={createCodeEditorStateStorageKey(
-          this.props.repository.path,
-          getBranchKey(this.props.repositoryState),
-          this.state.selectedPath
-        )}
         searchQuery={this.state.searchQuery}
         searchOptions={this.state.searchOptions}
         searchMatches={matches}
@@ -496,6 +515,31 @@ export class CodeEditorPanel extends React.Component<
         onSave={this.save}
         onSearch={this.focusSearch}
       />
+    )
+  }
+
+  private renderConflictComparison() {
+    const conflict = this.state.conflictDraft
+
+    if (conflict === null || !this.state.conflictComparisonVisible) {
+      return null
+    }
+
+    const rows = createSideBySideDiffRows(
+      this.state.diskContents,
+      normalizeEditorText(conflict.contents)
+    )
+
+    return (
+      <div className="code-editor-conflict-diff">
+        <div className="code-editor-split-diff-header">
+          <span>Repository file</span>
+          <span>Cached edit</span>
+        </div>
+        <div className="code-editor-split-diff-rows">
+          {rows.map((row, index) => this.renderSplitDiffRow(row, index))}
+        </div>
+      </div>
     )
   }
 
@@ -545,31 +589,38 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private renderUnifiedDiff(selectedPath: string) {
-    const diff = createUnifiedDiff(
+    const rows = createLineDiffRows(
       normalizeEditorText(this.state.headContents),
-      this.state.editorContents,
-      selectedPath
+      this.state.editorContents
     )
 
+    if (
+      normalizeEditorText(this.state.headContents) === this.state.editorContents
+    ) {
+      return (
+        <div className="code-editor-diff-preview unified">
+          <div className="code-editor-empty">No changes in {selectedPath}</div>
+        </div>
+      )
+    }
+
     return (
-      <pre className="code-editor-diff-preview unified">
-        {diff.split('\n').map((line, index) => (
-          <div
-            key={index}
-            className={
-              line.startsWith('+') && !line.startsWith('+++')
-                ? 'added'
-                : line.startsWith('-') && !line.startsWith('---')
-                ? 'removed'
-                : line.startsWith('@@')
-                ? 'hunk'
-                : undefined
-            }
-          >
-            {line || ' '}
-          </div>
-        ))}
-      </pre>
+      <div className="code-editor-diff-preview unified">
+        <div className="code-editor-unified-diff-header">{selectedPath}</div>
+        {rows.map((row, index) => this.renderUnifiedDiffRow(row, index))}
+      </div>
+    )
+  }
+
+  private renderUnifiedDiffRow(row: ICodeEditorLineDiffRow, index: number) {
+    return (
+      <div key={index} className={`code-editor-unified-diff-row ${row.kind}`}>
+        <span className="line-number">{row.oldLineNumber ?? ''}</span>
+        <span className="line-number">{row.newLineNumber ?? ''}</span>
+        <pre>
+          {row.kind === 'removed' ? row.oldText || ' ' : row.newText || ' '}
+        </pre>
+      </div>
     )
   }
 
@@ -634,7 +685,7 @@ export class CodeEditorPanel extends React.Component<
         >
           <Octicon
             className="code-editor-tree-toggle"
-            symbol={expanded ? octicons.chevronDown : octicons.chevronRight}
+            symbol={expanded ? octicons.chevronLeft : octicons.chevronRight}
           />
           <Octicon
             symbol={
@@ -703,6 +754,11 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private initialize = async () => {
+    await purgeLegacyCodeEditorStorage().catch(() => {})
+    await activateRepositoryEditorBranchCache(
+      this.props.repository,
+      getBranchKey(this.props.repositoryState)
+    )
     const preferences = await readPreferences()
     const session = await readSession(
       this.props.repository.path,
@@ -734,8 +790,14 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private handleRepositoryContextChanged = async () => {
-    await this.persistDraftIfNeeded()
+  private handleRepositoryContextChanged = async (
+    previousProps: ICodeEditorPanelProps
+  ) => {
+    await this.persistTempFileIfNeeded(previousProps)
+    await activateRepositoryEditorBranchCache(
+      this.props.repository,
+      getBranchKey(this.props.repositoryState)
+    )
     const session = await readSession(
       this.props.repository.path,
       getBranchKey(this.props.repositoryState)
@@ -752,7 +814,8 @@ export class CodeEditorPanel extends React.Component<
         diskContents: '',
         headContents: '',
         editorContents: '',
-        pendingDraft: null,
+        conflictDraft: null,
+        conflictComparisonVisible: false,
         activeTab: session.activeTab,
         treeVisible: session.treeVisible,
         activeSearchMatchIndex: 0,
@@ -771,7 +834,7 @@ export class CodeEditorPanel extends React.Component<
 
   private openFile = async (relativePath: string) => {
     if (this.state.selectedPath !== relativePath) {
-      await this.persistDraftIfNeeded()
+      await this.persistTempFileIfNeeded()
     }
 
     this.setState({
@@ -779,6 +842,8 @@ export class CodeEditorPanel extends React.Component<
       loadingFile: true,
       error: null,
       activeTab: 'edit',
+      conflictDraft: null,
+      conflictComparisonVisible: false,
     })
 
     try {
@@ -794,23 +859,34 @@ export class CodeEditorPanel extends React.Component<
         rawContents,
         getSystemDefaultLineEnding()
       )
-      const editorContents = normalizeEditorText(rawContents)
-      const draft = await readDraft(
-        this.props.repository.path,
+      const diskContents = normalizeEditorText(rawContents)
+      const tempFileStatus = await readRepositoryTempFileStatus(
+        this.props.repository,
         getBranchKey(this.props.repositoryState),
-        relativePath
+        relativePath,
+        diskContents
       )
-      const shouldRestoreDraft =
-        draft !== null && draft.contents !== editorContents
+      const tempContents =
+        tempFileStatus.hasTempFile && tempFileStatus.contents !== null
+          ? normalizeEditorText(tempFileStatus.contents)
+          : null
+      const conflictDraft =
+        tempFileStatus.conflict === null
+          ? null
+          : {
+              ...tempFileStatus.conflict,
+              contents: normalizeEditorText(tempFileStatus.conflict.contents),
+            }
 
       this.expandParents(relativePath)
       this.setState(
         {
-          diskContents: editorContents,
+          diskContents,
           headContents: normalizeEditorText(headContents),
-          editorContents: shouldRestoreDraft ? draft!.contents : editorContents,
-          lineEnding: shouldRestoreDraft ? draft!.lineEnding : diskLineEnding,
-          pendingDraft: null,
+          editorContents: tempContents ?? diskContents,
+          lineEnding: tempFileStatus.lineEnding ?? diskLineEnding,
+          conflictDraft,
+          conflictComparisonVisible: false,
           loadingFile: false,
           activeSearchMatchIndex: 0,
         },
@@ -865,15 +941,16 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private onTabClicked = (tab: number) => {
-    this.persistDraftIfNeeded()
+    void this.persistTempFileIfNeeded()
     this.setState({ activeTab: tab === 0 ? 'edit' : 'preview' }, () =>
       this.persistSession()
     )
   }
 
   private onEditorChanged = (contents: string) => {
-    this.setState({ editorContents: contents, pendingDraft: null }, () => {
-      this.persistDraftIfNeeded()
+    const previousContents = this.state.editorContents
+    this.setState({ editorContents: contents }, () => {
+      void this.persistTempFileIfNeeded(undefined, previousContents)
     })
   }
 
@@ -892,15 +969,16 @@ export class CodeEditorPanel extends React.Component<
         this.state.editorContents,
         this.state.lineEnding
       )
-      await removeDraft(
-        this.props.repository.path,
+      await removeRepositoryTempTextFile(
+        this.props.repository,
         getBranchKey(this.props.repositoryState),
         selectedPath
       )
       this.setState({
         diskContents: this.state.editorContents,
         saving: false,
-        pendingDraft: null,
+        conflictDraft: null,
+        conflictComparisonVisible: false,
       })
       await this.props.dispatcher.refreshRepository(this.props.repository)
     } catch (error) {
@@ -914,8 +992,8 @@ export class CodeEditorPanel extends React.Component<
   private cancelChanges = () => {
     const selectedPath = this.state.selectedPath
     if (selectedPath !== null) {
-      removeDraft(
-        this.props.repository.path,
+      void removeRepositoryTempTextFile(
+        this.props.repository,
         getBranchKey(this.props.repositoryState),
         selectedPath
       )
@@ -923,64 +1001,92 @@ export class CodeEditorPanel extends React.Component<
 
     this.setState({
       editorContents: this.state.diskContents,
-      pendingDraft: null,
+      conflictDraft: null,
+      conflictComparisonVisible: false,
       activeSearchMatchIndex: 0,
     })
   }
 
-  private restoreDraft = () => {
-    const draft = this.state.pendingDraft
-    if (draft === null) {
+  private showConflictComparison = () => {
+    this.setState({ conflictComparisonVisible: true, activeTab: 'edit' })
+  }
+
+  private restoreConflictDraft = async () => {
+    const conflict = this.state.conflictDraft
+    const selectedPath = this.state.selectedPath
+    if (conflict === null || selectedPath === null) {
       return
     }
 
+    const latestConflict =
+      (await readRepositoryConflictTextFile(
+        this.props.repository,
+        getBranchKey(this.props.repositoryState),
+        selectedPath,
+        conflict.id
+      ).catch(() => null)) ?? conflict
+    const contents = normalizeEditorText(latestConflict.contents)
+
     this.setState(
       {
-        editorContents: draft.contents,
-        lineEnding: draft.lineEnding,
-        pendingDraft: null,
+        editorContents: contents,
+        lineEnding: latestConflict.lineEnding,
+        conflictDraft: null,
+        conflictComparisonVisible: false,
       },
-      () => this.persistDraftIfNeeded()
+      () => {
+        void this.persistTempFileIfNeeded(undefined, this.state.diskContents)
+      }
+    )
+
+    await removeRepositoryConflictTextFile(
+      this.props.repository,
+      getBranchKey(this.props.repositoryState),
+      selectedPath,
+      conflict.id
     )
   }
 
-  private discardDraft = () => {
+  private discardConflictDraft = async () => {
+    const conflict = this.state.conflictDraft
     const selectedPath = this.state.selectedPath
-    if (selectedPath !== null) {
-      removeDraft(
-        this.props.repository.path,
+    if (selectedPath !== null && conflict !== null) {
+      await removeRepositoryConflictTextFile(
+        this.props.repository,
         getBranchKey(this.props.repositoryState),
-        selectedPath
+        selectedPath,
+        conflict.id
       )
     }
-    this.setState({ pendingDraft: null })
+    this.setState({ conflictDraft: null, conflictComparisonVisible: false })
   }
 
-  private async persistDraftIfNeeded() {
+  private async persistTempFileIfNeeded(
+    props: ICodeEditorPanelProps = this.props,
+    previousContents = this.state.editorContents
+  ) {
     const selectedPath = this.state.selectedPath
     if (selectedPath === null) {
       return
     }
 
     if (!this.isDirty()) {
-      await removeDraft(
-        this.props.repository.path,
-        getBranchKey(this.props.repositoryState),
+      await removeRepositoryTempTextFile(
+        props.repository,
+        getBranchKey(props.repositoryState),
         selectedPath
       )
       return
     }
 
-    await writeDraft(
-      this.props.repository.path,
-      getBranchKey(this.props.repositoryState),
-      selectedPath,
-      {
-        contents: this.state.editorContents,
-        lineEnding: this.state.lineEnding,
-        updatedAt: Date.now(),
-      }
-    )
+    await writeRepositoryTempTextFile(props.repository, {
+      branchKey: getBranchKey(props.repositoryState),
+      relativePath: selectedPath,
+      contents: this.state.editorContents,
+      previousContents,
+      baseContents: this.state.diskContents,
+      lineEnding: this.state.lineEnding,
+    })
   }
 
   private isDirty() {
@@ -1071,7 +1177,7 @@ export class CodeEditorPanel extends React.Component<
     event: React.ChangeEvent<HTMLSelectElement>
   ) => {
     const lineEnding = event.currentTarget.value as CodeEditorLineEnding
-    this.setState({ lineEnding }, () => this.persistDraftIfNeeded())
+    this.setState({ lineEnding }, () => void this.persistTempFileIfNeeded())
   }
 
   private onFontSizeChanged = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1187,7 +1293,7 @@ function getBranchKey(repositoryState: IRepositoryState) {
   const tip = repositoryState.branchesState.tip
   switch (tip.kind) {
     case TipState.Valid:
-      return tip.branch.name
+      return `tip:${tip.branch.tip.sha}`
     case TipState.Unborn:
       return tip.ref
     case TipState.Detached:
@@ -1199,48 +1305,6 @@ function getBranchKey(repositoryState: IRepositoryState) {
 
 function getSystemDefaultLineEnding(): CodeEditorLineEnding {
   return __WIN32__ ? 'crlf' : 'lf'
-}
-
-async function readDraft(
-  repositoryPath: string,
-  branchName: string,
-  relativePath: string
-): Promise<ICodeEditorDraft | null> {
-  const raw = await readCodeEditorStorageItem(
-    createCodeEditorDraftKey(repositoryPath, branchName, relativePath)
-  )
-  if (raw === null) {
-    return null
-  }
-
-  try {
-    const draft = JSON.parse(raw) as ICodeEditorDraft
-    return typeof draft.contents === 'string' ? draft : null
-  } catch {
-    return null
-  }
-}
-
-async function writeDraft(
-  repositoryPath: string,
-  branchName: string,
-  relativePath: string,
-  draft: ICodeEditorDraft
-) {
-  await writeCodeEditorStorageItem(
-    createCodeEditorDraftKey(repositoryPath, branchName, relativePath),
-    JSON.stringify(draft)
-  )
-}
-
-async function removeDraft(
-  repositoryPath: string,
-  branchName: string,
-  relativePath: string
-) {
-  await removeCodeEditorStorageItem(
-    createCodeEditorDraftKey(repositoryPath, branchName, relativePath)
-  )
 }
 
 function getDefaultPreferences(): ICodeEditorPreferences {
@@ -1323,16 +1387,6 @@ function createCodeEditorSessionKey(
 ) {
   return `${editorSessionStoragePrefix}${encodeURIComponent(
     JSON.stringify({ repositoryPath, branchName })
-  )}`
-}
-
-function createCodeEditorStateStorageKey(
-  repositoryPath: string,
-  branchName: string,
-  relativePath: string | null
-) {
-  return `${editorStateStoragePrefix}${encodeURIComponent(
-    JSON.stringify({ repositoryPath, branchName, relativePath })
   )}`
 }
 

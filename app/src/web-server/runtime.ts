@@ -2,13 +2,16 @@ import './node-globals'
 
 import * as Path from 'path'
 import { spawn } from 'child_process'
+import { createHash } from 'crypto'
 import {
   access,
   chmod,
+  copyFile,
   lstat,
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from 'fs/promises'
@@ -45,6 +48,7 @@ import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
 import {
   filterRepositoryFilePaths,
   isRepositoryPathIgnored,
+  normalizeEditorText,
   normalizeRepositoryRelativePath,
 } from '../ui/code-editor/code-editor-model'
 import { IAppState } from '../lib/app-state'
@@ -114,6 +118,48 @@ interface ICodeEditorFileListOptions {
   readonly showIgnoredPaths: boolean
 }
 
+type CodeEditorLineEnding = 'lf' | 'crlf'
+type RepositoryPanelKind = 'commit-management' | 'code-editor'
+
+interface ICodeEditorTempFileStatus {
+  readonly hasTempFile: boolean
+  readonly contents: string | null
+  readonly lineEnding: CodeEditorLineEnding | null
+  readonly conflict: ICodeEditorConflictFile | null
+}
+
+interface ICodeEditorConflictFile {
+  readonly id: string
+  readonly contents: string
+  readonly lineEnding: CodeEditorLineEnding
+}
+
+interface ICodeEditorWriteTempFileOptions {
+  readonly branchKey: string
+  readonly relativePath: string
+  readonly contents: string
+  readonly previousContents: string
+  readonly baseContents: string
+  readonly lineEnding: CodeEditorLineEnding
+}
+
+interface ICodeEditorFileEditLog {
+  readonly relativePath: string
+  readonly baseHash: string
+  readonly lineEnding: CodeEditorLineEnding
+  readonly undoStack: ReadonlyArray<ICodeEditorEditAction>
+  readonly redoStack: ReadonlyArray<ICodeEditorEditAction>
+  readonly updatedAt: number
+}
+
+interface ICodeEditorEditAction {
+  readonly from: number
+  readonly to: number
+  readonly deleted: string
+  readonly inserted: string
+  readonly updatedAt: number
+}
+
 class ServerActivityMonitor implements IUiActivityMonitor {
   public onActivity() {
     return new Disposable(() => {})
@@ -128,6 +174,10 @@ export class WebRuntime {
   public readonly gitHubUserStore: GitHubUserStore
   public readonly aheadBehindStore: AheadBehindStore
   public readonly notificationsDebugStore: NotificationsDebugStore
+  private readonly selectedRepositoryPanels = new Map<
+    string,
+    RepositoryPanelKind
+  >()
 
   public constructor(private readonly pathGuard: PathGuard) {
     configureGitEnvironment({
@@ -319,6 +369,73 @@ export class WebRuntime {
             this.removeCodeEditorStorageItem(key),
           writeStorageItem: (key: string, value: string) =>
             this.writeCodeEditorStorageItem(key, value),
+          purgeLegacyStorage: () => this.purgeLegacyCodeEditorStorage(),
+          readPanelSelection: (repositoryPath: string, branchKey: string) =>
+            this.readCodeEditorPanelSelection(repositoryPath, branchKey),
+          writePanelSelection: (
+            repositoryPath: string,
+            branchKey: string,
+            panel: RepositoryPanelKind
+          ) =>
+            this.writeCodeEditorPanelSelection(
+              repositoryPath,
+              branchKey,
+              panel
+            ),
+          clearRepositoryCache: (repositoryPath: string) =>
+            this.clearCodeEditorRepositoryCache(repositoryPath),
+          activateBranchCache: (repositoryPath: string, branchKey: string) =>
+            this.activateCodeEditorBranchCache(repositoryPath, branchKey),
+          readTempFileStatus: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string,
+            currentContents: string
+          ) =>
+            this.readCodeEditorTempFileStatus(
+              repositoryPath,
+              branchKey,
+              relativePath,
+              currentContents
+            ),
+          writeTempFile: (
+            repositoryPath: string,
+            options: ICodeEditorWriteTempFileOptions
+          ) => this.writeCodeEditorTempFile(repositoryPath, options),
+          removeTempFile: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string
+          ) =>
+            this.removeCodeEditorTempFile(
+              repositoryPath,
+              branchKey,
+              relativePath
+            ),
+          readConflictFile: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string,
+            conflictID: string
+          ) =>
+            this.readCodeEditorConflictFile(
+              repositoryPath,
+              branchKey,
+              relativePath,
+              conflictID
+            ),
+          removeConflictFile: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string,
+            conflictID: string
+          ) =>
+            this.removeCodeEditorConflictFile(
+              repositoryPath,
+              branchKey,
+              relativePath,
+              conflictID
+            ),
           listRepositoryFiles: (
             path: string,
             options?: ICodeEditorFileListOptions
@@ -347,6 +464,351 @@ export class WebRuntime {
   private assertCodeEditorStorageKey(key: string) {
     if (!key.startsWith('gitdesk-webui:code-editor:')) {
       throw new Error('Invalid CodeMirror editor storage key')
+    }
+  }
+
+  private purgeLegacyCodeEditorStorage() {
+    const legacyPrefixes = [
+      'gitdesk-webui:code-editor:draft:',
+      'gitdesk-webui:code-editor:state:',
+    ]
+
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index)
+      if (
+        key !== null &&
+        legacyPrefixes.some(prefix => key.startsWith(prefix))
+      ) {
+        localStorage.removeItem(key)
+      }
+    }
+  }
+
+  private async readCodeEditorPanelSelection(
+    repositoryPath: string,
+    branchKey: string
+  ): Promise<RepositoryPanelKind> {
+    await this.pathGuard.assertAllowed(repositoryPath)
+    this.assertCodeEditorBranchKey(branchKey)
+
+    return (
+      this.selectedRepositoryPanels.get(
+        createCodeEditorPanelMemoryKey(repositoryPath, branchKey)
+      ) ?? 'commit-management'
+    )
+  }
+
+  private async writeCodeEditorPanelSelection(
+    repositoryPath: string,
+    branchKey: string,
+    panel: RepositoryPanelKind
+  ) {
+    await this.pathGuard.assertAllowed(repositoryPath)
+    this.assertCodeEditorBranchKey(branchKey)
+
+    if (panel !== 'commit-management' && panel !== 'code-editor') {
+      throw new Error('Invalid CodeMirror editor panel')
+    }
+
+    this.selectedRepositoryPanels.set(
+      createCodeEditorPanelMemoryKey(repositoryPath, branchKey),
+      panel
+    )
+  }
+
+  private async clearCodeEditorRepositoryCache(repositoryPath: string) {
+    await this.pathGuard.assertAllowed(repositoryPath)
+    await rm(this.getCodeEditorRepositoryTempRoot(repositoryPath), {
+      recursive: true,
+      force: true,
+    })
+
+    for (const key of this.selectedRepositoryPanels.keys()) {
+      if (key.startsWith(`${Path.resolve(repositoryPath)}\0`)) {
+        this.selectedRepositoryPanels.delete(key)
+      }
+    }
+  }
+
+  private async activateCodeEditorBranchCache(
+    repositoryPath: string,
+    branchKey: string
+  ) {
+    await this.pathGuard.assertAllowed(repositoryPath)
+    this.assertCodeEditorBranchKey(branchKey)
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    await mkdir(root, { recursive: true })
+    await this.ensureCodeEditorBranchCacheActive(root, branchKey)
+  }
+
+  private async readCodeEditorTempFileStatus(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string,
+    currentContents: string
+  ): Promise<ICodeEditorTempFileStatus> {
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const normalizedPath = assertCodeEditorRelativePath(relativePath)
+    const tempPath = resolveCodeEditorTempFilePath(root, normalizedPath)
+
+    if (!(await pathExistsOnDisk(tempPath))) {
+      return {
+        hasTempFile: false,
+        contents: null,
+        lineEnding: null,
+        conflict: null,
+      }
+    }
+
+    const contents = await readFile(tempPath, 'utf8')
+    assertCodeEditorTextFile(contents)
+
+    const log = await this.readCodeEditorEditLog(root, normalizedPath)
+    const lineEnding = log?.lineEnding ?? detectRawLineEnding(contents)
+    const currentHash = hashCodeEditorContents(currentContents)
+    const tempMatchesCurrent =
+      normalizeEditorText(contents) === normalizeEditorText(currentContents)
+
+    if (
+      log !== null &&
+      log.baseHash !== currentHash &&
+      tempMatchesCurrent === false
+    ) {
+      const conflict = await this.archiveCodeEditorConflictFile(
+        root,
+        normalizedPath,
+        contents,
+        lineEnding
+      )
+      await this.removeCodeEditorTempFileFromRoot(root, normalizedPath)
+
+      return {
+        hasTempFile: false,
+        contents: null,
+        lineEnding: null,
+        conflict,
+      }
+    }
+
+    return {
+      hasTempFile: true,
+      contents,
+      lineEnding,
+      conflict: null,
+    }
+  }
+
+  private async writeCodeEditorTempFile(
+    repositoryPath: string,
+    options: ICodeEditorWriteTempFileOptions
+  ) {
+    await this.activateCodeEditorBranchCache(repositoryPath, options.branchKey)
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const normalizedPath = assertCodeEditorRelativePath(options.relativePath)
+    const tempPath = resolveCodeEditorTempFilePath(root, normalizedPath)
+    const contents = applyRawLineEnding(options.contents, options.lineEnding)
+    const previousContents = normalizeEditorText(options.previousContents)
+    const nextContents = normalizeEditorText(options.contents)
+
+    await mkdir(Path.dirname(tempPath), { recursive: true })
+    await writeFile(tempPath, contents, 'utf8')
+
+    const existingLog = await this.readCodeEditorEditLog(root, normalizedPath)
+    const action =
+      previousContents === nextContents
+        ? null
+        : createCodeEditorEditAction(previousContents, nextContents)
+    const undoStack =
+      action === null
+        ? existingLog?.undoStack ?? []
+        : [...(existingLog?.undoStack ?? []), action].slice(-500)
+    const logValue: ICodeEditorFileEditLog = {
+      relativePath: normalizedPath,
+      baseHash:
+        existingLog?.baseHash ?? hashCodeEditorContents(options.baseContents),
+      lineEnding: options.lineEnding,
+      undoStack,
+      redoStack: action === null ? existingLog?.redoStack ?? [] : [],
+      updatedAt: Date.now(),
+    }
+
+    await this.writeCodeEditorEditLog(root, normalizedPath, logValue)
+  }
+
+  private async removeCodeEditorTempFile(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string
+  ) {
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+    await this.removeCodeEditorTempFileFromRoot(
+      this.getCodeEditorRepositoryTempRoot(repositoryPath),
+      assertCodeEditorRelativePath(relativePath)
+    )
+  }
+
+  private async readCodeEditorConflictFile(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string,
+    conflictID: string
+  ): Promise<ICodeEditorConflictFile | null> {
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const normalizedPath = assertCodeEditorRelativePath(relativePath)
+    const conflictPath = resolveCodeEditorConflictFilePath(
+      root,
+      normalizedPath,
+      conflictID
+    )
+
+    if (!(await pathExistsOnDisk(conflictPath))) {
+      return null
+    }
+
+    const contents = await readFile(conflictPath, 'utf8')
+    assertCodeEditorTextFile(contents)
+
+    return {
+      id: conflictID,
+      contents,
+      lineEnding: detectRawLineEnding(contents),
+    }
+  }
+
+  private async removeCodeEditorConflictFile(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string,
+    conflictID: string
+  ) {
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    await rm(
+      resolveCodeEditorConflictFilePath(
+        root,
+        assertCodeEditorRelativePath(relativePath),
+        conflictID
+      ),
+      { force: true }
+    )
+  }
+
+  private async ensureCodeEditorBranchCacheActive(
+    root: string,
+    branchKey: string
+  ) {
+    const branchMarkerPath = Path.join(root, '.cm_branch')
+    const activeBranchKey = await readOptionalTextFile(branchMarkerPath)
+
+    if (activeBranchKey !== null && activeBranchKey !== branchKey) {
+      await this.archiveActiveCodeEditorBranchCache(root, activeBranchKey)
+      await clearCodeEditorActiveCache(root)
+    }
+
+    if (activeBranchKey !== branchKey) {
+      await restoreCodeEditorBranchCache(root, branchKey)
+    }
+
+    await writeFile(branchMarkerPath, branchKey, 'utf8')
+  }
+
+  private async archiveActiveCodeEditorBranchCache(
+    root: string,
+    branchKey: string
+  ) {
+    const branchArchivePath = getCodeEditorBranchArchivePath(root, branchKey)
+
+    await rm(branchArchivePath, { recursive: true, force: true })
+    await mkdir(branchArchivePath, { recursive: true })
+    await copyCodeEditorActiveCache(root, branchArchivePath)
+  }
+
+  private async archiveCodeEditorConflictFile(
+    root: string,
+    relativePath: string,
+    contents: string,
+    lineEnding: CodeEditorLineEnding
+  ): Promise<ICodeEditorConflictFile> {
+    const id = `${Date.now()}-${hashCodeEditorContents(contents).slice(0, 12)}`
+    const conflictPath = resolveCodeEditorConflictFilePath(
+      root,
+      relativePath,
+      id
+    )
+    await mkdir(Path.dirname(conflictPath), { recursive: true })
+    await writeFile(
+      conflictPath,
+      applyRawLineEnding(contents, lineEnding),
+      'utf8'
+    )
+
+    return { id, contents, lineEnding }
+  }
+
+  private async readCodeEditorEditLog(
+    root: string,
+    relativePath: string
+  ): Promise<ICodeEditorFileEditLog | null> {
+    const logPath = resolveCodeEditorEditLogPath(root, relativePath)
+    const raw = await readOptionalTextFile(logPath)
+
+    if (raw === null) {
+      return null
+    }
+
+    try {
+      const value = JSON.parse(raw) as ICodeEditorFileEditLog
+
+      if (
+        value !== null &&
+        value.relativePath === relativePath &&
+        typeof value.baseHash === 'string' &&
+        (value.lineEnding === 'lf' || value.lineEnding === 'crlf') &&
+        Array.isArray(value.undoStack) &&
+        Array.isArray(value.redoStack)
+      ) {
+        return value
+      }
+    } catch {
+      // Stale or corrupt edit logs are ignored and overwritten on the next edit.
+    }
+
+    return null
+  }
+
+  private async writeCodeEditorEditLog(
+    root: string,
+    relativePath: string,
+    value: ICodeEditorFileEditLog
+  ) {
+    const logPath = resolveCodeEditorEditLogPath(root, relativePath)
+    await mkdir(Path.dirname(logPath), { recursive: true })
+    await writeFile(logPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  }
+
+  private async removeCodeEditorTempFileFromRoot(
+    root: string,
+    relativePath: string
+  ) {
+    await rm(resolveCodeEditorTempFilePath(root, relativePath), { force: true })
+    await rm(resolveCodeEditorEditLogPath(root, relativePath), { force: true })
+  }
+
+  private getCodeEditorRepositoryTempRoot(repositoryPath: string) {
+    return Path.join(
+      getCodeEditorTempBaseDirectory(),
+      createCodeEditorRepositoryTempDirectoryName(repositoryPath)
+    )
+  }
+
+  private assertCodeEditorBranchKey(branchKey: string) {
+    if (typeof branchKey !== 'string' || branchKey.length === 0) {
+      throw new Error('Invalid CodeMirror editor branch key')
     }
   }
 
@@ -890,6 +1352,266 @@ function getErrorCode(error: unknown) {
   return typeof (error as NodeJS.ErrnoException | null)?.code === 'string'
     ? (error as NodeJS.ErrnoException).code
     : null
+}
+
+function getCodeEditorTempBaseDirectory() {
+  return Path.join(getWebUIDeploymentDirectory(), 'tmp')
+}
+
+function getWebUIDeploymentDirectory() {
+  const dataDirectory = getWebUIDataDirectory()
+  return Path.basename(dataDirectory) === '.gitdesk-webui'
+    ? Path.dirname(dataDirectory)
+    : dataDirectory
+}
+
+function getWebUIDataDirectory() {
+  const fromEnv = process.env.GITDESK_WEBUI_DATA_DIR
+  const fromArgs = getArgValue('--data-dir')
+  const raw =
+    fromEnv && fromEnv.trim().length > 0
+      ? fromEnv
+      : fromArgs && fromArgs.trim().length > 0
+      ? fromArgs
+      : Path.join(process.cwd(), '.gitdesk-webui')
+
+  return Path.resolve(raw)
+}
+
+function getArgValue(name: string) {
+  const index = process.argv.indexOf(name)
+
+  if (index < 0) {
+    return undefined
+  }
+
+  const value = process.argv[index + 1]
+  return value && !value.startsWith('--') ? value : undefined
+}
+
+function createCodeEditorRepositoryTempDirectoryName(repositoryPath: string) {
+  const name = Path.basename(Path.resolve(repositoryPath))
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/\.+$/g, '')
+    .trim()
+  const hash = createHash('sha256')
+    .update(Path.resolve(repositoryPath))
+    .digest('hex')
+    .slice(0, 8)
+
+  return `${name.length > 0 ? name : 'repository'}-${hash}`
+}
+
+function createCodeEditorPanelMemoryKey(
+  repositoryPath: string,
+  branchKey: string
+) {
+  return `${Path.resolve(repositoryPath)}\0${branchKey}`
+}
+
+function assertCodeEditorRelativePath(relativePath: string) {
+  const normalizedPath = normalizeRepositoryRelativePath(relativePath)
+
+  if (
+    normalizedPath.length === 0 ||
+    normalizedPath === '.' ||
+    normalizedPath === '..' ||
+    normalizedPath.startsWith('../') ||
+    Path.isAbsolute(normalizedPath)
+  ) {
+    throw new Error('Invalid CodeMirror editor file path')
+  }
+
+  return normalizedPath
+}
+
+function resolveCodeEditorTempFilePath(root: string, relativePath: string) {
+  return resolveInsideDirectory(
+    root,
+    assertCodeEditorRelativePath(relativePath)
+  )
+}
+
+function resolveCodeEditorEditLogPath(root: string, relativePath: string) {
+  return Path.join(
+    root,
+    '.cm_editlog',
+    `${hashCodeEditorPath(relativePath)}.json`
+  )
+}
+
+function resolveCodeEditorConflictFilePath(
+  root: string,
+  relativePath: string,
+  conflictID: string
+) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(conflictID)) {
+    throw new Error('Invalid CodeMirror editor conflict id')
+  }
+
+  return Path.join(
+    root,
+    '.cm_conflicts',
+    hashCodeEditorPath(relativePath),
+    conflictID
+  )
+}
+
+function resolveInsideDirectory(root: string, relativePath: string) {
+  const absoluteRoot = Path.resolve(root)
+  const absolutePath = Path.resolve(absoluteRoot, relativePath)
+  const relativeToRoot = Path.relative(absoluteRoot, absolutePath)
+
+  if (
+    relativeToRoot.startsWith('..') ||
+    Path.isAbsolute(relativeToRoot) ||
+    relativeToRoot.length === 0
+  ) {
+    throw new Error('Invalid CodeMirror editor cache path')
+  }
+
+  return absolutePath
+}
+
+function getCodeEditorBranchArchivePath(root: string, branchKey: string) {
+  return Path.join(root, '.git', hashCodeEditorPath(branchKey))
+}
+
+async function restoreCodeEditorBranchCache(root: string, branchKey: string) {
+  const branchArchivePath = getCodeEditorBranchArchivePath(root, branchKey)
+
+  if (!(await pathExistsOnDisk(branchArchivePath))) {
+    return
+  }
+
+  await copyDirectoryContents(branchArchivePath, root)
+}
+
+async function clearCodeEditorActiveCache(root: string) {
+  if (!(await pathExistsOnDisk(root))) {
+    return
+  }
+
+  for (const entry of await readdir(root)) {
+    if (entry === '.git') {
+      continue
+    }
+
+    await rm(Path.join(root, entry), { recursive: true, force: true })
+  }
+}
+
+async function copyCodeEditorActiveCache(root: string, destination: string) {
+  if (!(await pathExistsOnDisk(root))) {
+    return
+  }
+
+  for (const entry of await readdir(root)) {
+    if (entry === '.git') {
+      continue
+    }
+
+    await copyPath(Path.join(root, entry), Path.join(destination, entry))
+  }
+}
+
+async function copyDirectoryContents(source: string, destination: string) {
+  await mkdir(destination, { recursive: true })
+
+  for (const entry of await readdir(source)) {
+    await copyPath(Path.join(source, entry), Path.join(destination, entry))
+  }
+}
+
+async function copyPath(source: string, destination: string) {
+  const stats = await lstat(source)
+
+  if (stats.isDirectory()) {
+    await mkdir(destination, { recursive: true })
+    await copyDirectoryContents(source, destination)
+    return
+  }
+
+  if (stats.isFile()) {
+    await mkdir(Path.dirname(destination), { recursive: true })
+    await copyFile(source, destination)
+  }
+}
+
+async function readOptionalTextFile(path: string) {
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if (getErrorCode(error) === 'ENOENT') {
+      return null
+    }
+
+    throw error
+  }
+}
+
+function assertCodeEditorTextFile(contents: string) {
+  if (contents.includes('\0')) {
+    throw new Error('Binary files cannot be opened in CodeMirror Editor.')
+  }
+}
+
+function hashCodeEditorContents(contents: string) {
+  return createHash('sha256')
+    .update(normalizeEditorText(contents))
+    .digest('hex')
+}
+
+function hashCodeEditorPath(value: string) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function detectRawLineEnding(contents: string): CodeEditorLineEnding {
+  return contents.includes('\r\n') ? 'crlf' : 'lf'
+}
+
+function applyRawLineEnding(
+  contents: string,
+  lineEnding: CodeEditorLineEnding
+) {
+  const normalized = normalizeEditorText(contents)
+  return lineEnding === 'crlf' ? normalized.replace(/\n/g, '\r\n') : normalized
+}
+
+function createCodeEditorEditAction(
+  previousContents: string,
+  nextContents: string
+): ICodeEditorEditAction {
+  let prefix = 0
+  const maxPrefix = Math.min(previousContents.length, nextContents.length)
+
+  while (
+    prefix < maxPrefix &&
+    previousContents.charCodeAt(prefix) === nextContents.charCodeAt(prefix)
+  ) {
+    prefix++
+  }
+
+  let previousEnd = previousContents.length
+  let nextEnd = nextContents.length
+
+  while (
+    previousEnd > prefix &&
+    nextEnd > prefix &&
+    previousContents.charCodeAt(previousEnd - 1) ===
+      nextContents.charCodeAt(nextEnd - 1)
+  ) {
+    previousEnd--
+    nextEnd--
+  }
+
+  return {
+    from: prefix,
+    to: previousEnd,
+    deleted: previousContents.slice(prefix, previousEnd),
+    inserted: nextContents.slice(prefix, nextEnd),
+    updatedAt: Date.now(),
+  }
 }
 
 function getErrorMessage(error: unknown) {

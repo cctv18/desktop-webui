@@ -45,6 +45,11 @@
       .octicon {
         color: currentColor;
       }
+
+      &:hover {
+        background: var(--box-selected-active-background-color);
+        color: var(--box-selected-active-text-color);
+      }
     }
   }
 }
@@ -183,6 +188,11 @@
 
     .octicon {
       color: currentColor;
+    }
+
+    &:hover {
+      background: var(--box-selected-active-background-color);
+      color: var(--box-selected-active-text-color);
     }
   }
 }
@@ -377,6 +387,20 @@
   }
 }
 
+.code-editor-conflict-diff {
+  flex: 0 0 42%;
+  min-width: 280px;
+  max-width: 50%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--box-border-color);
+  font-family: var(--font-family-monospace);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .code-editor-preview {
   flex: 1 1 auto;
   min-width: 0;
@@ -417,12 +441,6 @@
   line-height: 1.45;
   background: var(--background-color);
 
-  div {
-    min-height: 19px;
-    padding: 0 12px;
-    white-space: pre;
-  }
-
   .added {
     background: var(--diff-add-background-color);
     color: var(--diff-add-text-color);
@@ -436,6 +454,40 @@
   .hunk {
     background: var(--diff-hunk-background-color);
     color: var(--diff-hunk-text-color);
+  }
+}
+
+.code-editor-unified-diff-header {
+  min-height: 28px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--box-border-color);
+  background: var(--box-alt-background-color);
+  color: var(--text-secondary-color);
+  font-family: var(--font-family-sans-serif);
+  font-size: var(--font-size);
+  white-space: nowrap;
+}
+
+.code-editor-unified-diff-row {
+  min-height: 19px;
+  display: grid;
+  grid-template-columns: 56px 56px minmax(0, 1fr);
+
+  .line-number {
+    padding: 0 8px;
+    text-align: right;
+    color: var(--text-secondary-color);
+    background: var(--box-alt-background-color);
+    user-select: none;
+  }
+
+  pre {
+    min-width: 0;
+    margin: 0;
+    padding: 0 10px;
+    overflow: hidden;
+    white-space: pre;
+    font-family: var(--font-family-monospace);
   }
 }
 

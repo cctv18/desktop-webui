@@ -63,8 +63,6 @@ type MutableDirectoryNode = {
   children: CodeEditorTreeNode[]
 }
 
-const draftStoragePrefix = 'gitdesk-webui:code-editor:draft:'
-
 export const defaultCodeEditorIgnoredPaths = [
   '.git',
   '.hg',
@@ -80,20 +78,6 @@ export const defaultCodeEditorIgnoredPaths = [
 
 export function normalizeRepositoryRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
-}
-
-export function createCodeEditorDraftKey(
-  repositoryPath: string,
-  branchName: string,
-  relativePath: string
-) {
-  const payload = JSON.stringify({
-    repositoryPath,
-    branchName,
-    relativePath: normalizeRepositoryRelativePath(relativePath),
-  })
-
-  return `${draftStoragePrefix}${encodeURIComponent(payload)}`
 }
 
 export function buildFileTreeFromPaths(

@@ -186,6 +186,11 @@ import {
   CodeEditorPanel as CodeEditorPanelView,
   ICodeEditorOpenFileRequest,
 } from './code-editor'
+import {
+  clearCodeEditorRepositoryCache,
+  readCodeEditorPanelSelection,
+  writeCodeEditorPanelSelection,
+} from './code-editor/code-editor-storage'
 import { OpenPullRequestDialog } from './open-pull-request/open-pull-request-dialog'
 import { sendNonFatalException } from '../lib/helpers/non-fatal-exception'
 import { ICustomIntegration } from '../lib/custom-integration'
@@ -287,6 +292,7 @@ export class App extends React.Component<IAppProps, IAppState> {
     string,
     RepositoryPanelKind
   >()
+  private readonly loadedRepositoryPanelKeys = new Set<string>()
   private panelDropdownState: DropdownState = 'closed'
   private codeEditorOpenFileRequest: ICodeEditorOpenFileRequest | null = null
   private nextCodeEditorOpenFileRequestID = 1
@@ -1104,10 +1110,12 @@ export class App extends React.Component<IAppProps, IAppState> {
       capture: true,
     })
     this.refreshSelectedCodeEditorMenuFileExists()
+    void this.loadSelectedRepositoryPanelFromBackend()
   }
 
   public componentDidUpdate() {
     this.refreshSelectedCodeEditorMenuFileExists()
+    void this.loadSelectedRepositoryPanelFromBackend()
   }
 
   private onDocumentFocus = (event: FocusEvent) => {
@@ -1293,6 +1301,9 @@ export class App extends React.Component<IAppProps, IAppState> {
     }
 
     if (repository instanceof CloningRepository || repository.missing) {
+      if (repository instanceof Repository) {
+        void clearCodeEditorRepositoryCache(repository.path).catch(() => {})
+      }
       this.props.dispatcher.removeRepository(repository, false)
       return
     }
@@ -1303,6 +1314,7 @@ export class App extends React.Component<IAppProps, IAppState> {
         repository,
       })
     } else {
+      void clearCodeEditorRepositoryCache(repository.path).catch(() => {})
       this.props.dispatcher.removeRepository(repository, false)
     }
   }
@@ -1311,6 +1323,7 @@ export class App extends React.Component<IAppProps, IAppState> {
     repository: Repository,
     deleteRepoFromDisk: boolean
   ) => {
+    await clearCodeEditorRepositoryCache(repository.path).catch(() => {})
     await this.props.dispatcher.removeRepository(repository, deleteRepoFromDisk)
   }
 
@@ -3640,6 +3653,42 @@ export class App extends React.Component<IAppProps, IAppState> {
     this.forceUpdate()
   }
 
+  private async loadSelectedRepositoryPanelFromBackend() {
+    const selection = this.state.selectedState
+    if (selection === null || selection.type !== SelectionType.Repository) {
+      return
+    }
+
+    const branchKey = getRepositoryPanelBranchKey(selection.state)
+    const key = createRepositoryPanelMemoryKey(
+      selection.repository.path,
+      branchKey
+    )
+
+    if (this.loadedRepositoryPanelKeys.has(key)) {
+      return
+    }
+
+    this.loadedRepositoryPanelKeys.add(key)
+
+    const panel = await readCodeEditorPanelSelection(
+      selection.repository.path,
+      branchKey
+    ).catch(() => 'commit-management' as RepositoryPanelKind)
+    const currentPanel = this.selectedRepositoryPanelByKey.get(key)
+
+    if (currentPanel !== undefined && currentPanel !== panel) {
+      return
+    }
+
+    if (this.selectedRepositoryPanelByKey.get(key) === panel) {
+      return
+    }
+
+    this.selectedRepositoryPanelByKey.set(key, panel)
+    this.forceUpdate()
+  }
+
   private getSelectedRepositoryPanel(): RepositoryPanelKind {
     const selection = this.state.selectedState
     if (selection === null || selection.type !== SelectionType.Repository) {
@@ -3662,13 +3711,20 @@ export class App extends React.Component<IAppProps, IAppState> {
       return
     }
 
+    const branchKey = getRepositoryPanelBranchKey(selection.state)
     this.selectedRepositoryPanelByKey.set(
-      createRepositoryPanelMemoryKey(
-        selection.repository.path,
-        getRepositoryPanelBranchKey(selection.state)
-      ),
+      createRepositoryPanelMemoryKey(selection.repository.path, branchKey),
       panel
     )
+    this.loadedRepositoryPanelKeys.add(
+      createRepositoryPanelMemoryKey(selection.repository.path, branchKey)
+    )
+
+    void writeCodeEditorPanelSelection(
+      selection.repository.path,
+      branchKey,
+      panel
+    ).catch(() => {})
   }
 
   private renderPushPullToolbarButton() {
@@ -4398,7 +4454,7 @@ function getRepositoryPanelBranchKey(repositoryState: IRepositoryState) {
   const tip = repositoryState.branchesState.tip
   switch (tip.kind) {
     case TipState.Valid:
-      return tip.branch.name
+      return `tip:${tip.branch.tip.sha}`
     case TipState.Unborn:
       return tip.ref
     case TipState.Detached:

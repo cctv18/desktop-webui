@@ -7,6 +7,17 @@ import {
   CodeEditorLineEnding,
   normalizeRepositoryRelativePath,
 } from './code-editor-model'
+import {
+  activateCodeEditorBranchCache,
+  clearCodeEditorRepositoryCache,
+  ICodeEditorTempFileStatus,
+  IWriteCodeEditorTempFileOptions,
+  readCodeEditorConflictFile,
+  readCodeEditorTempFileStatus,
+  removeCodeEditorConflictFile,
+  removeCodeEditorTempFile,
+  writeCodeEditorTempFile,
+} from './code-editor-storage'
 
 const maxPreviewBlobBytes = 5 * 1024 * 1024
 
@@ -52,6 +63,81 @@ export async function writeRepositoryTextFile(
     getRepositoryFilePath(repository, relativePath),
     applyLineEnding(contents, lineEnding),
   ])
+}
+
+export async function activateRepositoryEditorBranchCache(
+  repository: Repository,
+  branchKey: string
+) {
+  return activateCodeEditorBranchCache(repository.path, branchKey)
+}
+
+export async function clearRepositoryEditorCache(repository: Repository) {
+  return clearCodeEditorRepositoryCache(repository.path)
+}
+
+export async function readRepositoryTempFileStatus(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string,
+  currentContents: string
+): Promise<ICodeEditorTempFileStatus> {
+  return readCodeEditorTempFileStatus(
+    repository.path,
+    branchKey,
+    relativePath,
+    currentContents
+  )
+}
+
+export async function writeRepositoryTempTextFile(
+  repository: Repository,
+  options: IWriteCodeEditorTempFileOptions
+) {
+  return writeCodeEditorTempFile(repository.path, {
+    ...options,
+    contents: applyLineEnding(options.contents, options.lineEnding),
+    previousContents: applyLineEnding(
+      options.previousContents,
+      options.lineEnding
+    ),
+  })
+}
+
+export async function removeRepositoryTempTextFile(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string
+) {
+  return removeCodeEditorTempFile(repository.path, branchKey, relativePath)
+}
+
+export async function readRepositoryConflictTextFile(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string,
+  conflictID: string
+) {
+  return readCodeEditorConflictFile(
+    repository.path,
+    branchKey,
+    relativePath,
+    conflictID
+  )
+}
+
+export async function removeRepositoryConflictTextFile(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string,
+  conflictID: string
+) {
+  return removeCodeEditorConflictFile(
+    repository.path,
+    branchKey,
+    relativePath,
+    conflictID
+  )
 }
 
 export async function readHeadTextFile(

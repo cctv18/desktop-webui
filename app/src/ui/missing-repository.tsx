@@ -10,6 +10,7 @@ import { LinkButton } from './lib/link-button'
 import { addSafeDirectory, getRepositoryType } from '../lib/git'
 import { Ref } from './lib/ref'
 import { Loading } from './lib/loading'
+import { clearCodeEditorRepositoryCache } from './code-editor/code-editor-storage'
 
 interface IMissingRepositoryProps {
   readonly dispatcher: Dispatcher
@@ -164,6 +165,9 @@ export class MissingRepository extends React.Component<
   }
 
   private remove = () => {
+    void clearCodeEditorRepositoryCache(this.props.repository.path).catch(
+      () => {}
+    )
     this.props.dispatcher.removeRepository(this.props.repository, false)
   }
 
@@ -178,6 +182,9 @@ export class MissingRepository extends React.Component<
     }
 
     try {
+      await clearCodeEditorRepositoryCache(this.props.repository.path).catch(
+        () => {}
+      )
       await this.props.dispatcher.cloneAgain(
         cloneURL,
         this.props.repository.path
