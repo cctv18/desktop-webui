@@ -30,6 +30,23 @@
       background: var(--secondary-button-hover-background);
     }
   }
+
+  .code-editor-tree-row {
+    background: transparent;
+
+    &:hover {
+      background: var(--list-item-hover-background-color);
+    }
+
+    &.selected {
+      background: var(--box-selected-active-background-color);
+      color: var(--box-selected-active-text-color);
+
+      .octicon {
+        color: currentColor;
+      }
+    }
+  }
 }
 
 .code-editor-sidebar {
@@ -140,6 +157,12 @@
     flex: 0 0 16px;
     color: var(--text-secondary-color);
     fill: currentColor;
+  }
+
+  .code-editor-tree-toggle {
+    width: 12px;
+    flex-basis: 12px;
+    color: var(--text-secondary-color);
   }
 
   span {
@@ -560,12 +583,13 @@
   }
 }
 
-.panel-toolbar-button {
+.panel-button .panel-toolbar-button {
   .title {
     font-weight: var(--font-weight-normal);
   }
 
   .description {
     font-weight: var(--font-weight-semibold);
+    color: var(--toolbar-button-color);
   }
 }

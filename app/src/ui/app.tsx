@@ -269,7 +269,6 @@ export const bannerTransitionTimeout = { enter: 500, exit: 400 }
 const ReadyDelay = 100
 
 type RepositoryPanelKind = 'commit-management' | 'code-editor'
-const repositoryPanelStoragePrefix = 'gitdesk-webui:selected-repository-panel:'
 
 export class App extends React.Component<IAppProps, IAppState> {
   private loading = true
@@ -284,6 +283,10 @@ export class App extends React.Component<IAppProps, IAppState> {
   private updateIntervalHandle?: number
 
   private repositoryViewRef = React.createRef<RepositoryView>()
+  private readonly selectedRepositoryPanelByKey = new Map<
+    string,
+    RepositoryPanelKind
+  >()
   private panelDropdownState: DropdownState = 'closed'
   private codeEditorOpenFileRequest: ICodeEditorOpenFileRequest | null = null
   private nextCodeEditorOpenFileRequestID = 1
@@ -3411,6 +3414,12 @@ export class App extends React.Component<IAppProps, IAppState> {
     this.forceUpdate()
   }
 
+  private onCodeEditorOpenFileRequestHandled = (id: number) => {
+    if (this.codeEditorOpenFileRequest?.id === id) {
+      this.codeEditorOpenFileRequest = null
+    }
+  }
+
   private showRepository = (repository: Repository | CloningRepository) => {
     if (!(repository instanceof Repository)) {
       return
@@ -3637,9 +3646,13 @@ export class App extends React.Component<IAppProps, IAppState> {
       return 'commit-management'
     }
 
-    return readSelectedRepositoryPanel(
-      selection.repository.path,
-      getRepositoryPanelBranchKey(selection.state)
+    return (
+      this.selectedRepositoryPanelByKey.get(
+        createRepositoryPanelMemoryKey(
+          selection.repository.path,
+          getRepositoryPanelBranchKey(selection.state)
+        )
+      ) ?? 'commit-management'
     )
   }
 
@@ -3649,9 +3662,11 @@ export class App extends React.Component<IAppProps, IAppState> {
       return
     }
 
-    writeSelectedRepositoryPanel(
-      selection.repository.path,
-      getRepositoryPanelBranchKey(selection.state),
+    this.selectedRepositoryPanelByKey.set(
+      createRepositoryPanelMemoryKey(
+        selection.repository.path,
+        getRepositoryPanelBranchKey(selection.state)
+      ),
       panel
     )
   }
@@ -4052,6 +4067,7 @@ export class App extends React.Component<IAppProps, IAppState> {
             dispatcher={this.props.dispatcher}
             currentTheme={state.currentTheme}
             openFileRequest={this.codeEditorOpenFileRequest}
+            onOpenFileRequestHandled={this.onCodeEditorOpenFileRequestHandled}
           />
         )
       }
@@ -4371,34 +4387,11 @@ export class App extends React.Component<IAppProps, IAppState> {
   }
 }
 
-function readSelectedRepositoryPanel(
-  repositoryPath: string,
-  branchName: string
-): RepositoryPanelKind {
-  const value = localStorage.getItem(
-    createRepositoryPanelStorageKey(repositoryPath, branchName)
-  )
-  return value === 'code-editor' ? 'code-editor' : 'commit-management'
-}
-
-function writeSelectedRepositoryPanel(
-  repositoryPath: string,
-  branchName: string,
-  panel: RepositoryPanelKind
-) {
-  localStorage.setItem(
-    createRepositoryPanelStorageKey(repositoryPath, branchName),
-    panel
-  )
-}
-
-function createRepositoryPanelStorageKey(
+function createRepositoryPanelMemoryKey(
   repositoryPath: string,
   branchName: string
 ) {
-  return `${repositoryPanelStoragePrefix}${encodeURIComponent(
-    JSON.stringify({ repositoryPath, branchName })
-  )}`
+  return JSON.stringify({ repositoryPath, branchName })
 }
 
 function getRepositoryPanelBranchKey(repositoryState: IRepositoryState) {

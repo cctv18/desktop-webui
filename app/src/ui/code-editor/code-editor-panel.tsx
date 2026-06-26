@@ -33,6 +33,11 @@ import {
   writeRepositoryTextFile,
 } from './code-editor-files'
 import { CodeMirrorEditor } from './codemirror-editor'
+import {
+  readCodeEditorStorageItem,
+  removeCodeEditorStorageItem,
+  writeCodeEditorStorageItem,
+} from './code-editor-storage'
 
 export interface ICodeEditorOpenFileRequest {
   readonly id: number
@@ -45,6 +50,7 @@ interface ICodeEditorPanelProps {
   readonly dispatcher: Dispatcher
   readonly currentTheme: ApplicationTheme
   readonly openFileRequest: ICodeEditorOpenFileRequest | null
+  readonly onOpenFileRequestHandled: (id: number) => void
 }
 
 interface ICodeEditorDraft {
@@ -105,15 +111,13 @@ export class CodeEditorPanel extends React.Component<
   private readonly editorRef = React.createRef<CodeMirrorEditor>()
   private searchInput: HTMLInputElement | null = null
   private lastOpenRequestID: number | null = null
+  private isMounted = false
 
   public constructor(props: ICodeEditorPanelProps) {
     super(props)
 
-    const preferences = readPreferences()
-    const session = readSession(
-      props.repository.path,
-      getBranchKey(props.repositoryState)
-    )
+    const preferences = getDefaultPreferences()
+    const session = getDefaultSession()
 
     this.state = {
       fileTree: [],
@@ -145,10 +149,8 @@ export class CodeEditorPanel extends React.Component<
   }
 
   public componentDidMount() {
-    this.refreshRepositoryTree()
-    if (!this.openRequestedFileIfNeeded() && this.state.selectedPath !== null) {
-      this.openFile(this.state.selectedPath)
-    }
+    this.isMounted = true
+    void this.initialize()
   }
 
   public componentDidUpdate(previousProps: ICodeEditorPanelProps) {
@@ -157,33 +159,7 @@ export class CodeEditorPanel extends React.Component<
       getBranchKey(previousProps.repositoryState) !==
         getBranchKey(this.props.repositoryState)
     ) {
-      this.persistDraftIfNeeded()
-      const session = readSession(
-        this.props.repository.path,
-        getBranchKey(this.props.repositoryState)
-      )
-      this.setState(
-        {
-          expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
-          selectedPath: session.selectedPath,
-          diskContents: '',
-          headContents: '',
-          editorContents: '',
-          pendingDraft: null,
-          activeTab: session.activeTab,
-          treeVisible: session.treeVisible,
-          activeSearchMatchIndex: 0,
-        },
-        () => {
-          this.refreshRepositoryTree()
-          if (
-            !this.openRequestedFileIfNeeded() &&
-            this.state.selectedPath !== null
-          ) {
-            this.openFile(this.state.selectedPath)
-          }
-        }
-      )
+      void this.handleRepositoryContextChanged()
       return
     }
 
@@ -191,6 +167,7 @@ export class CodeEditorPanel extends React.Component<
   }
 
   public componentWillUnmount() {
+    this.isMounted = false
     this.persistDraftIfNeeded()
     this.persistSession()
   }
@@ -489,7 +466,7 @@ export class CodeEditorPanel extends React.Component<
               : 'code-editor-preview-pane hidden'
           }
         >
-          {this.renderPreview()}
+          {this.state.activeTab === 'preview' ? this.renderPreview() : null}
         </div>
       </div>
     )
@@ -656,6 +633,10 @@ export class CodeEditorPanel extends React.Component<
           onClick={() => this.toggleDirectory(node.path)}
         >
           <Octicon
+            className="code-editor-tree-toggle"
+            symbol={expanded ? octicons.chevronDown : octicons.chevronRight}
+          />
+          <Octicon
             symbol={
               expanded
                 ? octicons.fileDirectoryOpenFill
@@ -717,12 +698,80 @@ export class CodeEditorPanel extends React.Component<
 
     this.lastOpenRequestID = request.id
     this.openFile(request.relativePath)
+    this.props.onOpenFileRequestHandled(request.id)
     return true
+  }
+
+  private initialize = async () => {
+    const preferences = await readPreferences()
+    const session = await readSession(
+      this.props.repository.path,
+      getBranchKey(this.props.repositoryState)
+    )
+
+    if (!this.isMounted) {
+      return
+    }
+
+    this.setState(
+      {
+        preferences,
+        ignoredPathListText: serializeIgnoredPathList(preferences.ignoredPaths),
+        expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
+        selectedPath: session.selectedPath,
+        activeTab: session.activeTab,
+        treeVisible: session.treeVisible,
+      },
+      () => {
+        this.refreshRepositoryTree()
+        if (
+          !this.openRequestedFileIfNeeded() &&
+          this.state.selectedPath !== null
+        ) {
+          this.openFile(this.state.selectedPath)
+        }
+      }
+    )
+  }
+
+  private handleRepositoryContextChanged = async () => {
+    await this.persistDraftIfNeeded()
+    const session = await readSession(
+      this.props.repository.path,
+      getBranchKey(this.props.repositoryState)
+    )
+
+    if (!this.isMounted) {
+      return
+    }
+
+    this.setState(
+      {
+        expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
+        selectedPath: session.selectedPath,
+        diskContents: '',
+        headContents: '',
+        editorContents: '',
+        pendingDraft: null,
+        activeTab: session.activeTab,
+        treeVisible: session.treeVisible,
+        activeSearchMatchIndex: 0,
+      },
+      () => {
+        this.refreshRepositoryTree()
+        if (
+          !this.openRequestedFileIfNeeded() &&
+          this.state.selectedPath !== null
+        ) {
+          this.openFile(this.state.selectedPath)
+        }
+      }
+    )
   }
 
   private openFile = async (relativePath: string) => {
     if (this.state.selectedPath !== relativePath) {
-      this.persistDraftIfNeeded()
+      await this.persistDraftIfNeeded()
     }
 
     this.setState({
@@ -746,7 +795,7 @@ export class CodeEditorPanel extends React.Component<
         getSystemDefaultLineEnding()
       )
       const editorContents = normalizeEditorText(rawContents)
-      const draft = readDraft(
+      const draft = await readDraft(
         this.props.repository.path,
         getBranchKey(this.props.repositoryState),
         relativePath
@@ -843,7 +892,7 @@ export class CodeEditorPanel extends React.Component<
         this.state.editorContents,
         this.state.lineEnding
       )
-      removeDraft(
+      await removeDraft(
         this.props.repository.path,
         getBranchKey(this.props.repositoryState),
         selectedPath
@@ -907,14 +956,14 @@ export class CodeEditorPanel extends React.Component<
     this.setState({ pendingDraft: null })
   }
 
-  private persistDraftIfNeeded() {
+  private async persistDraftIfNeeded() {
     const selectedPath = this.state.selectedPath
     if (selectedPath === null) {
       return
     }
 
     if (!this.isDirty()) {
-      removeDraft(
+      await removeDraft(
         this.props.repository.path,
         getBranchKey(this.props.repositoryState),
         selectedPath
@@ -922,7 +971,7 @@ export class CodeEditorPanel extends React.Component<
       return
     }
 
-    writeDraft(
+    await writeDraft(
       this.props.repository.path,
       getBranchKey(this.props.repositoryState),
       selectedPath,
@@ -1109,7 +1158,10 @@ export class CodeEditorPanel extends React.Component<
     preferences: ICodeEditorPreferences,
     callback?: () => void
   ) {
-    localStorage.setItem(editorPreferenceKey, JSON.stringify(preferences))
+    void writeCodeEditorStorageItem(
+      editorPreferenceKey,
+      JSON.stringify(preferences)
+    ).catch(() => {})
     this.setState({ preferences }, callback)
   }
 
@@ -1121,13 +1173,13 @@ export class CodeEditorPanel extends React.Component<
       activeTab: this.state.activeTab,
     }
 
-    localStorage.setItem(
+    void writeCodeEditorStorageItem(
       createCodeEditorSessionKey(
         this.props.repository.path,
         getBranchKey(this.props.repositoryState)
       ),
       JSON.stringify(session)
-    )
+    ).catch(() => {})
   }
 }
 
@@ -1149,12 +1201,12 @@ function getSystemDefaultLineEnding(): CodeEditorLineEnding {
   return __WIN32__ ? 'crlf' : 'lf'
 }
 
-function readDraft(
+async function readDraft(
   repositoryPath: string,
   branchName: string,
   relativePath: string
-): ICodeEditorDraft | null {
-  const raw = localStorage.getItem(
+): Promise<ICodeEditorDraft | null> {
+  const raw = await readCodeEditorStorageItem(
     createCodeEditorDraftKey(repositoryPath, branchName, relativePath)
   )
   if (raw === null) {
@@ -1169,37 +1221,41 @@ function readDraft(
   }
 }
 
-function writeDraft(
+async function writeDraft(
   repositoryPath: string,
   branchName: string,
   relativePath: string,
   draft: ICodeEditorDraft
 ) {
-  localStorage.setItem(
+  await writeCodeEditorStorageItem(
     createCodeEditorDraftKey(repositoryPath, branchName, relativePath),
     JSON.stringify(draft)
   )
 }
 
-function removeDraft(
+async function removeDraft(
   repositoryPath: string,
   branchName: string,
   relativePath: string
 ) {
-  localStorage.removeItem(
+  await removeCodeEditorStorageItem(
     createCodeEditorDraftKey(repositoryPath, branchName, relativePath)
   )
 }
 
-function readPreferences(): ICodeEditorPreferences {
-  const fallback: ICodeEditorPreferences = {
+function getDefaultPreferences(): ICodeEditorPreferences {
+  return {
     fontSize: 13,
     lineWrapping: false,
     diffMode: 'unified',
     ignoredPaths: defaultCodeEditorIgnoredPaths,
     showIgnoredPaths: false,
   }
-  const raw = localStorage.getItem(editorPreferenceKey)
+}
+
+async function readPreferences(): Promise<ICodeEditorPreferences> {
+  const fallback = getDefaultPreferences()
+  const raw = await readCodeEditorStorageItem(editorPreferenceKey)
   if (raw === null) {
     return fallback
   }
@@ -1224,17 +1280,21 @@ function readPreferences(): ICodeEditorPreferences {
   }
 }
 
-function readSession(
-  repositoryPath: string,
-  branchName: string
-): ICodeEditorSession {
-  const fallback: ICodeEditorSession = {
+function getDefaultSession(): ICodeEditorSession {
+  return {
     selectedPath: null,
     expandedDirectoryPaths: [],
     treeVisible: true,
     activeTab: 'edit',
   }
-  const raw = localStorage.getItem(
+}
+
+async function readSession(
+  repositoryPath: string,
+  branchName: string
+): Promise<ICodeEditorSession> {
+  const fallback = getDefaultSession()
+  const raw = await readCodeEditorStorageItem(
     createCodeEditorSessionKey(repositoryPath, branchName)
   )
   if (raw === null) {

@@ -314,6 +314,11 @@ export class WebRuntime {
         }
       case 'codeEditor':
         return {
+          readStorageItem: (key: string) => this.readCodeEditorStorageItem(key),
+          removeStorageItem: (key: string) =>
+            this.removeCodeEditorStorageItem(key),
+          writeStorageItem: (key: string, value: string) =>
+            this.writeCodeEditorStorageItem(key, value),
           listRepositoryFiles: (
             path: string,
             options?: ICodeEditorFileListOptions
@@ -321,6 +326,27 @@ export class WebRuntime {
         }
       default:
         throw new Error(`Unknown WebUI RPC target '${targetName}'`)
+    }
+  }
+
+  private readCodeEditorStorageItem(key: string) {
+    this.assertCodeEditorStorageKey(key)
+    return localStorage.getItem(key)
+  }
+
+  private writeCodeEditorStorageItem(key: string, value: string) {
+    this.assertCodeEditorStorageKey(key)
+    localStorage.setItem(key, value)
+  }
+
+  private removeCodeEditorStorageItem(key: string) {
+    this.assertCodeEditorStorageKey(key)
+    localStorage.removeItem(key)
+  }
+
+  private assertCodeEditorStorageKey(key: string) {
+    if (!key.startsWith('gitdesk-webui:code-editor:')) {
+      throw new Error('Invalid CodeMirror editor storage key')
     }
   }
 

@@ -54,6 +54,11 @@ import {
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
 } from './code-editor-model'
+import {
+  readCodeEditorStorageItem,
+  removeCodeEditorStorageItem,
+  writeCodeEditorStorageItem,
+} from './code-editor-storage'
 
 interface ICodeMirrorEditorProps {
   readonly value: string
@@ -78,6 +83,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
   private readonly searchCompartment = new Compartment()
   private view: EditorView | null = null
   private ignoreNextUpdate = false
+  private cachedStateWriteHandle: number | null = null
 
   public componentDidMount() {
     const parent = this.containerRef.current
@@ -90,6 +96,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
       state: this.createEditorState(),
     })
 
+    void this.loadCachedEditorState()
     this.focusActiveMatch()
   }
 
@@ -101,6 +108,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
     if (previousProps.stateStorageKey !== this.props.stateStorageKey) {
       this.writeCachedEditorState(previousProps.stateStorageKey)
       this.view.setState(this.createEditorState())
+      void this.loadCachedEditorState()
       this.focusActiveMatch()
       return
     }
@@ -177,6 +185,7 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
 
   public componentWillUnmount() {
     this.writeCachedEditorState()
+    this.flushCachedEditorState()
     this.view?.destroy()
     this.view = null
   }
@@ -280,11 +289,11 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
     }
 
     this.props.onChange(update.state.doc.toString())
-    this.writeCachedEditorState()
+    this.scheduleCachedEditorStateWrite()
   }
 
   private createEditorState() {
-    const cachedState = readCachedEditorState(this.props.stateStorageKey)
+    const cachedState = getCachedEditorState(this.props.stateStorageKey)
     const extensions = this.getExtensions()
 
     if (cachedState !== null) {
@@ -318,6 +327,53 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
       key,
       this.view.state.toJSON({ history: historyField })
     )
+  }
+
+  private scheduleCachedEditorStateWrite() {
+    if (this.cachedStateWriteHandle !== null) {
+      window.clearTimeout(this.cachedStateWriteHandle)
+    }
+
+    this.cachedStateWriteHandle = window.setTimeout(() => {
+      this.cachedStateWriteHandle = null
+      this.writeCachedEditorState()
+    }, 750)
+  }
+
+  private flushCachedEditorState() {
+    if (this.cachedStateWriteHandle === null) {
+      return
+    }
+
+    window.clearTimeout(this.cachedStateWriteHandle)
+    this.cachedStateWriteHandle = null
+    this.writeCachedEditorState()
+  }
+
+  private async loadCachedEditorState() {
+    const key = this.props.stateStorageKey
+    const cachedState = await readCachedEditorState(key)
+    if (
+      this.view === null ||
+      key !== this.props.stateStorageKey ||
+      cachedState === null
+    ) {
+      return
+    }
+
+    try {
+      const state = EditorState.fromJSON(
+        cachedState,
+        { extensions: this.getExtensions() },
+        { history: historyField }
+      )
+
+      if (state.doc.toString() === this.props.value) {
+        this.view.setState(state)
+      }
+    } catch {
+      removeCachedEditorState(key)
+    }
   }
 }
 
@@ -355,13 +411,19 @@ function getPreferenceExtensions(
         fontFamily: 'var(--font-family-monospace)',
         userSelect: 'text',
       },
-      '.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+      '.cm-selectionLayer .cm-selectionBackground, &.cm-focused .cm-selectionLayer .cm-selectionBackground':
         {
           backgroundColor:
             theme === ApplicationTheme.Dark
               ? 'rgba(255, 209, 102, 0.45) !important'
-              : 'rgba(0, 95, 184, 0.28) !important',
+              : 'rgba(0, 95, 184, 0.32) !important',
         },
+      '.cm-line::selection, .cm-line *::selection': {
+        backgroundColor:
+          theme === ApplicationTheme.Dark
+            ? 'rgba(255, 209, 102, 0.45)'
+            : 'rgba(0, 95, 184, 0.32)',
+      },
       '.cm-line': {
         fontFamily: 'var(--font-family-monospace)',
       },
@@ -505,26 +567,44 @@ const patchLineHighlightExtension = EditorView.decorations.compute(
   }
 )
 
-function readCachedEditorState(key: string): unknown | null {
+const cachedEditorStates = new Map<string, unknown>()
+
+function getCachedEditorState(key: string): unknown | null {
+  return cachedEditorStates.get(key) ?? null
+}
+
+async function readCachedEditorState(key: string): Promise<unknown | null> {
+  if (cachedEditorStates.has(key)) {
+    return cachedEditorStates.get(key) ?? null
+  }
+
   try {
-    const raw = sessionStorage.getItem(key)
-    return raw === null ? null : JSON.parse(raw)
+    const raw = await readCodeEditorStorageItem(key)
+    const value = raw === null ? null : JSON.parse(raw)
+    if (value !== null) {
+      cachedEditorStates.set(key, value)
+    }
+    return value
   } catch {
     return null
   }
 }
 
 function writeCachedEditorState(key: string, value: unknown) {
+  cachedEditorStates.set(key, value)
+
   try {
-    sessionStorage.setItem(key, JSON.stringify(value))
+    void writeCodeEditorStorageItem(key, JSON.stringify(value)).catch(() => {})
   } catch {
     // Ignore storage quota errors. The editor still keeps its in-memory history.
   }
 }
 
 function removeCachedEditorState(key: string) {
+  cachedEditorStates.delete(key)
+
   try {
-    sessionStorage.removeItem(key)
+    void removeCodeEditorStorageItem(key).catch(() => {})
   } catch {
     // Ignore storage errors while recovering from stale cached state.
   }

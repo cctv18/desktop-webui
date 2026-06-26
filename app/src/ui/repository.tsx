@@ -216,6 +216,16 @@ export class RepositoryView extends React.Component<
     return <FilesChangedBadge filesChangedCount={filesChangedCount} />
   }
 
+  private renderHistoryBadge(): JSX.Element | null {
+    const aheadCount = this.props.state.aheadBehind?.ahead ?? 0
+
+    if (aheadCount <= 0) {
+      return null
+    }
+
+    return <FilesChangedBadge filesChangedCount={aheadCount} />
+  }
+
   private renderTabs(): JSX.Element {
     const selectedTab =
       this.props.state.selectedSection === RepositorySectionTab.Changes
@@ -231,6 +241,7 @@ export class RepositoryView extends React.Component<
 
         <div className="with-indicator" id="history-tab">
           <span>History</span>
+          {this.renderHistoryBadge()}
         </div>
       </TabBar>
     )
