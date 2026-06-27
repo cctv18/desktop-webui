@@ -43,6 +43,14 @@ export interface ICodeEditorSideBySideDiffRow {
   readonly newText: string
 }
 
+export interface ICodeEditorTextEditAction {
+  readonly from: number
+  readonly to: number
+  readonly deleted: string
+  readonly inserted: string
+  readonly updatedAt: number
+}
+
 export type CodeEditorTreeNode =
   | {
       readonly kind: 'directory'
@@ -226,6 +234,70 @@ export function applyLineEnding(
 ) {
   const normalized = normalizeEditorText(text)
   return lineEnding === 'crlf' ? normalized.replace(/\n/g, '\r\n') : normalized
+}
+
+export function createCodeEditorTextEditAction(
+  previousContents: string,
+  nextContents: string
+): ICodeEditorTextEditAction {
+  const previous = normalizeEditorText(previousContents)
+  const next = normalizeEditorText(nextContents)
+  let prefix = 0
+  const maxPrefix = Math.min(previous.length, next.length)
+
+  while (
+    prefix < maxPrefix &&
+    previous.charCodeAt(prefix) === next.charCodeAt(prefix)
+  ) {
+    prefix++
+  }
+
+  let previousEnd = previous.length
+  let nextEnd = next.length
+
+  while (
+    previousEnd > prefix &&
+    nextEnd > prefix &&
+    previous.charCodeAt(previousEnd - 1) === next.charCodeAt(nextEnd - 1)
+  ) {
+    previousEnd--
+    nextEnd--
+  }
+
+  return {
+    from: prefix,
+    to: previousEnd,
+    deleted: previous.slice(prefix, previousEnd),
+    inserted: next.slice(prefix, nextEnd),
+    updatedAt: Date.now(),
+  }
+}
+
+export function applyCodeEditorTextEditAction(
+  contents: string,
+  action: ICodeEditorTextEditAction,
+  direction: 'undo' | 'redo'
+) {
+  const normalizedContents = normalizeEditorText(contents)
+  const expected = direction === 'undo' ? action.inserted : action.deleted
+  const replacement = direction === 'undo' ? action.deleted : action.inserted
+  const start = action.from
+  const end = start + expected.length
+
+  if (
+    start < 0 ||
+    start > normalizedContents.length ||
+    normalizedContents.slice(start, end) !== expected
+  ) {
+    throw new Error(
+      'The persisted CodeMirror editor history no longer matches the cached file contents.'
+    )
+  }
+
+  return `${normalizedContents.slice(
+    0,
+    start
+  )}${replacement}${normalizedContents.slice(end)}`
 }
 
 export function findSearchMatches(

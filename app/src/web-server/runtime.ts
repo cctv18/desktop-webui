@@ -46,9 +46,12 @@ import { NotificationsDebugStore } from '../lib/stores/notifications-debug-store
 import { Dispatcher } from '../ui/dispatcher'
 import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
 import {
+  applyCodeEditorTextEditAction,
+  createCodeEditorTextEditAction,
   createLineDiffRows,
   createSideBySideDiffRows,
   filterRepositoryFilePaths,
+  ICodeEditorTextEditAction,
   ICodeEditorLineDiffRow,
   ICodeEditorSideBySideDiffRow,
   isRepositoryPathIgnored,
@@ -126,7 +129,7 @@ type CodeEditorLineEnding = 'lf' | 'crlf'
 type RepositoryPanelKind = 'commit-management' | 'code-editor'
 
 const maxCodeEditorPreviewBlobBytes = 5 * 1024 * 1024
-const maxCodeEditorDiffRows = 12000
+const maxCodeEditorDiffRows = 2000
 
 interface ICodeEditorTempFileStatus {
   readonly hasTempFile: boolean
@@ -163,20 +166,25 @@ interface ICodeEditorDiffResult {
     | ReadonlyArray<ICodeEditorSideBySideDiffRow>
 }
 
+type CodeEditorHistoryActionKind = 'undo' | 'redo'
+
+interface ICodeEditorHistoryStatus {
+  readonly undoCount: number
+  readonly redoCount: number
+}
+
+interface ICodeEditorHistoryActionResult extends ICodeEditorHistoryStatus {
+  readonly contents: string
+  readonly lineEnding: CodeEditorLineEnding
+  readonly changed: boolean
+}
+
 interface ICodeEditorFileEditLog {
   readonly relativePath: string
   readonly baseHash: string
   readonly lineEnding: CodeEditorLineEnding
-  readonly undoStack: ReadonlyArray<ICodeEditorEditAction>
-  readonly redoStack: ReadonlyArray<ICodeEditorEditAction>
-  readonly updatedAt: number
-}
-
-interface ICodeEditorEditAction {
-  readonly from: number
-  readonly to: number
-  readonly deleted: string
-  readonly inserted: string
+  readonly undoStack: ReadonlyArray<ICodeEditorTextEditAction>
+  readonly redoStack: ReadonlyArray<ICodeEditorTextEditAction>
   readonly updatedAt: number
 }
 
@@ -422,6 +430,28 @@ export class WebRuntime {
             repositoryPath: string,
             options: ICodeEditorWriteTempFileOptions
           ) => this.writeCodeEditorTempFile(repositoryPath, options),
+          readHistoryStatus: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string
+          ) =>
+            this.readCodeEditorHistoryStatus(
+              repositoryPath,
+              branchKey,
+              relativePath
+            ),
+          applyHistoryAction: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string,
+            action: CodeEditorHistoryActionKind
+          ) =>
+            this.applyCodeEditorHistoryAction(
+              repositoryPath,
+              branchKey,
+              relativePath,
+              action
+            ),
           removeTempFile: (
             repositoryPath: string,
             branchKey: string,
@@ -653,7 +683,7 @@ export class WebRuntime {
     const action =
       previousContents === nextContents
         ? null
-        : createCodeEditorEditAction(previousContents, nextContents)
+        : createCodeEditorTextEditAction(previousContents, nextContents)
     const undoStack =
       action === null
         ? existingLog?.undoStack ?? []
@@ -669,6 +699,136 @@ export class WebRuntime {
     }
 
     await this.writeCodeEditorEditLog(root, normalizedPath, logValue)
+  }
+
+  private async readCodeEditorHistoryStatus(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string
+  ): Promise<ICodeEditorHistoryStatus> {
+    const startedAt = Date.now()
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const normalizedPath = assertCodeEditorRelativePath(relativePath)
+    const log = await this.readCodeEditorEditLog(root, normalizedPath)
+    const status = createCodeEditorHistoryStatus(log)
+
+    logCodeEditorHistoryStatus(
+      'status',
+      normalizedPath,
+      status,
+      Date.now() - startedAt
+    )
+
+    return status
+  }
+
+  private async applyCodeEditorHistoryAction(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string,
+    actionKind: CodeEditorHistoryActionKind
+  ): Promise<ICodeEditorHistoryActionResult> {
+    const startedAt = Date.now()
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const normalizedPath = assertCodeEditorRelativePath(relativePath)
+    const currentContents = normalizeEditorText(
+      await this.readCodeEditorCurrentContents(
+        repositoryPath,
+        root,
+        normalizedPath
+      )
+    )
+    const editLog = await this.readCodeEditorEditLog(root, normalizedPath)
+
+    if (editLog === null) {
+      const lineEnding = detectRawLineEnding(currentContents)
+      const status = createCodeEditorHistoryStatus(null)
+      logCodeEditorHistoryStatus(
+        actionKind,
+        normalizedPath,
+        status,
+        Date.now() - startedAt,
+        false
+      )
+
+      return {
+        ...status,
+        contents: currentContents,
+        lineEnding,
+        changed: false,
+      }
+    }
+
+    const sourceStack =
+      actionKind === 'undo' ? editLog.undoStack : editLog.redoStack
+    const action = sourceStack[sourceStack.length - 1]
+
+    if (action === undefined) {
+      const status = createCodeEditorHistoryStatus(editLog)
+      logCodeEditorHistoryStatus(
+        actionKind,
+        normalizedPath,
+        status,
+        Date.now() - startedAt,
+        false
+      )
+
+      return {
+        ...status,
+        contents: currentContents,
+        lineEnding: editLog.lineEnding,
+        changed: false,
+      }
+    }
+
+    const contents = applyCodeEditorTextEditAction(
+      currentContents,
+      action,
+      actionKind
+    )
+    const undoStack =
+      actionKind === 'undo'
+        ? editLog.undoStack.slice(0, -1)
+        : [...editLog.undoStack, action].slice(-500)
+    const redoStack =
+      actionKind === 'undo'
+        ? [...editLog.redoStack, action].slice(-500)
+        : editLog.redoStack.slice(0, -1)
+    const nextLog: ICodeEditorFileEditLog = {
+      ...editLog,
+      undoStack,
+      redoStack,
+      updatedAt: Date.now(),
+    }
+    const tempPath = resolveCodeEditorTempFilePath(root, normalizedPath)
+
+    await mkdir(Path.dirname(tempPath), { recursive: true })
+    await writeFile(
+      tempPath,
+      applyRawLineEnding(contents, editLog.lineEnding),
+      'utf8'
+    )
+    await this.writeCodeEditorEditLog(root, normalizedPath, nextLog)
+
+    const status = createCodeEditorHistoryStatus(nextLog)
+    logCodeEditorHistoryStatus(
+      actionKind,
+      normalizedPath,
+      status,
+      Date.now() - startedAt,
+      true
+    )
+
+    return {
+      ...status,
+      contents,
+      lineEnding: editLog.lineEnding,
+      changed: true,
+    }
   }
 
   private async removeCodeEditorTempFile(
@@ -743,7 +903,7 @@ export class WebRuntime {
     const normalizedPath = assertCodeEditorRelativePath(relativePath)
     const root = this.getCodeEditorRepositoryTempRoot(repository.path)
     const currentContents = await this.readCodeEditorCurrentContents(
-      repository,
+      repository.path,
       root,
       normalizedPath
     )
@@ -779,7 +939,7 @@ export class WebRuntime {
   }
 
   private async readCodeEditorCurrentContents(
-    repository: Repository,
+    repositoryPath: string,
     root: string,
     relativePath: string
   ) {
@@ -791,12 +951,12 @@ export class WebRuntime {
       return contents
     }
 
-    const repositoryPath = Path.join(repository.path, relativePath)
-    if (!(await pathExistsOnDisk(repositoryPath))) {
+    const workingTreePath = resolveInsideDirectory(repositoryPath, relativePath)
+    if (!(await pathExistsOnDisk(workingTreePath))) {
       return ''
     }
 
-    const contents = await readFile(repositoryPath, 'utf8')
+    const contents = await readFile(workingTreePath, 'utf8')
     assertCodeEditorTextFile(contents)
     return contents
   }
@@ -1699,40 +1859,29 @@ function applyRawLineEnding(
   return lineEnding === 'crlf' ? normalized.replace(/\n/g, '\r\n') : normalized
 }
 
-function createCodeEditorEditAction(
-  previousContents: string,
-  nextContents: string
-): ICodeEditorEditAction {
-  let prefix = 0
-  const maxPrefix = Math.min(previousContents.length, nextContents.length)
-
-  while (
-    prefix < maxPrefix &&
-    previousContents.charCodeAt(prefix) === nextContents.charCodeAt(prefix)
-  ) {
-    prefix++
-  }
-
-  let previousEnd = previousContents.length
-  let nextEnd = nextContents.length
-
-  while (
-    previousEnd > prefix &&
-    nextEnd > prefix &&
-    previousContents.charCodeAt(previousEnd - 1) ===
-      nextContents.charCodeAt(nextEnd - 1)
-  ) {
-    previousEnd--
-    nextEnd--
-  }
-
+function createCodeEditorHistoryStatus(
+  log: ICodeEditorFileEditLog | null
+): ICodeEditorHistoryStatus {
   return {
-    from: prefix,
-    to: previousEnd,
-    deleted: previousContents.slice(prefix, previousEnd),
-    inserted: nextContents.slice(prefix, nextEnd),
-    updatedAt: Date.now(),
+    undoCount: log?.undoStack.length ?? 0,
+    redoCount: log?.redoStack.length ?? 0,
   }
+}
+
+function logCodeEditorHistoryStatus(
+  action: string,
+  relativePath: string,
+  status: ICodeEditorHistoryStatus,
+  durationMs: number,
+  changed?: boolean
+) {
+  log.info(
+    `[CodeEditor] history ${action} path='${relativePath}' undo=${
+      status.undoCount
+    } redo=${status.redoCount}${
+      changed === undefined ? '' : ` changed=${changed}`
+    } durationMs=${durationMs}`
+  )
 }
 
 function getErrorMessage(error: unknown) {

@@ -41,6 +41,20 @@ export interface ICodeEditorDiffResult {
     | ReadonlyArray<ICodeEditorSideBySideDiffRow>
 }
 
+export type CodeEditorHistoryAction = 'undo' | 'redo'
+
+export interface ICodeEditorHistoryStatus {
+  readonly undoCount: number
+  readonly redoCount: number
+}
+
+export interface ICodeEditorHistoryActionResult
+  extends ICodeEditorHistoryStatus {
+  readonly contents: string
+  readonly lineEnding: CodeEditorLineEnding
+  readonly changed: boolean
+}
+
 export async function readCodeEditorStorageItem(key: string) {
   return invokeWebUIRPC<string | null>('codeEditor.readStorageItem', [key])
 }
@@ -115,6 +129,29 @@ export async function writeCodeEditorTempFile(
     repositoryPath,
     options,
   ])
+}
+
+export async function readCodeEditorHistoryStatus(
+  repositoryPath: string,
+  branchKey: string,
+  relativePath: string
+) {
+  return invokeWebUIRPC<ICodeEditorHistoryStatus>(
+    'codeEditor.readHistoryStatus',
+    [repositoryPath, branchKey, relativePath]
+  )
+}
+
+export async function applyCodeEditorHistoryAction(
+  repositoryPath: string,
+  branchKey: string,
+  relativePath: string,
+  action: CodeEditorHistoryAction
+) {
+  return invokeWebUIRPC<ICodeEditorHistoryActionResult>(
+    'codeEditor.applyHistoryAction',
+    [repositoryPath, branchKey, relativePath, action]
+  )
 }
 
 export async function removeCodeEditorTempFile(

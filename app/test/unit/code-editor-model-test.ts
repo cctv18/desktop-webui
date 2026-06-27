@@ -2,8 +2,10 @@ import { strict as assert } from 'assert'
 import { describe, it } from 'node:test'
 
 import {
+  applyCodeEditorTextEditAction,
   buildFileTreeFromPaths,
   createLineDiffRows,
+  createCodeEditorTextEditAction,
   detectLineEnding,
   detectLanguageFromPathAndContent,
   filterRepositoryFilePaths,
@@ -77,6 +79,30 @@ describe('Code editor model helpers', () => {
     assert.deepEqual(
       diff.map(row => `${row.kind}:${row.oldText || row.newText}`),
       ['context:alpha', 'removed:beta', 'context:gamma', 'context:delta']
+    )
+  })
+
+  it('applies persisted editor actions for undo and redo', () => {
+    const original = ['alpha', 'beta', 'gamma'].join('\n')
+    const current = ['alpha', 'BETA', 'gamma', 'delta'].join('\n')
+    const action = createCodeEditorTextEditAction(original, current)
+
+    assert.equal(
+      applyCodeEditorTextEditAction(original, action, 'redo'),
+      current
+    )
+    assert.equal(
+      applyCodeEditorTextEditAction(current, action, 'undo'),
+      original
+    )
+  })
+
+  it('rejects persisted editor actions when the cached contents diverged', () => {
+    const action = createCodeEditorTextEditAction('alpha\nbeta', 'alpha\nBETA')
+
+    assert.throws(
+      () => applyCodeEditorTextEditAction('alpha\nchanged', action, 'undo'),
+      /no longer matches/
     )
   })
 

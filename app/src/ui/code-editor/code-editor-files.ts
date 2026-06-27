@@ -9,13 +9,16 @@ import {
 } from './code-editor-model'
 import {
   activateCodeEditorBranchCache,
+  applyCodeEditorHistoryAction,
   clearCodeEditorRepositoryCache,
+  CodeEditorHistoryAction,
   CodeEditorDiffMode,
   createCodeEditorDiff,
   ICodeEditorDiffResult,
   ICodeEditorTempFileStatus,
   IWriteCodeEditorTempFileOptions,
   readCodeEditorConflictFile,
+  readCodeEditorHistoryStatus,
   readCodeEditorTempFileStatus,
   removeCodeEditorConflictFile,
   removeCodeEditorTempFile,
@@ -105,6 +108,28 @@ export async function writeRepositoryTempTextFile(
       options.lineEnding
     ),
   })
+}
+
+export async function readRepositoryEditorHistoryStatus(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string
+) {
+  return readCodeEditorHistoryStatus(repository.path, branchKey, relativePath)
+}
+
+export async function applyRepositoryEditorHistoryAction(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string,
+  action: CodeEditorHistoryAction
+) {
+  return applyCodeEditorHistoryAction(
+    repository.path,
+    branchKey,
+    relativePath,
+    action
+  )
 }
 
 export async function removeRepositoryTempTextFile(

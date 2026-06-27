@@ -26,8 +26,10 @@ import {
 } from './code-editor-model'
 import {
   activateRepositoryEditorBranchCache,
+  applyRepositoryEditorHistoryAction,
   createRepositoryCodeEditorDiff,
   listRepositoryFiles,
+  readRepositoryEditorHistoryStatus,
   readRepositoryConflictTextFile,
   readRepositoryTempFileStatus,
   readRepositoryTextFile,
@@ -38,6 +40,7 @@ import {
 } from './code-editor-files'
 import { CodeMirrorEditor } from './codemirror-editor'
 import {
+  CodeEditorHistoryAction,
   ICodeEditorDiffResult,
   ICodeEditorConflictFile,
   purgeLegacyCodeEditorStorage,
@@ -104,6 +107,9 @@ interface ICodeEditorPanelState {
   readonly loadingTree: boolean
   readonly loadingFile: boolean
   readonly saving: boolean
+  readonly historyActionLoading: boolean
+  readonly undoCount: number
+  readonly redoCount: number
   readonly error: string | null
   readonly preferences: ICodeEditorPreferences
 }
@@ -120,6 +126,7 @@ export class CodeEditorPanel extends React.Component<
   private lastOpenRequestID: number | null = null
   private isMounted = false
   private previewDiffRequestID = 0
+  private pendingTempFileWrite: Promise<void> = Promise.resolve()
 
   public constructor(props: ICodeEditorPanelProps) {
     super(props)
@@ -154,6 +161,9 @@ export class CodeEditorPanel extends React.Component<
       loadingTree: false,
       loadingFile: false,
       saving: false,
+      historyActionLoading: false,
+      undoCount: 0,
+      redoCount: 0,
       error: null,
       preferences,
     }
@@ -179,7 +189,9 @@ export class CodeEditorPanel extends React.Component<
 
   public componentWillUnmount() {
     this.isMounted = false
-    void this.persistTempFileIfNeeded()
+    void this.persistTempFileIfNeeded().catch(error =>
+      log.warn('[CodeEditor] failed to persist temp file on unmount', error)
+    )
     this.persistSession()
   }
 
@@ -266,6 +278,11 @@ export class CodeEditorPanel extends React.Component<
     const selectedPath = this.state.selectedPath
     const matches = this.getSearchMatches()
     const dirty = this.isDirty()
+    const hasEditorHistory = this.hasEditorHistory()
+    const loading =
+      this.state.previewDiffLoading ||
+      this.state.loadingFile ||
+      this.state.historyActionLoading
 
     return (
       <div className="code-editor-header">
@@ -283,7 +300,7 @@ export class CodeEditorPanel extends React.Component<
           <div className="code-editor-title">
             {selectedPath ?? this.props.repository.name}
             {dirty ? <span className="code-editor-dirty-dot" /> : null}
-            {this.state.previewDiffLoading ? (
+            {loading ? (
               <span className="code-editor-loading-indicator" />
             ) : null}
           </div>
@@ -301,6 +318,34 @@ export class CodeEditorPanel extends React.Component<
             ) : null}
             <button
               type="button"
+              className="code-editor-action-icon-button"
+              disabled={
+                this.state.undoCount === 0 ||
+                this.state.historyActionLoading ||
+                this.state.loadingFile
+              }
+              onClick={this.undo}
+              title="Undo"
+            >
+              <Octicon symbol={octicons.undo} />
+              <span>Undo</span>
+            </button>
+            <button
+              type="button"
+              className="code-editor-action-icon-button"
+              disabled={
+                this.state.redoCount === 0 ||
+                this.state.historyActionLoading ||
+                this.state.loadingFile
+              }
+              onClick={this.redo}
+              title="Redo"
+            >
+              <Octicon symbol={octicons.redo} />
+              <span>Redo</span>
+            </button>
+            <button
+              type="button"
               disabled={!dirty || this.state.saving}
               onClick={this.save}
             >
@@ -308,7 +353,7 @@ export class CodeEditorPanel extends React.Component<
             </button>
             <button
               type="button"
-              disabled={!dirty}
+              disabled={!dirty && !hasEditorHistory}
               onClick={this.cancelChanges}
             >
               Cancel changes
@@ -526,6 +571,8 @@ export class CodeEditorPanel extends React.Component<
         onChange={this.onEditorChanged}
         onSave={this.save}
         onSearch={this.focusSearch}
+        onUndo={this.undo}
+        onRedo={this.redo}
       />
     )
   }
@@ -867,6 +914,9 @@ export class CodeEditorPanel extends React.Component<
         activeTab: session.activeTab,
         treeVisible: session.treeVisible,
         activeSearchMatchIndex: 0,
+        historyActionLoading: false,
+        undoCount: 0,
+        redoCount: 0,
       },
       () => {
         this.refreshRepositoryTree()
@@ -895,6 +945,9 @@ export class CodeEditorPanel extends React.Component<
       previewDiffLoading: false,
       previewDiffResult: null,
       previewDiffError: null,
+      undoCount: 0,
+      redoCount: 0,
+      historyActionLoading: false,
     })
 
     try {
@@ -925,6 +978,11 @@ export class CodeEditorPanel extends React.Component<
               ...tempFileStatus.conflict,
               contents: normalizeEditorText(tempFileStatus.conflict.contents),
             }
+      const historyStatus = await readRepositoryEditorHistoryStatus(
+        this.props.repository,
+        getBranchKey(this.props.repositoryState),
+        relativePath
+      )
 
       this.expandParents(relativePath)
       this.setState(
@@ -936,6 +994,8 @@ export class CodeEditorPanel extends React.Component<
           conflictComparisonVisible: false,
           loadingFile: false,
           activeSearchMatchIndex: 0,
+          undoCount: historyStatus.undoCount,
+          redoCount: historyStatus.redoCount,
         },
         () => this.persistSession()
       )
@@ -990,19 +1050,56 @@ export class CodeEditorPanel extends React.Component<
   private onTabClicked = (tab: number) => {
     const activeTab = tab === 0 ? 'edit' : 'preview'
     log.info(`[CodeEditor] switch tab tab='${activeTab}'`)
-    this.setState({ activeTab }, () => {
-      this.persistSession()
-      if (activeTab === 'preview') {
+
+    if (activeTab === 'edit') {
+      this.previewDiffRequestID++
+      this.setState(
+        {
+          activeTab,
+          previewDiffLoading: false,
+          previewDiffResult: null,
+          previewDiffError: null,
+        },
+        () => this.persistSession()
+      )
+      return
+    }
+
+    this.setState(
+      {
+        activeTab,
+        previewDiffLoading: true,
+        previewDiffResult: null,
+        previewDiffError: null,
+      },
+      () => {
+        this.persistSession()
         void this.loadPreviewDiff('tab-switch')
       }
-    })
+    )
   }
 
   private onEditorChanged = (contents: string) => {
     const previousContents = this.state.editorContents
-    this.setState({ editorContents: contents, previewDiffResult: null }, () => {
-      void this.persistTempFileIfNeeded(undefined, previousContents)
-    })
+    const changed = previousContents !== contents
+    this.setState(
+      state => ({
+        editorContents: contents,
+        previewDiffResult: null,
+        undoCount: changed ? state.undoCount + 1 : state.undoCount,
+        redoCount: changed ? 0 : state.redoCount,
+      }),
+      () => {
+        void this.persistTempFileIfNeeded(undefined, previousContents).catch(
+          error => {
+            log.warn('[CodeEditor] failed to persist editor draft', error)
+            if (this.isMounted) {
+              this.setState({ error: getErrorMessage(error) })
+            }
+          }
+        )
+      }
+    )
   }
 
   private save = async () => {
@@ -1015,6 +1112,7 @@ export class CodeEditorPanel extends React.Component<
 
     try {
       log.info(`[CodeEditor] save file path='${selectedPath}'`)
+      await this.flushPendingTempFileWrite('save')
       await writeRepositoryTextFile(
         this.props.repository,
         selectedPath,
@@ -1026,6 +1124,7 @@ export class CodeEditorPanel extends React.Component<
         getBranchKey(this.props.repositoryState),
         selectedPath
       )
+      this.pendingTempFileWrite = Promise.resolve()
       this.setState({
         diskContents: this.state.editorContents,
         saving: false,
@@ -1033,6 +1132,8 @@ export class CodeEditorPanel extends React.Component<
         conflictComparisonVisible: false,
         previewDiffResult: null,
         previewDiffError: null,
+        undoCount: 0,
+        redoCount: 0,
       })
       await this.props.dispatcher.refreshRepository(this.props.repository)
     } catch (error) {
@@ -1043,25 +1144,43 @@ export class CodeEditorPanel extends React.Component<
     }
   }
 
-  private cancelChanges = () => {
+  private cancelChanges = async () => {
     const selectedPath = this.state.selectedPath
-    if (selectedPath !== null) {
+    if (selectedPath === null) {
+      return
+    }
+
+    this.setState({ saving: true, error: null })
+
+    try {
       log.info(`[CodeEditor] cancel changes path='${selectedPath}'`)
-      void removeRepositoryTempTextFile(
+      await this.flushPendingTempFileWrite('cancel').catch(error =>
+        log.warn('[CodeEditor] temp write failed before cancel', error)
+      )
+      await removeRepositoryTempTextFile(
         this.props.repository,
         getBranchKey(this.props.repositoryState),
         selectedPath
       )
-    }
+      this.pendingTempFileWrite = Promise.resolve()
 
-    this.setState({
-      editorContents: this.state.diskContents,
-      conflictDraft: null,
-      conflictComparisonVisible: false,
-      previewDiffResult: null,
-      previewDiffError: null,
-      activeSearchMatchIndex: 0,
-    })
+      this.setState({
+        editorContents: this.state.diskContents,
+        conflictDraft: null,
+        conflictComparisonVisible: false,
+        previewDiffResult: null,
+        previewDiffError: null,
+        activeSearchMatchIndex: 0,
+        saving: false,
+        undoCount: 0,
+        redoCount: 0,
+      })
+    } catch (error) {
+      this.setState({
+        saving: false,
+        error: getErrorMessage(error),
+      })
+    }
   }
 
   private showConflictComparison = () => {
@@ -1090,9 +1209,19 @@ export class CodeEditorPanel extends React.Component<
         lineEnding: latestConflict.lineEnding,
         conflictDraft: null,
         conflictComparisonVisible: false,
+        undoCount: this.state.undoCount + 1,
+        redoCount: 0,
       },
       () => {
-        void this.persistTempFileIfNeeded(undefined, this.state.diskContents)
+        void this.persistTempFileIfNeeded(
+          undefined,
+          this.state.diskContents
+        ).catch(error => {
+          log.warn('[CodeEditor] failed to persist restored cache', error)
+          if (this.isMounted) {
+            this.setState({ error: getErrorMessage(error) })
+          }
+        })
       }
     )
 
@@ -1127,23 +1256,113 @@ export class CodeEditorPanel extends React.Component<
       return
     }
 
-    if (!this.isDirty()) {
-      await removeRepositoryTempTextFile(
-        props.repository,
-        getBranchKey(props.repositoryState),
-        selectedPath
-      )
+    const branchKey = getBranchKey(props.repositoryState)
+    const editorContents = this.state.editorContents
+    const diskContents = this.state.diskContents
+    const lineEnding = this.state.lineEnding
+    const dirty = editorContents !== diskContents
+
+    if (!dirty) {
       return
     }
 
-    await writeRepositoryTempTextFile(props.repository, {
-      branchKey: getBranchKey(props.repositoryState),
-      relativePath: selectedPath,
-      contents: this.state.editorContents,
-      previousContents,
-      baseContents: this.state.diskContents,
-      lineEnding: this.state.lineEnding,
-    })
+    const write = async () => {
+      await writeRepositoryTempTextFile(props.repository, {
+        branchKey,
+        relativePath: selectedPath,
+        contents: editorContents,
+        previousContents,
+        baseContents: diskContents,
+        lineEnding,
+      })
+    }
+
+    this.pendingTempFileWrite = this.pendingTempFileWrite
+      .catch(error => {
+        log.warn('[CodeEditor] previous temp file write failed', error)
+      })
+      .then(write)
+
+    return this.pendingTempFileWrite
+  }
+
+  private async flushPendingTempFileWrite(reason: string) {
+    log.info(`[CodeEditor] flush temp write reason='${reason}'`)
+    await this.pendingTempFileWrite
+  }
+
+  private hasEditorHistory() {
+    return this.state.undoCount > 0 || this.state.redoCount > 0
+  }
+
+  private undo = () => {
+    void this.applyHistoryAction('undo')
+  }
+
+  private redo = () => {
+    void this.applyHistoryAction('redo')
+  }
+
+  private async applyHistoryAction(action: CodeEditorHistoryAction) {
+    const selectedPath = this.state.selectedPath
+    if (
+      selectedPath === null ||
+      this.state.loadingFile ||
+      this.state.historyActionLoading
+    ) {
+      return
+    }
+
+    const branchKey = getBranchKey(this.props.repositoryState)
+
+    this.setState({ historyActionLoading: true, error: null })
+
+    try {
+      log.info(
+        `[CodeEditor] history ${action} requested path='${selectedPath}'`
+      )
+      await this.flushPendingTempFileWrite(action)
+      const result = await applyRepositoryEditorHistoryAction(
+        this.props.repository,
+        branchKey,
+        selectedPath,
+        action
+      )
+
+      if (
+        !this.isMounted ||
+        selectedPath !== this.state.selectedPath ||
+        branchKey !== getBranchKey(this.props.repositoryState)
+      ) {
+        return
+      }
+
+      log.info(
+        `[CodeEditor] history ${action} loaded path='${selectedPath}' changed=${result.changed} undo=${result.undoCount} redo=${result.redoCount}`
+      )
+
+      this.setState({
+        editorContents: normalizeEditorText(result.contents),
+        lineEnding: result.lineEnding,
+        previewDiffResult: null,
+        previewDiffError: null,
+        activeSearchMatchIndex: 0,
+        historyActionLoading: false,
+        undoCount: result.undoCount,
+        redoCount: result.redoCount,
+      })
+    } catch (error) {
+      log.warn(
+        `[CodeEditor] history ${action} failed path='${selectedPath}'`,
+        error
+      )
+      if (this.isMounted) {
+        this.setState({
+          historyActionLoading: false,
+          error: getErrorMessage(error),
+        })
+      }
+    }
   }
 
   private async loadPreviewDiff(reason: string) {
@@ -1168,6 +1387,7 @@ export class CodeEditorPanel extends React.Component<
 
     try {
       await this.persistTempFileIfNeeded()
+      await this.flushPendingTempFileWrite('preview-diff')
       const diff = await createRepositoryCodeEditorDiff(
         this.props.repository,
         getBranchKey(this.props.repositoryState),
@@ -1315,8 +1535,18 @@ export class CodeEditorPanel extends React.Component<
 
   private onDiffModeChanged = (diffMode: CodeEditorDiffMode) => {
     log.info(`[CodeEditor] switch diff mode mode='${diffMode}'`)
-    this.updatePreferences(
-      { ...this.state.preferences, diffMode },
+    const preferences = { ...this.state.preferences, diffMode }
+    void writeCodeEditorStorageItem(
+      editorPreferenceKey,
+      JSON.stringify(preferences)
+    ).catch(() => {})
+    this.setState(
+      {
+        preferences,
+        previewDiffLoading: this.state.activeTab === 'preview',
+        previewDiffResult: null,
+        previewDiffError: null,
+      },
       this.state.activeTab === 'preview'
         ? () => void this.loadPreviewDiff('diff-mode-switch')
         : undefined

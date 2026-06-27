@@ -257,6 +257,19 @@
   gap: var(--spacing-half);
 }
 
+.code-editor-action-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+
+  .octicon {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+  }
+}
+
 .code-editor-actions button,
 .code-editor-search-row button,
 .code-editor-preview-toolbar button,

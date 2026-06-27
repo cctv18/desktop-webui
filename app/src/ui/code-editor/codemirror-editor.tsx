@@ -4,14 +4,7 @@ import {
   closeBracketsKeymap,
   autocompletion,
 } from '@codemirror/autocomplete'
-import {
-  defaultKeymap,
-  deleteLine,
-  history,
-  historyField,
-  historyKeymap,
-  indentWithTab,
-} from '@codemirror/commands'
+import { defaultKeymap, deleteLine, indentWithTab } from '@codemirror/commands'
 import {
   bracketMatching,
   defaultHighlightStyle,
@@ -69,6 +62,8 @@ interface ICodeMirrorEditorProps {
   readonly onChange: (value: string) => void
   readonly onSave: () => void
   readonly onSearch: () => void
+  readonly onUndo: () => void
+  readonly onRedo: () => void
 }
 
 export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
@@ -99,7 +94,6 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
     }
 
     if (previousProps.stateCacheKey !== this.props.stateCacheKey) {
-      this.writeCachedEditorState(previousProps.stateCacheKey)
       this.view.setState(this.createEditorState())
       this.focusActiveMatch()
       return
@@ -172,7 +166,6 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
   }
 
   public componentWillUnmount() {
-    this.writeCachedEditorState()
     this.view?.destroy()
     this.view = null
   }
@@ -208,7 +201,6 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
       lineNumbers(),
       highlightActiveLineGutter(),
       foldGutter(),
-      history(),
       drawSelection(),
       dropCursor(),
       rectangularSelection(),
@@ -234,10 +226,30 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
             return true
           },
         },
+        {
+          key: 'Mod-z',
+          run: () => {
+            this.props.onUndo()
+            return true
+          },
+        },
+        {
+          key: 'Shift-Mod-z',
+          run: () => {
+            this.props.onRedo()
+            return true
+          },
+        },
+        {
+          key: 'Mod-y',
+          run: () => {
+            this.props.onRedo()
+            return true
+          },
+        },
         { key: 'Mod-d', run: deleteLine },
         indentWithTab,
         ...closeBracketsKeymap,
-        ...historyKeymap,
         ...foldKeymap,
         ...defaultKeymap,
       ]),
@@ -278,48 +290,12 @@ export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
   }
 
   private createEditorState() {
-    const extensions = this.getExtensions()
-    const cachedState = cachedEditorStates.get(this.props.stateCacheKey)
-
-    if (cachedState !== undefined) {
-      try {
-        const state = EditorState.fromJSON(
-          cachedState,
-          { extensions },
-          { history: historyField }
-        )
-
-        if (state.doc.toString() === this.props.value) {
-          return state
-        }
-      } catch {
-        cachedEditorStates.delete(this.props.stateCacheKey)
-      }
-    }
-
     return EditorState.create({
       doc: this.props.value,
-      extensions,
+      extensions: this.getExtensions(),
     })
   }
-
-  private writeCachedEditorState(key = this.props.stateCacheKey) {
-    if (this.view === null) {
-      return
-    }
-
-    try {
-      cachedEditorStates.set(
-        key,
-        this.view.state.toJSON({ history: historyField })
-      )
-    } catch {
-      cachedEditorStates.delete(key)
-    }
-  }
 }
-
-const cachedEditorStates = new Map<string, unknown>()
 
 const disabledDragDropHandlers: DOMEventHandlers<unknown> = {
   dragstart: event => {
@@ -385,6 +361,9 @@ function getPreferenceExtensions(
       '.cm-activeLine': {
         backgroundColor: 'transparent',
       },
+      '&.cm-focused .cm-activeLine': {
+        backgroundColor: 'transparent',
+      },
       '.cm-activeLineGutter': {
         backgroundColor: 'var(--list-item-hover-background-color)',
       },
@@ -414,10 +393,11 @@ function getPreferenceExtensions(
     { dark: theme === ApplicationTheme.Dark }
   )
 
-  const extensions: Extension[] = [baseTheme]
+  const extensions: Extension[] = []
   if (theme === ApplicationTheme.Dark) {
     extensions.push(oneDark)
   }
+  extensions.push(baseTheme)
   if (lineWrapping) {
     extensions.push(EditorView.lineWrapping)
   }
