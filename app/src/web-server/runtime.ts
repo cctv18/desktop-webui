@@ -46,7 +46,11 @@ import { NotificationsDebugStore } from '../lib/stores/notifications-debug-store
 import { Dispatcher } from '../ui/dispatcher'
 import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
 import {
+  createLineDiffRows,
+  createSideBySideDiffRows,
   filterRepositoryFilePaths,
+  ICodeEditorLineDiffRow,
+  ICodeEditorSideBySideDiffRow,
   isRepositoryPathIgnored,
   normalizeEditorText,
   normalizeRepositoryRelativePath,
@@ -121,6 +125,9 @@ interface ICodeEditorFileListOptions {
 type CodeEditorLineEnding = 'lf' | 'crlf'
 type RepositoryPanelKind = 'commit-management' | 'code-editor'
 
+const maxCodeEditorPreviewBlobBytes = 5 * 1024 * 1024
+const maxCodeEditorDiffRows = 12000
+
 interface ICodeEditorTempFileStatus {
   readonly hasTempFile: boolean
   readonly contents: string | null
@@ -141,6 +148,19 @@ interface ICodeEditorWriteTempFileOptions {
   readonly previousContents: string
   readonly baseContents: string
   readonly lineEnding: CodeEditorLineEnding
+}
+
+type CodeEditorDiffMode = 'unified' | 'split'
+
+interface ICodeEditorDiffResult {
+  readonly mode: CodeEditorDiffMode
+  readonly relativePath: string
+  readonly unchanged: boolean
+  readonly truncated: boolean
+  readonly totalRows: number
+  readonly rows:
+    | ReadonlyArray<ICodeEditorLineDiffRow>
+    | ReadonlyArray<ICodeEditorSideBySideDiffRow>
 }
 
 interface ICodeEditorFileEditLog {
@@ -436,6 +456,18 @@ export class WebRuntime {
               relativePath,
               conflictID
             ),
+          createDiff: (
+            repository: Repository,
+            branchKey: string,
+            relativePath: string,
+            mode: CodeEditorDiffMode
+          ) =>
+            this.createCodeEditorDiff(
+              repository,
+              branchKey,
+              relativePath,
+              mode
+            ),
           listRepositoryFiles: (
             path: string,
             options?: ICodeEditorFileListOptions
@@ -696,6 +728,95 @@ export class WebRuntime {
       ),
       { force: true }
     )
+  }
+
+  private async createCodeEditorDiff(
+    repository: Repository,
+    branchKey: string,
+    relativePath: string,
+    mode: CodeEditorDiffMode
+  ): Promise<ICodeEditorDiffResult> {
+    const startedAt = Date.now()
+    await this.pathGuard.assertAllowed(repository.path)
+    await this.activateCodeEditorBranchCache(repository.path, branchKey)
+
+    const normalizedPath = assertCodeEditorRelativePath(relativePath)
+    const root = this.getCodeEditorRepositoryTempRoot(repository.path)
+    const currentContents = await this.readCodeEditorCurrentContents(
+      repository,
+      root,
+      normalizedPath
+    )
+    const headContents = await this.readCodeEditorHeadContents(
+      repository,
+      normalizedPath
+    )
+    const original = normalizeEditorText(headContents)
+    const current = normalizeEditorText(currentContents)
+    const unchanged = original === current
+
+    const rows =
+      mode === 'split'
+        ? createSideBySideDiffRows(original, current)
+        : createLineDiffRows(original, current)
+    const truncatedRows = rows.slice(0, maxCodeEditorDiffRows)
+    const duration = Date.now() - startedAt
+
+    log.info(
+      `[CodeEditor] diff generated path='${normalizedPath}' mode='${mode}' rows=${
+        rows.length
+      } truncated=${rows.length > truncatedRows.length} durationMs=${duration}`
+    )
+
+    return {
+      mode,
+      relativePath: normalizedPath,
+      unchanged,
+      truncated: rows.length > truncatedRows.length,
+      totalRows: rows.length,
+      rows: truncatedRows,
+    }
+  }
+
+  private async readCodeEditorCurrentContents(
+    repository: Repository,
+    root: string,
+    relativePath: string
+  ) {
+    const tempPath = resolveCodeEditorTempFilePath(root, relativePath)
+
+    if (await pathExistsOnDisk(tempPath)) {
+      const contents = await readFile(tempPath, 'utf8')
+      assertCodeEditorTextFile(contents)
+      return contents
+    }
+
+    const repositoryPath = Path.join(repository.path, relativePath)
+    if (!(await pathExistsOnDisk(repositoryPath))) {
+      return ''
+    }
+
+    const contents = await readFile(repositoryPath, 'utf8')
+    assertCodeEditorTextFile(contents)
+    return contents
+  }
+
+  private async readCodeEditorHeadContents(
+    repository: Repository,
+    relativePath: string
+  ) {
+    try {
+      const contents = await getPartialBlobContents(
+        repository,
+        'HEAD',
+        relativePath,
+        maxCodeEditorPreviewBlobBytes
+      )
+
+      return contents === null ? '' : contents.toString('utf8')
+    } catch {
+      return ''
+    }
   }
 
   private async ensureCodeEditorBranchCacheActive(

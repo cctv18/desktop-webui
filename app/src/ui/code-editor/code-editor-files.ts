@@ -10,6 +10,9 @@ import {
 import {
   activateCodeEditorBranchCache,
   clearCodeEditorRepositoryCache,
+  CodeEditorDiffMode,
+  createCodeEditorDiff,
+  ICodeEditorDiffResult,
   ICodeEditorTempFileStatus,
   IWriteCodeEditorTempFileOptions,
   readCodeEditorConflictFile,
@@ -138,6 +141,15 @@ export async function removeRepositoryConflictTextFile(
     relativePath,
     conflictID
   )
+}
+
+export async function createRepositoryCodeEditorDiff(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string,
+  mode: CodeEditorDiffMode
+): Promise<ICodeEditorDiffResult> {
+  return createCodeEditorDiff(repository, branchKey, relativePath, mode)
 }
 
 export async function readHeadTextFile(

@@ -1,7 +1,12 @@
 import { invokeWebUIRPC } from '../../lib/webui-rpc'
+import {
+  ICodeEditorLineDiffRow,
+  ICodeEditorSideBySideDiffRow,
+} from './code-editor-model'
 
 export type CodeEditorPanelSelection = 'commit-management' | 'code-editor'
 export type CodeEditorLineEnding = 'lf' | 'crlf'
+export type CodeEditorDiffMode = 'unified' | 'split'
 
 export interface ICodeEditorConflictFile {
   readonly id: string
@@ -23,6 +28,17 @@ export interface IWriteCodeEditorTempFileOptions {
   readonly previousContents: string
   readonly baseContents: string
   readonly lineEnding: CodeEditorLineEnding
+}
+
+export interface ICodeEditorDiffResult {
+  readonly mode: CodeEditorDiffMode
+  readonly relativePath: string
+  readonly unchanged: boolean
+  readonly truncated: boolean
+  readonly totalRows: number
+  readonly rows:
+    | ReadonlyArray<ICodeEditorLineDiffRow>
+    | ReadonlyArray<ICodeEditorSideBySideDiffRow>
 }
 
 export async function readCodeEditorStorageItem(key: string) {
@@ -136,5 +152,19 @@ export async function removeCodeEditorConflictFile(
     branchKey,
     relativePath,
     conflictID,
+  ])
+}
+
+export async function createCodeEditorDiff(
+  repository: unknown,
+  branchKey: string,
+  relativePath: string,
+  mode: CodeEditorDiffMode
+) {
+  return invokeWebUIRPC<ICodeEditorDiffResult>('codeEditor.createDiff', [
+    repository,
+    branchKey,
+    relativePath,
+    mode,
   ])
 }

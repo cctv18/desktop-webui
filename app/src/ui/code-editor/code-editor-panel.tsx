@@ -11,12 +11,10 @@ import {
   buildFileTreeFromPaths,
   CodeEditorLineEnding,
   CodeEditorTreeNode,
-  createLineDiffRows,
   createSideBySideDiffRows,
   defaultCodeEditorIgnoredPaths,
   detectLineEnding,
   findSearchMatches,
-  ICodeEditorLineDiffRow,
   ICodeEditorSideBySideDiffRow,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
@@ -28,8 +26,8 @@ import {
 } from './code-editor-model'
 import {
   activateRepositoryEditorBranchCache,
+  createRepositoryCodeEditorDiff,
   listRepositoryFiles,
-  readHeadTextFile,
   readRepositoryConflictTextFile,
   readRepositoryTempFileStatus,
   readRepositoryTextFile,
@@ -40,6 +38,7 @@ import {
 } from './code-editor-files'
 import { CodeMirrorEditor } from './codemirror-editor'
 import {
+  ICodeEditorDiffResult,
   ICodeEditorConflictFile,
   purgeLegacyCodeEditorStorage,
   readCodeEditorStorageItem,
@@ -87,10 +86,12 @@ interface ICodeEditorPanelState {
   readonly expandedDirectoryPaths: ReadonlySet<string>
   readonly selectedPath: string | null
   readonly diskContents: string
-  readonly headContents: string
   readonly editorContents: string
   readonly lineEnding: CodeEditorLineEnding
   readonly activeTab: 'edit' | 'preview'
+  readonly previewDiffLoading: boolean
+  readonly previewDiffResult: ICodeEditorDiffResult | null
+  readonly previewDiffError: string | null
   readonly searchQuery: string
   readonly replacement: string
   readonly searchOptions: ICodeEditorSearchOptions
@@ -118,6 +119,7 @@ export class CodeEditorPanel extends React.Component<
   private searchInput: HTMLInputElement | null = null
   private lastOpenRequestID: number | null = null
   private isMounted = false
+  private previewDiffRequestID = 0
 
   public constructor(props: ICodeEditorPanelProps) {
     super(props)
@@ -130,10 +132,12 @@ export class CodeEditorPanel extends React.Component<
       expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
       selectedPath: session.selectedPath,
       diskContents: '',
-      headContents: '',
       editorContents: '',
       lineEnding: 'lf',
       activeTab: session.activeTab,
+      previewDiffLoading: false,
+      previewDiffResult: null,
+      previewDiffError: null,
       searchQuery: '',
       replacement: '',
       searchOptions: {
@@ -215,7 +219,7 @@ export class CodeEditorPanel extends React.Component<
               onClick={this.toggleTreeVisible}
               title="Hide file tree"
             >
-              <Octicon symbol={octicons.sidebarCollapse} />
+              <Octicon symbol={octicons.sidebarExpand} />
             </button>
           </div>
         </div>
@@ -273,12 +277,15 @@ export class CodeEditorPanel extends React.Component<
               onClick={this.toggleTreeVisible}
               title="Show file tree"
             >
-              <Octicon symbol={octicons.sidebarExpand} />
+              <Octicon symbol={octicons.sidebarCollapse} />
             </button>
           )}
           <div className="code-editor-title">
             {selectedPath ?? this.props.repository.name}
             {dirty ? <span className="code-editor-dirty-dot" /> : null}
+            {this.state.previewDiffLoading ? (
+              <span className="code-editor-loading-indicator" />
+            ) : null}
           </div>
           <div className="code-editor-actions">
             {this.state.conflictDraft !== null &&
@@ -504,6 +511,11 @@ export class CodeEditorPanel extends React.Component<
         ref={this.editorRef}
         value={this.state.editorContents}
         relativePath={this.state.selectedPath}
+        stateCacheKey={createCodeEditorStateCacheKey(
+          this.props.repository.path,
+          getBranchKey(this.props.repositoryState),
+          this.state.selectedPath
+        )}
         searchQuery={this.state.searchQuery}
         searchOptions={this.state.searchOptions}
         searchMatches={matches}
@@ -544,16 +556,35 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private renderPreview() {
-    const selectedPath = this.state.selectedPath ?? ''
-
     return (
       <div className="code-editor-preview">
         {this.renderPreviewToolbar()}
-        {this.state.preferences.diffMode === 'split'
-          ? this.renderSplitDiff()
-          : this.renderUnifiedDiff(selectedPath)}
+        {this.renderPreviewContent()}
       </div>
     )
+  }
+
+  private renderPreviewContent() {
+    if (this.state.previewDiffLoading) {
+      return <div className="code-editor-empty-state">Loading diff...</div>
+    }
+
+    if (this.state.previewDiffError !== null) {
+      return (
+        <div className="code-editor-empty-state">
+          {this.state.previewDiffError}
+        </div>
+      )
+    }
+
+    const diff = this.state.previewDiffResult
+    if (diff === null || diff.mode !== this.state.preferences.diffMode) {
+      return <div className="code-editor-empty-state">No diff loaded.</div>
+    }
+
+    return diff.mode === 'split'
+      ? this.renderSplitDiff(diff)
+      : this.renderUnifiedDiff(diff)
   }
 
   private renderPreviewToolbar() {
@@ -588,58 +619,73 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private renderUnifiedDiff(selectedPath: string) {
-    const rows = createLineDiffRows(
-      normalizeEditorText(this.state.headContents),
-      this.state.editorContents
-    )
-
-    if (
-      normalizeEditorText(this.state.headContents) === this.state.editorContents
-    ) {
+  private renderUnifiedDiff(diff: ICodeEditorDiffResult) {
+    if (diff.unchanged) {
       return (
         <div className="code-editor-diff-preview unified">
-          <div className="code-editor-empty">No changes in {selectedPath}</div>
+          <div className="code-editor-empty">
+            No changes in {diff.relativePath}
+          </div>
         </div>
       )
     }
 
     return (
       <div className="code-editor-diff-preview unified">
-        <div className="code-editor-unified-diff-header">{selectedPath}</div>
-        {rows.map((row, index) => this.renderUnifiedDiffRow(row, index))}
+        <div className="code-editor-unified-diff-header">
+          {diff.relativePath}
+          {this.renderDiffTruncationNotice(diff)}
+        </div>
+        {(diff.rows as ReadonlyArray<any>).map((row, index) =>
+          this.renderUnifiedDiffRow(row, index)
+        )}
       </div>
     )
   }
 
-  private renderUnifiedDiffRow(row: ICodeEditorLineDiffRow, index: number) {
+  private renderUnifiedDiffRow(
+    row: ICodeEditorDiffResult['rows'][number],
+    index: number
+  ) {
+    const line = row as any
+
     return (
-      <div key={index} className={`code-editor-unified-diff-row ${row.kind}`}>
-        <span className="line-number">{row.oldLineNumber ?? ''}</span>
-        <span className="line-number">{row.newLineNumber ?? ''}</span>
+      <div key={index} className={`code-editor-unified-diff-row ${line.kind}`}>
+        <span className="line-number">{line.oldLineNumber ?? ''}</span>
+        <span className="line-number">{line.newLineNumber ?? ''}</span>
         <pre>
-          {row.kind === 'removed' ? row.oldText || ' ' : row.newText || ' '}
+          {line.kind === 'removed' ? line.oldText || ' ' : line.newText || ' '}
         </pre>
       </div>
     )
   }
 
-  private renderSplitDiff() {
-    const rows = createSideBySideDiffRows(
-      normalizeEditorText(this.state.headContents),
-      this.state.editorContents
-    )
-
+  private renderSplitDiff(diff: ICodeEditorDiffResult) {
     return (
       <div className="code-editor-split-diff">
         <div className="code-editor-split-diff-header">
           <span>HEAD</span>
           <span>Current</span>
         </div>
+        {this.renderDiffTruncationNotice(diff)}
         <div className="code-editor-split-diff-rows">
-          {rows.map((row, index) => this.renderSplitDiffRow(row, index))}
+          {(diff.rows as ReadonlyArray<ICodeEditorSideBySideDiffRow>).map(
+            (row, index) => this.renderSplitDiffRow(row, index)
+          )}
         </div>
       </div>
+    )
+  }
+
+  private renderDiffTruncationNotice(diff: ICodeEditorDiffResult) {
+    if (!diff.truncated) {
+      return null
+    }
+
+    return (
+      <span className="code-editor-diff-truncated">
+        Showing first {diff.rows.length} of {diff.totalRows} rows
+      </span>
     )
   }
 
@@ -812,10 +858,12 @@ export class CodeEditorPanel extends React.Component<
         expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
         selectedPath: session.selectedPath,
         diskContents: '',
-        headContents: '',
         editorContents: '',
         conflictDraft: null,
         conflictComparisonVisible: false,
+        previewDiffLoading: false,
+        previewDiffResult: null,
+        previewDiffError: null,
         activeTab: session.activeTab,
         treeVisible: session.treeVisible,
         activeSearchMatchIndex: 0,
@@ -844,14 +892,14 @@ export class CodeEditorPanel extends React.Component<
       activeTab: 'edit',
       conflictDraft: null,
       conflictComparisonVisible: false,
+      previewDiffLoading: false,
+      previewDiffResult: null,
+      previewDiffError: null,
     })
 
     try {
+      log.info(`[CodeEditor] open file path='${relativePath}'`)
       const rawContents = await readRepositoryTextFile(
-        this.props.repository,
-        relativePath
-      )
-      const headContents = await readHeadTextFile(
         this.props.repository,
         relativePath
       )
@@ -882,7 +930,6 @@ export class CodeEditorPanel extends React.Component<
       this.setState(
         {
           diskContents,
-          headContents: normalizeEditorText(headContents),
           editorContents: tempContents ?? diskContents,
           lineEnding: tempFileStatus.lineEnding ?? diskLineEnding,
           conflictDraft,
@@ -941,15 +988,19 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private onTabClicked = (tab: number) => {
-    void this.persistTempFileIfNeeded()
-    this.setState({ activeTab: tab === 0 ? 'edit' : 'preview' }, () =>
+    const activeTab = tab === 0 ? 'edit' : 'preview'
+    log.info(`[CodeEditor] switch tab tab='${activeTab}'`)
+    this.setState({ activeTab }, () => {
       this.persistSession()
-    )
+      if (activeTab === 'preview') {
+        void this.loadPreviewDiff('tab-switch')
+      }
+    })
   }
 
   private onEditorChanged = (contents: string) => {
     const previousContents = this.state.editorContents
-    this.setState({ editorContents: contents }, () => {
+    this.setState({ editorContents: contents, previewDiffResult: null }, () => {
       void this.persistTempFileIfNeeded(undefined, previousContents)
     })
   }
@@ -963,6 +1014,7 @@ export class CodeEditorPanel extends React.Component<
     this.setState({ saving: true, error: null })
 
     try {
+      log.info(`[CodeEditor] save file path='${selectedPath}'`)
       await writeRepositoryTextFile(
         this.props.repository,
         selectedPath,
@@ -979,6 +1031,8 @@ export class CodeEditorPanel extends React.Component<
         saving: false,
         conflictDraft: null,
         conflictComparisonVisible: false,
+        previewDiffResult: null,
+        previewDiffError: null,
       })
       await this.props.dispatcher.refreshRepository(this.props.repository)
     } catch (error) {
@@ -992,6 +1046,7 @@ export class CodeEditorPanel extends React.Component<
   private cancelChanges = () => {
     const selectedPath = this.state.selectedPath
     if (selectedPath !== null) {
+      log.info(`[CodeEditor] cancel changes path='${selectedPath}'`)
       void removeRepositoryTempTextFile(
         this.props.repository,
         getBranchKey(this.props.repositoryState),
@@ -1003,6 +1058,8 @@ export class CodeEditorPanel extends React.Component<
       editorContents: this.state.diskContents,
       conflictDraft: null,
       conflictComparisonVisible: false,
+      previewDiffResult: null,
+      previewDiffError: null,
       activeSearchMatchIndex: 0,
     })
   }
@@ -1087,6 +1144,68 @@ export class CodeEditorPanel extends React.Component<
       baseContents: this.state.diskContents,
       lineEnding: this.state.lineEnding,
     })
+  }
+
+  private async loadPreviewDiff(reason: string) {
+    const selectedPath = this.state.selectedPath
+    if (selectedPath === null) {
+      return
+    }
+
+    const requestID = ++this.previewDiffRequestID
+    const mode = this.state.preferences.diffMode
+    const startedAt = performance.now()
+
+    log.info(
+      `[CodeEditor] preview diff requested reason='${reason}' path='${selectedPath}' mode='${mode}'`
+    )
+
+    this.setState({
+      previewDiffLoading: true,
+      previewDiffError: null,
+      previewDiffResult: null,
+    })
+
+    try {
+      await this.persistTempFileIfNeeded()
+      const diff = await createRepositoryCodeEditorDiff(
+        this.props.repository,
+        getBranchKey(this.props.repositoryState),
+        selectedPath,
+        mode
+      )
+
+      if (!this.isMounted || requestID !== this.previewDiffRequestID) {
+        return
+      }
+
+      log.info(
+        `[CodeEditor] preview diff loaded path='${selectedPath}' mode='${mode}' rows=${
+          diff.totalRows
+        } durationMs=${Math.round(performance.now() - startedAt)}`
+      )
+
+      this.setState({
+        previewDiffLoading: false,
+        previewDiffResult: diff,
+        previewDiffError: null,
+      })
+    } catch (error) {
+      if (!this.isMounted || requestID !== this.previewDiffRequestID) {
+        return
+      }
+
+      log.warn(
+        `[CodeEditor] preview diff failed path='${selectedPath}' mode='${mode}'`,
+        error
+      )
+
+      this.setState({
+        previewDiffLoading: false,
+        previewDiffResult: null,
+        previewDiffError: getErrorMessage(error),
+      })
+    }
   }
 
   private isDirty() {
@@ -1195,7 +1314,13 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private onDiffModeChanged = (diffMode: CodeEditorDiffMode) => {
-    this.updatePreferences({ ...this.state.preferences, diffMode })
+    log.info(`[CodeEditor] switch diff mode mode='${diffMode}'`)
+    this.updatePreferences(
+      { ...this.state.preferences, diffMode },
+      this.state.activeTab === 'preview'
+        ? () => void this.loadPreviewDiff('diff-mode-switch')
+        : undefined
+    )
   }
 
   private onShowIgnoredPathsChanged = (
@@ -1388,6 +1513,14 @@ function createCodeEditorSessionKey(
   return `${editorSessionStoragePrefix}${encodeURIComponent(
     JSON.stringify({ repositoryPath, branchName })
   )}`
+}
+
+function createCodeEditorStateCacheKey(
+  repositoryPath: string,
+  branchName: string,
+  relativePath: string | null
+) {
+  return JSON.stringify({ repositoryPath, branchName, relativePath })
 }
 
 function clampNumber(value: number, min: number, max: number) {
