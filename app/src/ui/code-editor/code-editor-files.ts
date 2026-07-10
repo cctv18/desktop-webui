@@ -105,7 +105,7 @@ export async function writeRepositoryTempTextFile(
     contents: applyLineEnding(options.contents, options.lineEnding),
     previousContents: applyLineEnding(
       options.previousContents,
-      options.lineEnding
+      options.previousLineEnding
     ),
   })
 }
@@ -172,9 +172,16 @@ export async function createRepositoryCodeEditorDiff(
   repository: Repository,
   branchKey: string,
   relativePath: string,
-  mode: CodeEditorDiffMode
+  mode: CodeEditorDiffMode,
+  expandedRegionIDs: ReadonlyArray<string>
 ): Promise<ICodeEditorDiffResult> {
-  return createCodeEditorDiff(repository, branchKey, relativePath, mode)
+  return createCodeEditorDiff(
+    repository,
+    branchKey,
+    relativePath,
+    mode,
+    expandedRegionIDs
+  )
 }
 
 export async function readHeadTextFile(

@@ -3,13 +3,18 @@ import { describe, it } from 'node:test'
 
 import {
   applyCodeEditorTextEditAction,
+  applyCodeEditorHistoryAction,
   buildFileTreeFromPaths,
+  canApplyCodeEditorHistoryAction,
   createLineDiffRows,
+  createFoldedLineDiffRows,
+  createFoldedSideBySideDiffRows,
   createCodeEditorTextEditAction,
   detectLineEnding,
   detectLanguageFromPathAndContent,
   filterRepositoryFilePaths,
   findSearchMatches,
+  isCodeEditorDocumentDirty,
   normalizeRepositoryRelativePath,
   parseIgnoredPathList,
 } from '../../src/ui/code-editor/code-editor-model'
@@ -82,6 +87,91 @@ describe('Code editor model helpers', () => {
     )
   })
 
+  it('folds unchanged lines outside change context without returning their text', () => {
+    const original = Array.from(
+      { length: 20 },
+      (_, index) => `line-${index + 1}`
+    )
+    const current = [...original]
+    current[9] = 'changed-10'
+
+    const rows = createFoldedLineDiffRows(
+      createLineDiffRows(original.join('\n'), current.join('\n')),
+      [],
+      2
+    )
+    const collapsed = rows.filter(row => row.kind === 'collapsed')
+
+    assert.equal(collapsed.length, 2)
+    assert.deepEqual(
+      collapsed.map(row =>
+        row.kind === 'collapsed'
+          ? [row.oldStartLine, row.newStartLine, row.lineCount]
+          : null
+      ),
+      [
+        [1, 1, 7],
+        [13, 13, 8],
+      ]
+    )
+    assert.equal(
+      rows.some(row => 'oldText' in row && row.oldText === 'line-1'),
+      false
+    )
+  })
+
+  it('expands only the requested unchanged diff region', () => {
+    const original = Array.from(
+      { length: 20 },
+      (_, index) => `line-${index + 1}`
+    )
+    const current = [...original]
+    current[9] = 'changed-10'
+    const diffRows = createLineDiffRows(original.join('\n'), current.join('\n'))
+    const folded = createFoldedLineDiffRows(diffRows, [], 2)
+    const firstRegion = folded.find(row => row.kind === 'collapsed')
+    assert.notEqual(firstRegion, undefined)
+    if (firstRegion === undefined || firstRegion.kind !== 'collapsed') {
+      return
+    }
+
+    const expanded = createFoldedLineDiffRows(diffRows, [firstRegion.id], 2)
+    assert.equal(
+      expanded.some(
+        row => row.kind === 'collapsed' && row.id === firstRegion.id
+      ),
+      false
+    )
+    assert.equal(
+      expanded.some(row => 'oldText' in row && row.oldText === 'line-1'),
+      true
+    )
+    assert.equal(
+      expanded.some(row => row.kind === 'collapsed'),
+      true
+    )
+  })
+
+  it('uses the same collapsed regions in unified and split diff modes', () => {
+    const original = Array.from(
+      { length: 20 },
+      (_, index) => `line-${index + 1}`
+    )
+    const current = [...original]
+    current[9] = 'changed-10'
+    const unified = createFoldedLineDiffRows(
+      createLineDiffRows(original.join('\n'), current.join('\n')),
+      [],
+      2
+    )
+    const split = createFoldedSideBySideDiffRows(unified)
+
+    assert.deepEqual(
+      split.filter(row => row.kind === 'collapsed'),
+      unified.filter(row => row.kind === 'collapsed')
+    )
+  })
+
   it('applies persisted editor actions for undo and redo', () => {
     const original = ['alpha', 'beta', 'gamma'].join('\n')
     const current = ['alpha', 'BETA', 'gamma', 'delta'].join('\n')
@@ -94,6 +184,72 @@ describe('Code editor model helpers', () => {
     assert.equal(
       applyCodeEditorTextEditAction(current, action, 'undo'),
       original
+    )
+  })
+
+  it('records line-ending-only changes as undoable editor actions', () => {
+    const action = createCodeEditorTextEditAction(
+      'alpha\nbeta\n',
+      'alpha\nbeta\n',
+      'crlf',
+      'lf'
+    )
+
+    assert.deepEqual(
+      applyCodeEditorHistoryAction('alpha\nbeta\n', action, 'undo'),
+      {
+        contents: 'alpha\nbeta\n',
+        lineEnding: 'crlf',
+      }
+    )
+    assert.deepEqual(
+      applyCodeEditorHistoryAction('alpha\nbeta\n', action, 'redo'),
+      {
+        contents: 'alpha\nbeta\n',
+        lineEnding: 'lf',
+      }
+    )
+  })
+
+  it('restores text and line endings together across undo and redo', () => {
+    const action = createCodeEditorTextEditAction(
+      'alpha\nbeta',
+      'alpha\nBETA',
+      'crlf',
+      'lf'
+    )
+
+    assert.deepEqual(
+      applyCodeEditorHistoryAction('alpha\nBETA', action, 'undo'),
+      {
+        contents: 'alpha\nbeta',
+        lineEnding: 'crlf',
+      }
+    )
+    assert.deepEqual(
+      applyCodeEditorHistoryAction('alpha\nbeta', action, 'redo'),
+      {
+        contents: 'alpha\nBETA',
+        lineEnding: 'lf',
+      }
+    )
+  })
+
+  it('rejects undo and redo requests when their respective history stack is empty', () => {
+    assert.equal(canApplyCodeEditorHistoryAction('undo', 0, 2), false)
+    assert.equal(canApplyCodeEditorHistoryAction('redo', 2, 0), false)
+    assert.equal(canApplyCodeEditorHistoryAction('undo', 1, 0), true)
+    assert.equal(canApplyCodeEditorHistoryAction('redo', 0, 1), true)
+  })
+
+  it('treats a line-ending-only conversion as a dirty document', () => {
+    assert.equal(
+      isCodeEditorDocumentDirty('alpha\nbeta', 'alpha\nbeta', 'lf', 'crlf'),
+      true
+    )
+    assert.equal(
+      isCodeEditorDocumentDirty('alpha\nbeta', 'alpha\nbeta', 'crlf', 'crlf'),
+      false
     )
   })
 

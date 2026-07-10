@@ -46,14 +46,15 @@ import { NotificationsDebugStore } from '../lib/stores/notifications-debug-store
 import { Dispatcher } from '../ui/dispatcher'
 import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
 import {
-  applyCodeEditorTextEditAction,
+  applyCodeEditorHistoryAction,
   createCodeEditorTextEditAction,
+  createFoldedLineDiffRows,
+  createFoldedSideBySideDiffRows,
   createLineDiffRows,
-  createSideBySideDiffRows,
   filterRepositoryFilePaths,
   ICodeEditorTextEditAction,
-  ICodeEditorLineDiffRow,
-  ICodeEditorSideBySideDiffRow,
+  CodeEditorSplitDiffRow,
+  CodeEditorUnifiedDiffRow,
   isRepositoryPathIgnored,
   normalizeEditorText,
   normalizeRepositoryRelativePath,
@@ -129,7 +130,6 @@ type CodeEditorLineEnding = 'lf' | 'crlf'
 type RepositoryPanelKind = 'commit-management' | 'code-editor'
 
 const maxCodeEditorPreviewBlobBytes = 5 * 1024 * 1024
-const maxCodeEditorDiffRows = 2000
 
 interface ICodeEditorTempFileStatus {
   readonly hasTempFile: boolean
@@ -149,6 +149,7 @@ interface ICodeEditorWriteTempFileOptions {
   readonly relativePath: string
   readonly contents: string
   readonly previousContents: string
+  readonly previousLineEnding: CodeEditorLineEnding
   readonly baseContents: string
   readonly lineEnding: CodeEditorLineEnding
 }
@@ -162,8 +163,8 @@ interface ICodeEditorDiffResult {
   readonly truncated: boolean
   readonly totalRows: number
   readonly rows:
-    | ReadonlyArray<ICodeEditorLineDiffRow>
-    | ReadonlyArray<ICodeEditorSideBySideDiffRow>
+    | ReadonlyArray<CodeEditorUnifiedDiffRow>
+    | ReadonlyArray<CodeEditorSplitDiffRow>
 }
 
 type CodeEditorHistoryActionKind = 'undo' | 'redo'
@@ -490,13 +491,15 @@ export class WebRuntime {
             repository: Repository,
             branchKey: string,
             relativePath: string,
-            mode: CodeEditorDiffMode
+            mode: CodeEditorDiffMode,
+            expandedRegionIDs: ReadonlyArray<string>
           ) =>
             this.createCodeEditorDiff(
               repository,
               branchKey,
               relativePath,
-              mode
+              mode,
+              expandedRegionIDs
             ),
           listRepositoryFiles: (
             path: string,
@@ -681,9 +684,15 @@ export class WebRuntime {
 
     const existingLog = await this.readCodeEditorEditLog(root, normalizedPath)
     const action =
-      previousContents === nextContents
+      previousContents === nextContents &&
+      options.previousLineEnding === options.lineEnding
         ? null
-        : createCodeEditorTextEditAction(previousContents, nextContents)
+        : createCodeEditorTextEditAction(
+            previousContents,
+            nextContents,
+            options.previousLineEnding,
+            options.lineEnding
+          )
     const undoStack =
       action === null
         ? existingLog?.undoStack ?? []
@@ -735,17 +744,16 @@ export class WebRuntime {
 
     const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
     const normalizedPath = assertCodeEditorRelativePath(relativePath)
-    const currentContents = normalizeEditorText(
-      await this.readCodeEditorCurrentContents(
-        repositoryPath,
-        root,
-        normalizedPath
-      )
+    const rawCurrentContents = await this.readCodeEditorCurrentContents(
+      repositoryPath,
+      root,
+      normalizedPath
     )
+    const currentContents = normalizeEditorText(rawCurrentContents)
     const editLog = await this.readCodeEditorEditLog(root, normalizedPath)
 
     if (editLog === null) {
-      const lineEnding = detectRawLineEnding(currentContents)
+      const lineEnding = detectRawLineEnding(rawCurrentContents)
       const status = createCodeEditorHistoryStatus(null)
       logCodeEditorHistoryStatus(
         actionKind,
@@ -785,11 +793,13 @@ export class WebRuntime {
       }
     }
 
-    const contents = applyCodeEditorTextEditAction(
+    const applied = applyCodeEditorHistoryAction(
       currentContents,
       action,
-      actionKind
+      actionKind,
+      editLog.lineEnding
     )
+    const contents = applied.contents
     const undoStack =
       actionKind === 'undo'
         ? editLog.undoStack.slice(0, -1)
@@ -800,6 +810,7 @@ export class WebRuntime {
         : editLog.redoStack.slice(0, -1)
     const nextLog: ICodeEditorFileEditLog = {
       ...editLog,
+      lineEnding: applied.lineEnding,
       undoStack,
       redoStack,
       updatedAt: Date.now(),
@@ -809,7 +820,7 @@ export class WebRuntime {
     await mkdir(Path.dirname(tempPath), { recursive: true })
     await writeFile(
       tempPath,
-      applyRawLineEnding(contents, editLog.lineEnding),
+      applyRawLineEnding(contents, applied.lineEnding),
       'utf8'
     )
     await this.writeCodeEditorEditLog(root, normalizedPath, nextLog)
@@ -826,7 +837,7 @@ export class WebRuntime {
     return {
       ...status,
       contents,
-      lineEnding: editLog.lineEnding,
+      lineEnding: applied.lineEnding,
       changed: true,
     }
   }
@@ -894,7 +905,8 @@ export class WebRuntime {
     repository: Repository,
     branchKey: string,
     relativePath: string,
-    mode: CodeEditorDiffMode
+    mode: CodeEditorDiffMode,
+    expandedRegionIDs: ReadonlyArray<string>
   ): Promise<ICodeEditorDiffResult> {
     const startedAt = Date.now()
     await this.pathGuard.assertAllowed(repository.path)
@@ -915,26 +927,31 @@ export class WebRuntime {
     const current = normalizeEditorText(currentContents)
     const unchanged = original === current
 
+    const unifiedRows = createFoldedLineDiffRows(
+      createLineDiffRows(original, current),
+      expandedRegionIDs
+    )
     const rows =
       mode === 'split'
-        ? createSideBySideDiffRows(original, current)
-        : createLineDiffRows(original, current)
-    const truncatedRows = rows.slice(0, maxCodeEditorDiffRows)
+        ? createFoldedSideBySideDiffRows(unifiedRows)
+        : unifiedRows
     const duration = Date.now() - startedAt
 
     log.info(
       `[CodeEditor] diff generated path='${normalizedPath}' mode='${mode}' rows=${
         rows.length
-      } truncated=${rows.length > truncatedRows.length} durationMs=${duration}`
+      } collapsed=${
+        rows.filter(row => row.kind === 'collapsed').length
+      } durationMs=${duration}`
     )
 
     return {
       mode,
       relativePath: normalizedPath,
       unchanged,
-      truncated: rows.length > truncatedRows.length,
+      truncated: false,
       totalRows: rows.length,
-      rows: truncatedRows,
+      rows,
     }
   }
 

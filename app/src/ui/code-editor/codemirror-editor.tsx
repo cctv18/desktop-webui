@@ -66,7 +66,7 @@ interface ICodeMirrorEditorProps {
   readonly onRedo: () => void
 }
 
-export class CodeMirrorEditor extends React.Component<ICodeMirrorEditorProps> {
+export class CodeMirrorEditor extends React.PureComponent<ICodeMirrorEditorProps> {
   private readonly containerRef = React.createRef<HTMLDivElement>()
   private readonly languageCompartment = new Compartment()
   private readonly preferencesCompartment = new Compartment()

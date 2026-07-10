@@ -1,4 +1,5 @@
 export type CodeEditorPanel = 'commit-management' | 'code-editor'
+export type CodeEditorHistoryAction = 'undo' | 'redo'
 export type CodeEditorLineEnding = 'lf' | 'crlf'
 export type CodeEditorLanguage =
   | 'cpp'
@@ -43,11 +44,28 @@ export interface ICodeEditorSideBySideDiffRow {
   readonly newText: string
 }
 
+export interface ICodeEditorCollapsedDiffRow {
+  readonly kind: 'collapsed'
+  readonly id: string
+  readonly oldStartLine: number
+  readonly newStartLine: number
+  readonly lineCount: number
+}
+
+export type CodeEditorUnifiedDiffRow =
+  | ICodeEditorLineDiffRow
+  | ICodeEditorCollapsedDiffRow
+export type CodeEditorSplitDiffRow =
+  | ICodeEditorSideBySideDiffRow
+  | ICodeEditorCollapsedDiffRow
+
 export interface ICodeEditorTextEditAction {
   readonly from: number
   readonly to: number
   readonly deleted: string
   readonly inserted: string
+  readonly previousLineEnding?: CodeEditorLineEnding
+  readonly nextLineEnding?: CodeEditorLineEnding
   readonly updatedAt: number
 }
 
@@ -238,7 +256,9 @@ export function applyLineEnding(
 
 export function createCodeEditorTextEditAction(
   previousContents: string,
-  nextContents: string
+  nextContents: string,
+  previousLineEnding: CodeEditorLineEnding = 'lf',
+  nextLineEnding: CodeEditorLineEnding = previousLineEnding
 ): ICodeEditorTextEditAction {
   const previous = normalizeEditorText(previousContents)
   const next = normalizeEditorText(nextContents)
@@ -269,8 +289,42 @@ export function createCodeEditorTextEditAction(
     to: previousEnd,
     deleted: previous.slice(prefix, previousEnd),
     inserted: next.slice(prefix, nextEnd),
+    previousLineEnding,
+    nextLineEnding,
     updatedAt: Date.now(),
   }
+}
+
+export function applyCodeEditorHistoryAction(
+  contents: string,
+  action: ICodeEditorTextEditAction,
+  direction: 'undo' | 'redo',
+  fallbackLineEnding: CodeEditorLineEnding = 'lf'
+) {
+  return {
+    contents: applyCodeEditorTextEditAction(contents, action, direction),
+    lineEnding:
+      (direction === 'undo'
+        ? action.previousLineEnding
+        : action.nextLineEnding) ?? fallbackLineEnding,
+  }
+}
+
+export function canApplyCodeEditorHistoryAction(
+  action: CodeEditorHistoryAction,
+  undoCount: number,
+  redoCount: number
+) {
+  return action === 'undo' ? undoCount > 0 : redoCount > 0
+}
+
+export function isCodeEditorDocumentDirty(
+  editorContents: string,
+  diskContents: string,
+  lineEnding: CodeEditorLineEnding,
+  diskLineEnding: CodeEditorLineEnding
+) {
+  return editorContents !== diskContents || lineEnding !== diskLineEnding
 }
 
 export function applyCodeEditorTextEditAction(
@@ -440,6 +494,91 @@ export function createSideBySideDiffRows(
   current: string
 ): ReadonlyArray<ICodeEditorSideBySideDiffRow> {
   const rows = createLineDiffRows(original, current)
+  return createSideBySideRowsFromLineRows(rows)
+}
+
+export function createFoldedLineDiffRows(
+  rows: ReadonlyArray<ICodeEditorLineDiffRow>,
+  expandedRegionIDs: ReadonlyArray<string>,
+  contextLines = 3
+): ReadonlyArray<CodeEditorUnifiedDiffRow> {
+  const expanded = new Set(expandedRegionIDs)
+  const result = new Array<CodeEditorUnifiedDiffRow>()
+
+  for (let index = 0; index < rows.length; ) {
+    if (rows[index].kind !== 'context') {
+      result.push(rows[index++])
+      continue
+    }
+
+    const start = index
+    while (index < rows.length && rows[index].kind === 'context') {
+      index++
+    }
+    const end = index
+    const leading = start === 0
+    const trailing = end === rows.length
+    const keepBefore = leading ? 0 : Math.min(contextLines, end - start)
+    const keepAfter = trailing
+      ? 0
+      : Math.min(contextLines, end - start - keepBefore)
+    const collapsedStart = start + keepBefore
+    const collapsedEnd = end - keepAfter
+
+    result.push(...rows.slice(start, collapsedStart))
+
+    if (collapsedEnd > collapsedStart) {
+      const first = rows[collapsedStart]
+      const id = `${first.oldLineNumber}:${first.newLineNumber}:${
+        collapsedEnd - collapsedStart
+      }`
+      if (expanded.has(id)) {
+        result.push(...rows.slice(collapsedStart, collapsedEnd))
+      } else {
+        result.push({
+          kind: 'collapsed',
+          id,
+          oldStartLine: first.oldLineNumber ?? 1,
+          newStartLine: first.newLineNumber ?? 1,
+          lineCount: collapsedEnd - collapsedStart,
+        })
+      }
+    }
+
+    result.push(...rows.slice(collapsedEnd, end))
+  }
+
+  return result
+}
+
+export function createFoldedSideBySideDiffRows(
+  rows: ReadonlyArray<CodeEditorUnifiedDiffRow>
+): ReadonlyArray<CodeEditorSplitDiffRow> {
+  const result = new Array<CodeEditorSplitDiffRow>()
+  let lineRows = new Array<ICodeEditorLineDiffRow>()
+
+  const flush = () => {
+    if (lineRows.length > 0) {
+      result.push(...createSideBySideRowsFromLineRows(lineRows))
+      lineRows = []
+    }
+  }
+
+  for (const row of rows) {
+    if (row.kind === 'collapsed') {
+      flush()
+      result.push(row)
+    } else {
+      lineRows.push(row)
+    }
+  }
+  flush()
+  return result
+}
+
+function createSideBySideRowsFromLineRows(
+  rows: ReadonlyArray<ICodeEditorLineDiffRow>
+): ReadonlyArray<ICodeEditorSideBySideDiffRow> {
   const sideBySideRows = new Array<ICodeEditorSideBySideDiffRow>()
 
   for (let index = 0; index < rows.length; index++) {

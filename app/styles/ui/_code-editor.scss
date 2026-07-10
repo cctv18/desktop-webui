@@ -500,6 +500,27 @@
   font-size: var(--font-size-sm);
 }
 
+.code-editor-diff-collapsed {
+  align-items: center;
+  background: var(--box-alt-background-color);
+  border: 0;
+  border-bottom: 1px solid var(--box-border-color);
+  color: var(--text-secondary-color);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 6px;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 12px;
+  width: 100%;
+
+  &:hover {
+    background: var(--list-item-hover-background-color);
+    color: var(--text-color);
+  }
+}
+
 .code-editor-unified-diff-row {
   min-height: 19px;
   display: grid;

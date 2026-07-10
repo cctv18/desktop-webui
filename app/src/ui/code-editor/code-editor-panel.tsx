@@ -10,12 +10,15 @@ import { TabBar, TabBarType } from '../tab-bar'
 import {
   buildFileTreeFromPaths,
   CodeEditorLineEnding,
+  CodeEditorSplitDiffRow,
   CodeEditorTreeNode,
+  CodeEditorUnifiedDiffRow,
   createSideBySideDiffRows,
+  canApplyCodeEditorHistoryAction,
   defaultCodeEditorIgnoredPaths,
   detectLineEnding,
   findSearchMatches,
-  ICodeEditorSideBySideDiffRow,
+  isCodeEditorDocumentDirty,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
   normalizeEditorText,
@@ -89,12 +92,14 @@ interface ICodeEditorPanelState {
   readonly expandedDirectoryPaths: ReadonlySet<string>
   readonly selectedPath: string | null
   readonly diskContents: string
+  readonly diskLineEnding: CodeEditorLineEnding
   readonly editorContents: string
   readonly lineEnding: CodeEditorLineEnding
   readonly activeTab: 'edit' | 'preview'
   readonly previewDiffLoading: boolean
   readonly previewDiffResult: ICodeEditorDiffResult | null
   readonly previewDiffError: string | null
+  readonly expandedDiffRegionIDs: ReadonlySet<string>
   readonly searchQuery: string
   readonly replacement: string
   readonly searchOptions: ICodeEditorSearchOptions
@@ -139,12 +144,14 @@ export class CodeEditorPanel extends React.Component<
       expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
       selectedPath: session.selectedPath,
       diskContents: '',
+      diskLineEnding: 'lf',
       editorContents: '',
       lineEnding: 'lf',
       activeTab: session.activeTab,
       previewDiffLoading: false,
       previewDiffResult: null,
       previewDiffError: null,
+      expandedDiffRegionIDs: new Set(),
       searchQuery: '',
       replacement: '',
       searchOptions: {
@@ -683,18 +690,19 @@ export class CodeEditorPanel extends React.Component<
           {diff.relativePath}
           {this.renderDiffTruncationNotice(diff)}
         </div>
-        {(diff.rows as ReadonlyArray<any>).map((row, index) =>
-          this.renderUnifiedDiffRow(row, index)
+        {(diff.rows as ReadonlyArray<CodeEditorUnifiedDiffRow>).map(
+          (row, index) => this.renderUnifiedDiffRow(row, index)
         )}
       </div>
     )
   }
 
-  private renderUnifiedDiffRow(
-    row: ICodeEditorDiffResult['rows'][number],
-    index: number
-  ) {
-    const line = row as any
+  private renderUnifiedDiffRow(row: CodeEditorUnifiedDiffRow, index: number) {
+    if (row.kind === 'collapsed') {
+      return this.renderCollapsedDiffRow(row, index, 'unified')
+    }
+
+    const line = row
 
     return (
       <div key={index} className={`code-editor-unified-diff-row ${line.kind}`}>
@@ -716,7 +724,7 @@ export class CodeEditorPanel extends React.Component<
         </div>
         {this.renderDiffTruncationNotice(diff)}
         <div className="code-editor-split-diff-rows">
-          {(diff.rows as ReadonlyArray<ICodeEditorSideBySideDiffRow>).map(
+          {(diff.rows as ReadonlyArray<CodeEditorSplitDiffRow>).map(
             (row, index) => this.renderSplitDiffRow(row, index)
           )}
         </div>
@@ -736,7 +744,11 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private renderSplitDiffRow(row: ICodeEditorSideBySideDiffRow, index: number) {
+  private renderSplitDiffRow(row: CodeEditorSplitDiffRow, index: number) {
+    if (row.kind === 'collapsed') {
+      return this.renderCollapsedDiffRow(row, index, 'split')
+    }
+
     return (
       <div key={index} className={`code-editor-split-diff-row ${row.kind}`}>
         <span className="line-number">{row.oldLineNumber ?? ''}</span>
@@ -744,6 +756,24 @@ export class CodeEditorPanel extends React.Component<
         <span className="line-number">{row.newLineNumber ?? ''}</span>
         <pre className="new">{row.newText || ' '}</pre>
       </div>
+    )
+  }
+
+  private renderCollapsedDiffRow(
+    row: Extract<CodeEditorUnifiedDiffRow, { kind: 'collapsed' }>,
+    index: number,
+    mode: CodeEditorDiffMode
+  ) {
+    return (
+      <button
+        key={`${row.id}:${index}`}
+        type="button"
+        className={`code-editor-diff-collapsed ${mode}`}
+        onClick={() => this.expandDiffRegion(row.id)}
+      >
+        <Octicon symbol={octicons.unfold} />
+        Show {row.lineCount} unchanged lines
+      </button>
     )
   }
 
@@ -905,6 +935,7 @@ export class CodeEditorPanel extends React.Component<
         expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
         selectedPath: session.selectedPath,
         diskContents: '',
+        diskLineEnding: 'lf',
         editorContents: '',
         conflictDraft: null,
         conflictComparisonVisible: false,
@@ -988,6 +1019,7 @@ export class CodeEditorPanel extends React.Component<
       this.setState(
         {
           diskContents,
+          diskLineEnding,
           editorContents: tempContents ?? diskContents,
           lineEnding: tempFileStatus.lineEnding ?? diskLineEnding,
           conflictDraft,
@@ -1059,6 +1091,7 @@ export class CodeEditorPanel extends React.Component<
           previewDiffLoading: false,
           previewDiffResult: null,
           previewDiffError: null,
+          expandedDiffRegionIDs: new Set(),
         },
         () => this.persistSession()
       )
@@ -1071,6 +1104,7 @@ export class CodeEditorPanel extends React.Component<
         previewDiffLoading: true,
         previewDiffResult: null,
         previewDiffError: null,
+        expandedDiffRegionIDs: new Set(),
       },
       () => {
         this.persistSession()
@@ -1102,6 +1136,18 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
+  private expandDiffRegion = (regionID: string) => {
+    this.setState(
+      state => ({
+        expandedDiffRegionIDs: new Set([
+          ...state.expandedDiffRegionIDs,
+          regionID,
+        ]),
+      }),
+      () => void this.loadPreviewDiff('expand-region')
+    )
+  }
+
   private save = async () => {
     const selectedPath = this.state.selectedPath
     if (selectedPath === null || !this.isDirty()) {
@@ -1127,6 +1173,7 @@ export class CodeEditorPanel extends React.Component<
       this.pendingTempFileWrite = Promise.resolve()
       this.setState({
         diskContents: this.state.editorContents,
+        diskLineEnding: this.state.lineEnding,
         saving: false,
         conflictDraft: null,
         conflictComparisonVisible: false,
@@ -1166,6 +1213,7 @@ export class CodeEditorPanel extends React.Component<
 
       this.setState({
         editorContents: this.state.diskContents,
+        lineEnding: this.state.diskLineEnding,
         conflictDraft: null,
         conflictComparisonVisible: false,
         previewDiffResult: null,
@@ -1249,7 +1297,8 @@ export class CodeEditorPanel extends React.Component<
 
   private async persistTempFileIfNeeded(
     props: ICodeEditorPanelProps = this.props,
-    previousContents = this.state.editorContents
+    previousContents = this.state.editorContents,
+    previousLineEnding = this.state.lineEnding
   ) {
     const selectedPath = this.state.selectedPath
     if (selectedPath === null) {
@@ -1260,7 +1309,12 @@ export class CodeEditorPanel extends React.Component<
     const editorContents = this.state.editorContents
     const diskContents = this.state.diskContents
     const lineEnding = this.state.lineEnding
-    const dirty = editorContents !== diskContents
+    const dirty = isCodeEditorDocumentDirty(
+      editorContents,
+      diskContents,
+      lineEnding,
+      this.state.diskLineEnding
+    )
 
     if (!dirty) {
       return
@@ -1272,6 +1326,7 @@ export class CodeEditorPanel extends React.Component<
         relativePath: selectedPath,
         contents: editorContents,
         previousContents,
+        previousLineEnding,
         baseContents: diskContents,
         lineEnding,
       })
@@ -1309,6 +1364,16 @@ export class CodeEditorPanel extends React.Component<
       selectedPath === null ||
       this.state.loadingFile ||
       this.state.historyActionLoading
+    ) {
+      return
+    }
+
+    if (
+      !canApplyCodeEditorHistoryAction(
+        action,
+        this.state.undoCount,
+        this.state.redoCount
+      )
     ) {
       return
     }
@@ -1392,7 +1457,8 @@ export class CodeEditorPanel extends React.Component<
         this.props.repository,
         getBranchKey(this.props.repositoryState),
         selectedPath,
-        mode
+        mode,
+        Array.from(this.state.expandedDiffRegionIDs)
       )
 
       if (!this.isMounted || requestID !== this.previewDiffRequestID) {
@@ -1429,7 +1495,12 @@ export class CodeEditorPanel extends React.Component<
   }
 
   private isDirty() {
-    return this.state.editorContents !== this.state.diskContents
+    return isCodeEditorDocumentDirty(
+      this.state.editorContents,
+      this.state.diskContents,
+      this.state.lineEnding,
+      this.state.diskLineEnding
+    )
   }
 
   private getSearchMatches() {
@@ -1516,7 +1587,24 @@ export class CodeEditorPanel extends React.Component<
     event: React.ChangeEvent<HTMLSelectElement>
   ) => {
     const lineEnding = event.currentTarget.value as CodeEditorLineEnding
-    this.setState({ lineEnding }, () => void this.persistTempFileIfNeeded())
+    const previousLineEnding = this.state.lineEnding
+    if (lineEnding === previousLineEnding) {
+      return
+    }
+    this.setState(
+      state => ({
+        lineEnding,
+        previewDiffResult: null,
+        undoCount: state.undoCount + 1,
+        redoCount: 0,
+      }),
+      () =>
+        void this.persistTempFileIfNeeded(
+          undefined,
+          this.state.editorContents,
+          previousLineEnding
+        )
+    )
   }
 
   private onFontSizeChanged = (event: React.ChangeEvent<HTMLInputElement>) => {
