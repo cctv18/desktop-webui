@@ -39,10 +39,7 @@ describe('git/cherry-pick', () => {
     } as WorkingDirectoryFileChange
 
     assert.equal(hasOutstandingRebaseConflicts([modified]), false)
-    assert.equal(
-      hasOutstandingRebaseConflicts([modified, conflicted]),
-      true
-    )
+    assert.equal(hasOutstandingRebaseConflicts([modified, conflicted]), true)
   })
 
   it('detects empty squash rebase stops reported as an empty amend', () => {

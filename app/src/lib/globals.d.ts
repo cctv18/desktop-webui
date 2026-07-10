@@ -185,9 +185,7 @@ declare module 'desktop-notifications' {
     T extends Record<string, any> = Record<string, any>
   > = (event: DesktopNotificationEvent, id: string, userInfo: T) => void
 
-  export function initializeNotifications(
-    options: INotificationOptions
-  ): void
+  export function initializeNotifications(options: INotificationOptions): void
   export function terminateNotifications(): void
   export function onNotificationEvent<
     T extends Record<string, any> = Record<string, any>

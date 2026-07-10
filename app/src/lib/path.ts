@@ -9,7 +9,9 @@ import { pathToFileURL } from 'url'
  */
 export const encodePathAsUrl = (...pathSegments: string[]) => {
   const webResourceURL = getWebResourceURL(pathSegments)
-  return webResourceURL ?? pathToFileURL(Path.resolve(...pathSegments)).toString()
+  return (
+    webResourceURL ?? pathToFileURL(Path.resolve(...pathSegments)).toString()
+  )
 }
 
 function getWebResourceURL(pathSegments: ReadonlyArray<string>) {

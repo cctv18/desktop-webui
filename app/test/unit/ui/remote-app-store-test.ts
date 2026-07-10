@@ -225,5 +225,4 @@ describe('RemoteAppStore', () => {
       MultiCommitOperationStepKind.ChooseBranch
     )
   })
-
 })

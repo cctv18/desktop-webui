@@ -199,7 +199,10 @@ function rebuildWebMenu() {
   emitIPC('app-menu', currentAppMenu)
 }
 
-function executeWebMenuItemById(id: string, item?: { readonly label?: string }) {
+function executeWebMenuItemById(
+  id: string,
+  item?: { readonly label?: string }
+) {
   const menuEvent = getWebMenuEventForItem(id, currentMenuLabels, item?.label)
 
   if (menuEvent !== null) {

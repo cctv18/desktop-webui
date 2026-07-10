@@ -16,10 +16,7 @@ export function invoke<T extends keyof RequestResponseChannels>(
   channel: T,
   ...args: RequestResponseChannelParameters<T>
 ): ReturnType<RequestResponseChannels[T]> {
-  return ipcRenderer.invoke(
-    channel,
-    ...(args as ReadonlyArray<unknown>)
-  ) as any
+  return ipcRenderer.invoke(channel, ...(args as ReadonlyArray<unknown>)) as any
 }
 
 /**

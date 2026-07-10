@@ -15,7 +15,9 @@ describe('multi-commit undo banner behavior', () => {
     const handler = getMultiCommitOperationUndoHandler(
       'web',
       {
-        undoMultiCommitOperationFromBanner: (...args: ReadonlyArray<unknown>) => {
+        undoMultiCommitOperationFromBanner: (
+          ...args: ReadonlyArray<unknown>
+        ) => {
           calls.push(args)
           return Promise.resolve(true)
         },
@@ -29,7 +31,11 @@ describe('multi-commit undo banner behavior', () => {
     await handler()
 
     assert.deepEqual(calls, [
-      [undoAction.operationState, undoAction.repository, undoAction.commitsCount],
+      [
+        undoAction.operationState,
+        undoAction.repository,
+        undoAction.commitsCount,
+      ],
     ])
   })
 

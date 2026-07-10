@@ -129,9 +129,7 @@ async function continueEmptySquashRebase(
         throw e
       }
 
-      log.info(
-        '[squash] accepting another empty squashed commit during rebase'
-      )
+      log.info('[squash] accepting another empty squashed commit during rebase')
     }
   }
 

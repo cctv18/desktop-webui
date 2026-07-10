@@ -5678,7 +5678,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
       const safeRemote: IRemote = { name: remoteName, url: remote.url }
 
       log.info(
-        `[AppStore] pushing ${repository.name}:${branch.name} to ${safeRemote.name}${
+        `[AppStore] pushing ${repository.name}:${branch.name} to ${
+          safeRemote.name
+        }${
           branch.upstreamWithoutRemote === null
             ? ' with upstream'
             : `/${branch.upstreamWithoutRemote}`
@@ -8595,7 +8597,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }
 
       if (repositoryForPostClone === null || repositoryForPostClone.missing) {
-        repositoryForPostClone = (await this._addRepositories([path]))[0] ?? null
+        repositoryForPostClone =
+          (await this._addRepositories([path]))[0] ?? null
       }
 
       if (repositoryForPostClone?.missing) {
@@ -8635,7 +8638,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
         ) ?? selectedRepository
 
       if (repositoryAfterStoreUpdate.hash !== selectedRepository.hash) {
-        this.resetRepositoryStateAfterDiskReplacement(repositoryAfterStoreUpdate)
+        this.resetRepositoryStateAfterDiskReplacement(
+          repositoryAfterStoreUpdate
+        )
       }
 
       const currentRepository =
@@ -8671,9 +8676,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.pushPullFetchOperations.delete(repository.id)
   }
 
-  private getCloneAgainOptions(
-    repository: Repository | undefined
-  ): { branch?: string; defaultBranch?: string } {
+  private getCloneAgainOptions(repository: Repository | undefined): {
+    branch?: string
+    defaultBranch?: string
+  } {
     if (repository === undefined) {
       return {}
     }

@@ -75,8 +75,10 @@ describe('createRemoteDispatcher', () => {
       }),
       { invoke() {} } as any
     )
-    const calls: Array<{ readonly property: string; readonly params: unknown }> =
-      []
+    const calls: Array<{
+      readonly property: string
+      readonly params: unknown
+    }> = []
     const rpc = {
       invoke(property: string, params: unknown) {
         calls.push({ property, params })
@@ -115,8 +117,9 @@ describe('createRemoteDispatcher', () => {
       multiCommitOperationState?.step.kind,
       MultiCommitOperationStepKind.ShowProgress
     )
-    assert.deepEqual(calls.map(call => call.property), [
-      'initializeMultiCommitOperation',
-    ])
+    assert.deepEqual(
+      calls.map(call => call.property),
+      ['initializeMultiCommitOperation']
+    )
   })
 })

@@ -6,7 +6,9 @@ type AccountProvider = () => Promise<ReadonlyArray<Account>>
 
 let accountProvider: AccountProvider | null = null
 
-export function setWebUIGitCredentialAccountProvider(provider: AccountProvider) {
+export function setWebUIGitCredentialAccountProvider(
+  provider: AccountProvider
+) {
   accountProvider = provider
 }
 
@@ -22,9 +24,9 @@ export async function getWebUIGitCredentialEnvironment(
 
   if (account !== null && account.token.length > 0) {
     const origin = new URL(remoteUrl).origin
-    const credential = Buffer.from(`${account.login}:${account.token}`).toString(
-      'base64'
-    )
+    const credential = Buffer.from(
+      `${account.login}:${account.token}`
+    ).toString('base64')
     parameters.push(
       `http.${origin}/.extraheader=Authorization: Basic ${credential}`
     )

@@ -263,9 +263,7 @@ export class RepositoriesStore extends TypedBaseStore<
     const gitHubRepositories = Array.isArray(persisted?.gitHubRepositories)
       ? persisted!.gitHubRepositories
           .map(repo => this.toPersistedDatabaseGitHubRepository(repo))
-          .filter(
-            (repo): repo is IDatabaseGitHubRepository => repo !== null
-          )
+          .filter((repo): repo is IDatabaseGitHubRepository => repo !== null)
       : []
 
     const repositories = Array.isArray(parsed)
@@ -458,7 +456,11 @@ export class RepositoriesStore extends TypedBaseStore<
     await mkdir(Path.dirname(persistencePath), { recursive: true, mode: 0o700 })
     await writeFile(
       persistencePath,
-      `${JSON.stringify({ owners, gitHubRepositories, repositories }, null, 2)}\n`,
+      `${JSON.stringify(
+        { owners, gitHubRepositories, repositories },
+        null,
+        2
+      )}\n`,
       {
         encoding: 'utf8',
         mode: 0o600,

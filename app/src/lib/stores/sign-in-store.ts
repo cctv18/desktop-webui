@@ -210,14 +210,12 @@ export class SignInStore extends TypedBaseStore<SignInState | null> {
 
   private deviceFlowPollTimeout: ReturnType<typeof setTimeout> | null = null
 
-  private deviceFlowSession:
-    | {
-        readonly state: string
-        readonly endpoint: string
-        readonly deviceCode: string
-        interval: number
-      }
-    | null = null
+  private deviceFlowSession: {
+    readonly state: string
+    readonly endpoint: string
+    readonly deviceCode: string
+    interval: number
+  } | null = null
 
   public constructor(private readonly accountStore: AccountsStore) {
     super()

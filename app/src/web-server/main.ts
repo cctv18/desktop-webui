@@ -21,10 +21,7 @@ const staticRoot =
   process.env.GITDESK_STATIC_ROOT ??
   Path.join(__dirname, 'web')
 process.env.GITDESK_WEBUI_STATIC_ROOT = staticRoot
-setEnvIfValue(
-  'GITDESK_WEBUI_GIT_PATH',
-  args.gitPath ?? args['git-path']
-)
+setEnvIfValue('GITDESK_WEBUI_GIT_PATH', args.gitPath ?? args['git-path'])
 setEnvIfValue(
   'GITDESK_WEBUI_GIT_DIRECTORY',
   args.gitDirectory ?? args['git-directory']
@@ -33,10 +30,7 @@ setEnvIfValue(
   'GITDESK_WEBUI_GIT_EXEC_PATH',
   args.gitExecPath ?? args['git-exec-path']
 )
-setEnvIfValue(
-  'GITDESK_WEBUI_DATA_DIR',
-  args.dataDir ?? args['data-dir']
-)
+setEnvIfValue('GITDESK_WEBUI_DATA_DIR', args.dataDir ?? args['data-dir'])
 setEnvIfValue(
   'GITDESK_WEBUI_GIT_CONFIG_GLOBAL',
   args.gitConfigGlobal ?? args['git-config-global']
@@ -207,7 +201,8 @@ function serveStatic(pathname: string, res: Http.ServerResponse) {
     return
   }
 
-  const requestedPath = decodedPathname === '/' ? '/index.html' : decodedPathname
+  const requestedPath =
+    decodedPathname === '/' ? '/index.html' : decodedPathname
   const absolutePath = Path.resolve(
     staticRoot,
     requestedPath.replace(/^\/+/, '')

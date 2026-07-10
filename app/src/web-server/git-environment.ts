@@ -18,7 +18,11 @@ interface IGitEnvironmentResult {
   readonly gitDirectory: string
   readonly gitExecPath: string | null
   readonly gitBinary: string
-  readonly source: 'configured-directory' | 'configured-path' | 'bundled' | 'path'
+  readonly source:
+    | 'configured-directory'
+    | 'configured-path'
+    | 'bundled'
+    | 'path'
 }
 
 export function configureGitEnvironment(

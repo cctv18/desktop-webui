@@ -107,7 +107,8 @@ function getStorePath() {
 
 function getDataDirectory() {
   const raw =
-    process.env.GITDESK_WEBUI_DATA_DIR && process.env.GITDESK_WEBUI_DATA_DIR.trim()
+    process.env.GITDESK_WEBUI_DATA_DIR &&
+    process.env.GITDESK_WEBUI_DATA_DIR.trim()
       ? process.env.GITDESK_WEBUI_DATA_DIR
       : getArgValue('--data-dir') ?? Path.join(process.cwd(), '.gitdesk-webui')
 

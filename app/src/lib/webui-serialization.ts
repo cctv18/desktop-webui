@@ -86,7 +86,9 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
 
   if (value instanceof Set) {
     return tag('Set', {
-      values: Array.from(value.values()).map(item => serializeValue(item, seen)),
+      values: Array.from(value.values()).map(item =>
+        serializeValue(item, seen)
+      ),
     })
   }
 
@@ -527,14 +529,15 @@ function reviveValue(value: unknown, context: ReviveContext): unknown {
         return new Repository(
           reviveString(value.path),
           reviveNumber(value.id),
-          reviveValue(value.gitHubRepository, context) as GitHubRepository | null,
+          reviveValue(
+            value.gitHubRepository,
+            context
+          ) as GitHubRepository | null,
           Boolean(value.missing),
           value.alias === null ? null : reviveString(value.alias),
           reviveValue(value.workflowPreferences, context) as any,
           Boolean(value.isTutorialRepository),
-          value.gitDir === undefined
-            ? undefined
-            : reviveString(value.gitDir)
+          value.gitDir === undefined ? undefined : reviveString(value.gitDir)
         )
       case 'RepoRulesInfo':
         return reviveRepoRulesInfo(value, context)
@@ -550,7 +553,10 @@ function reviveValue(value: unknown, context: ReviveContext): unknown {
         )
       case 'WorkingDirectoryStatus':
         return new (WorkingDirectoryStatus as any)(
-          reviveValue(value.files, context) as ReadonlyArray<WorkingDirectoryFileChange>,
+          reviveValue(
+            value.files,
+            context
+          ) as ReadonlyArray<WorkingDirectoryFileChange>,
           value.includeAll as boolean | null
         )
     }

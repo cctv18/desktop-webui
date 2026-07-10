@@ -21,9 +21,7 @@ function accountMatchesRepositoryState(x: Account, y: Account) {
     return false
   }
 
-  return (
-    (x.id > 0 && x.id === y.id) || (x.login !== '' && x.login === y.login)
-  )
+  return (x.id > 0 && x.id === y.id) || (x.login !== '' && x.login === y.login)
 }
 
 const MaxRepositoryLoadRetries = __PROCESS_KIND__ === 'web-server' ? 2 : 0
@@ -429,7 +427,11 @@ export class ApiRepositoriesStore extends BaseStore {
         isTransientRepositoryLoadError(loadError)
       ) {
         log.warn(
-          `[ApiRepositoriesStore] retrying repository list refresh for ${account.login} after transient failure (${retryAttempt + 1}/${MaxRepositoryLoadRetries})`,
+          `[ApiRepositoriesStore] retrying repository list refresh for ${
+            account.login
+          } after transient failure (${
+            retryAttempt + 1
+          }/${MaxRepositoryLoadRetries})`,
           loadError
         )
         await delay(RepositoryLoadRetryDelayMs)

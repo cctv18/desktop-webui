@@ -316,7 +316,9 @@ async function ensureCopilotPrivateDirectories(
     env.XDG_DATA_HOME,
     env.APPDATA,
     env.LOCALAPPDATA,
-  ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+  ].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0
+  )
 
   await Promise.all(
     directories.map(directory => mkdir(directory, { recursive: true }))
@@ -449,9 +451,7 @@ function getCopilotPackagePlatforms(): ReadonlyArray<string> {
 }
 
 function isMuslLinux(): boolean {
-  const report = process.report?.getReport() as
-    | IProcessReportLike
-    | undefined
+  const report = process.report?.getReport() as IProcessReportLike | undefined
   const header = report?.header
 
   if (header?.glibcVersionRuntime !== undefined) {
@@ -800,9 +800,7 @@ function normalizeCopilotModelInfo(model: unknown): ModelInfo | null {
       : id
 
   const capabilities = isRecord(model.capabilities) ? model.capabilities : {}
-  const supports = isRecord(capabilities.supports)
-    ? capabilities.supports
-    : {}
+  const supports = isRecord(capabilities.supports) ? capabilities.supports : {}
   const limits = isRecord(capabilities.limits) ? capabilities.limits : {}
   const limitsVision = isRecord(limits.vision) ? limits.vision : undefined
   const supportedReasoningEfforts = normalizeReasoningEfforts(
@@ -839,8 +837,7 @@ function normalizeCopilotModelInfo(model: unknown): ModelInfo | null {
                 max_prompt_images:
                   getNumberProperty(limitsVision, 'max_prompt_images') ?? 0,
                 max_prompt_image_size:
-                  getNumberProperty(limitsVision, 'max_prompt_image_size') ??
-                  0,
+                  getNumberProperty(limitsVision, 'max_prompt_image_size') ?? 0,
               },
             }
           : {}),
@@ -1274,15 +1271,19 @@ export class CopilotStore extends BaseStore {
     log.info(
       `CopilotStore: Starting Copilot CLI (${runtimeKind}) for ${
         account.login
-      } using ${getCopilotAuthModeDescription(authMode)}; token=${getAccountTokenLogState(
+      } using ${getCopilotAuthModeDescription(
+        authMode
+      )}; token=${getAccountTokenLogState(
         account
-      )}; runtime=${runtimePath}; workdir=${repositoryPath ?? '<none>'}; COPILOT_HOME=${
-        env.COPILOT_HOME ?? '<unset>'
-      }; COPILOT_CACHE_HOME=${env.COPILOT_CACHE_HOME ?? '<unset>'}; GH_CONFIG_DIR=${
-        env.GH_CONFIG_DIR ?? '<unset>'
-      }; HOME=${env.HOME ?? '<unset>'}; USERPROFILE=${
-        env.USERPROFILE ?? '<unset>'
-      }; keytarDisabled=${env.COPILOT_DISABLE_KEYTAR ?? '<unset>'}; providerEndpointRpc=${
+      )}; runtime=${runtimePath}; workdir=${
+        repositoryPath ?? '<none>'
+      }; COPILOT_HOME=${env.COPILOT_HOME ?? '<unset>'}; COPILOT_CACHE_HOME=${
+        env.COPILOT_CACHE_HOME ?? '<unset>'
+      }; GH_CONFIG_DIR=${env.GH_CONFIG_DIR ?? '<unset>'}; HOME=${
+        env.HOME ?? '<unset>'
+      }; USERPROFILE=${env.USERPROFILE ?? '<unset>'}; keytarDisabled=${
+        env.COPILOT_DISABLE_KEYTAR ?? '<unset>'
+      }; providerEndpointRpc=${
         env.COPILOT_ALLOW_GET_PROVIDER_ENDPOINT ?? '<unset>'
       }; integrationId=${env.GITHUB_COPILOT_INTEGRATION_ID ?? '<unset>'}`
     )
@@ -1311,7 +1312,9 @@ export class CopilotStore extends BaseStore {
           authStatusLog.isAuthenticated
         }; login=${authStatusLog.login ?? '<none>'}; plan=${
           authStatusLog.copilotPlan ?? '<none>'
-        }; authType=${authStatusLog.authType ?? '<none>'}; account=${getAccountLogDescription(
+        }; authType=${
+          authStatusLog.authType ?? '<none>'
+        }; account=${getAccountLogDescription(
           account
         )}; credentialSource=${getCopilotAuthModeDescription(authMode)}`
       )
@@ -1418,7 +1421,9 @@ export class CopilotStore extends BaseStore {
         request?.kind === 'copilot' ? request.modelId : null
       const cachedEntry = await this.getCachedModelEntry(account)
       const cachedModels = cachedEntry?.models ?? []
-      authMode = account.token ? 'account-token' : cachedEntry?.authMode ?? authMode
+      authMode = account.token
+        ? 'account-token'
+        : cachedEntry?.authMode ?? authMode
       const resolvedModel = requestedModelId
         ? cachedModels.find(m => m.id === requestedModelId) ?? null
         : getPreferredDefaultModel(cachedModels)
@@ -1454,19 +1459,19 @@ export class CopilotStore extends BaseStore {
       log.info(
         `CopilotStore: Generating commit message using ${getCopilotAuthModeDescription(
           authMode
-        )}; model=${modelId ?? '<runtime-default>'}; provider=${
-          getProviderLogDescription(provider)
-        }; account=${getAccountLogDescription(
-          account
-        )}; tokenSource=${
+        )}; model=${
+          modelId ?? '<runtime-default>'
+        }; provider=${getProviderLogDescription(
+          provider
+        )}; account=${getAccountLogDescription(account)}; tokenSource=${
           provider === undefined
             ? `session gitHubToken ${getAccountTokenLogState(authAccount)}`
             : 'byok provider'
         }; request=createSession{model=${
           modelId ?? '<runtime-default>'
-        }, reasoningEffort=${reasoningEffort ?? '<unset>'}, promptBytes=${
-          Buffer.byteLength(diff, 'utf8')
-        }}`
+        }, reasoningEffort=${
+          reasoningEffort ?? '<unset>'
+        }, promptBytes=${Buffer.byteLength(diff, 'utf8')}}`
       )
       client = await this.createClient(authAccount, repositoryPath, authMode)
     } catch (e) {
@@ -1498,8 +1503,9 @@ export class CopilotStore extends BaseStore {
         sessionModelId: string | undefined,
         sessionReasoningEffort: ReasoningEffort | undefined
       ): Promise<ICopilotCommitMessage> => {
-        let session: Awaited<ReturnType<CopilotClient['createSession']>> | null =
-          null
+        let session: Awaited<
+          ReturnType<CopilotClient['createSession']>
+        > | null = null
 
         try {
           // Create a session for commit message generation
@@ -1619,9 +1625,7 @@ export class CopilotStore extends BaseStore {
     }
 
     if (!account.token) {
-      throw new Error(
-        'Cannot generate commit message: Account has no token'
-      )
+      throw new Error('Cannot generate commit message: Account has no token')
     }
 
     const api = new API(
@@ -1690,7 +1694,8 @@ export class CopilotStore extends BaseStore {
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }
-      headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
+      headers['anthropic-version'] =
+        headers['anthropic-version'] ?? '2023-06-01'
     } else if (type === 'azure') {
       const apiVersion = provider?.azure?.apiVersion ?? '2024-10-21'
       url = baseUrl.endsWith('/chat/completions')
@@ -1942,7 +1947,9 @@ export class CopilotStore extends BaseStore {
     log.info(
       `CopilotStore: Resolving conflicts using ${getCopilotAuthModeDescription(
         modelConfig.authMode
-      )}; model=${modelConfig.modelId ?? '<runtime-default>'}; files=${filesTotal}; account=${getAccountLogDescription(
+      )}; model=${
+        modelConfig.modelId ?? '<runtime-default>'
+      }; files=${filesTotal}; account=${getAccountLogDescription(
         account
       )}; tokenSource=${
         modelConfig.provider === undefined
@@ -2196,7 +2203,10 @@ export class CopilotStore extends BaseStore {
             error instanceof CopilotValidationError
               ? 'parse/validation failed'
               : 'request failed'
-          log.warn(`CopilotStore: Conflict resolution ${reason}, retrying`, error)
+          log.warn(
+            `CopilotStore: Conflict resolution ${reason}, retrying`,
+            error
+          )
         },
       }
     )
@@ -2397,8 +2407,9 @@ export class CopilotStore extends BaseStore {
     authMode: CopilotAuthMode,
     source: string
   ): ICopilotModelFetchResult {
-    const selectableModels =
-      getSelectableCopilotModels(rawModels).filter(dedupeCopilotModel())
+    const selectableModels = getSelectableCopilotModels(rawModels).filter(
+      dedupeCopilotModel()
+    )
 
     log.info(
       `CopilotStore: Model list response using ${getCopilotAuthModeDescription(
@@ -2436,7 +2447,10 @@ export class CopilotStore extends BaseStore {
       )
     } catch (e) {
       if (this.isMissingCLIError(e)) {
-        log.warn('CopilotStore: Cannot list models because the CLI is missing', e)
+        log.warn(
+          'CopilotStore: Cannot list models because the CLI is missing',
+          e
+        )
         return []
       }
 

@@ -33,7 +33,7 @@ const tsRule = {
 }
 
 const webAliases = {
-  'keytar$': path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
+  keytar$: path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
   'desktop-notifications$': path.resolve(
     __dirname,
     'src/lib/webui-shims/desktop-notifications'
@@ -52,26 +52,26 @@ const webAliases = {
     __dirname,
     'src/lib/webui-shims/windows-argv-parser'
   ),
-  'electron$': path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
+  electron$: path.resolve(__dirname, 'src/ui/platform/electron-web-shim'),
   'electron/main$': path.resolve(
     __dirname,
     'src/ui/platform/electron-web-shim'
   ),
-  'assert$': path.join(webShimDir, 'assert-web-shim'),
-  'buffer$': bufferWebShim,
-  'child_process$': path.join(webShimDir, 'child-process-web-shim'),
-  'crypto$': path.join(webShimDir, 'crypto-web-shim'),
-  'fs$': path.join(webShimDir, 'fs-web-shim'),
+  assert$: path.join(webShimDir, 'assert-web-shim'),
+  buffer$: bufferWebShim,
+  child_process$: path.join(webShimDir, 'child-process-web-shim'),
+  crypto$: path.join(webShimDir, 'crypto-web-shim'),
+  fs$: path.join(webShimDir, 'fs-web-shim'),
   'fs/promises$': path.join(webShimDir, 'fs-promises-web-shim'),
-  'module$': path.join(webShimDir, 'module-web-shim'),
-  'net$': path.join(webShimDir, 'net-web-shim'),
-  'os$': path.join(webShimDir, 'os-web-shim'),
-  'path$': path.join(webShimDir, 'path-web-shim'),
-  'process$': processWebShim,
-  'stream$': path.join(webShimDir, 'stream-web-shim'),
-  'timers$': path.join(webShimDir, 'timers-web-shim'),
-  'url$': path.join(webShimDir, 'url-web-shim'),
-  'util$': path.join(webShimDir, 'util-web-shim'),
+  module$: path.join(webShimDir, 'module-web-shim'),
+  net$: path.join(webShimDir, 'net-web-shim'),
+  os$: path.join(webShimDir, 'os-web-shim'),
+  path$: path.join(webShimDir, 'path-web-shim'),
+  process$: processWebShim,
+  stream$: path.join(webShimDir, 'stream-web-shim'),
+  timers$: path.join(webShimDir, 'timers-web-shim'),
+  url$: path.join(webShimDir, 'url-web-shim'),
+  util$: path.join(webShimDir, 'util-web-shim'),
   [path.resolve(__dirname, 'src/main-process/menu')]: path.resolve(
     __dirname,
     'src/ui/platform/menu-web-shim'
@@ -175,7 +175,7 @@ const webServer: webpack.Configuration = merge(
     resolve: {
       extensions: ['.js', '.ts', '.tsx'],
       alias: {
-        'keytar$': path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
+        keytar$: path.resolve(__dirname, 'src/lib/webui-shims/keytar'),
         'desktop-notifications$': path.resolve(
           __dirname,
           'src/lib/webui-shims/desktop-notifications'
@@ -197,7 +197,7 @@ const webServer: webpack.Configuration = merge(
           __dirname,
           'src/lib/webui-shims/windows-argv-parser'
         ),
-        'electron$': path.resolve(__dirname, 'src/web-server/electron-shim'),
+        electron$: path.resolve(__dirname, 'src/web-server/electron-shim'),
         'electron/main$': path.resolve(
           __dirname,
           'src/web-server/electron-shim'

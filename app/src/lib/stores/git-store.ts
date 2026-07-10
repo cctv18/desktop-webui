@@ -117,7 +117,9 @@ const RecentBranchesLimit = 5
 
 function getNormalizedLocalBranchName(name: string) {
   const headsPrefix = 'heads/'
-  return name.startsWith(headsPrefix) ? name.substring(headsPrefix.length) : name
+  return name.startsWith(headsPrefix)
+    ? name.substring(headsPrefix.length)
+    : name
 }
 
 function getRemoteBranchRef(name: string) {
@@ -1218,7 +1220,13 @@ export class GitStore extends BaseStore {
     }
     const fetchSucceeded = await this.performFailableOperation(
       async () => {
-        await fetchRepo(repo, remote, progressCallback, backgroundTask, syncTags)
+        await fetchRepo(
+          repo,
+          remote,
+          progressCallback,
+          backgroundTask,
+          syncTags
+        )
         return true
       },
       { backgroundTask, retryAction }

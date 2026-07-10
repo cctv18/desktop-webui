@@ -36,14 +36,20 @@ export class PathGuard {
         return Path.resolve(path)
       }
 
-      return Path.join(await this.resolveExistingOrParent(parent), Path.basename(path))
+      return Path.join(
+        await this.resolveExistingOrParent(parent),
+        Path.basename(path)
+      )
     }
   }
 }
 
 function isWithinRoot(path: string, root: string) {
   const relative = Path.relative(root, path)
-  return relative === '' || (!relative.startsWith('..') && !Path.isAbsolute(relative))
+  return (
+    relative === '' ||
+    (!relative.startsWith('..') && !Path.isAbsolute(relative))
+  )
 }
 
 export function parseAllowedRoots(raw: string | undefined, cwd: string) {

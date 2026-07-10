@@ -37,12 +37,7 @@ async function getBranchCheckoutArgs(repository: Repository, branch: Branch) {
     ? branch.name
     : branch.nameWithoutRemote
 
-  return [
-    branch.name,
-    '-b',
-    localBranchName,
-    '--',
-  ]
+  return [branch.name, '-b', localBranchName, '--']
 }
 
 async function localBranchExists(repository: Repository, branchName: string) {

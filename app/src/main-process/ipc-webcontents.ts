@@ -1,10 +1,7 @@
 /* eslint-disable no-loosely-typed-webcontents-ipc */
 
 import { WebContents } from 'electron'
-import {
-  RequestChannels,
-  RequestChannelParameters,
-} from '../lib/ipc-shared'
+import { RequestChannels, RequestChannelParameters } from '../lib/ipc-shared'
 
 /**
  * Send a message to a renderer process via its webContents asynchronously. This

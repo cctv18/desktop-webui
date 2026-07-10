@@ -2206,13 +2206,18 @@ export class API {
       throw new Error('No Copilot endpoint available')
     }
 
-    const response = await this.request(this.copilotEndpoint, 'GET', '/models', {
-      customHeaders: {
-        'X-Initiator': 'user',
-        'X-Interaction-ID': crypto.randomUUID(),
-        'X-Interaction-Type': 'listModels',
-      },
-    })
+    const response = await this.request(
+      this.copilotEndpoint,
+      'GET',
+      '/models',
+      {
+        customHeaders: {
+          'X-Initiator': 'user',
+          'X-Interaction-ID': crypto.randomUUID(),
+          'X-Interaction-Type': 'listModels',
+        },
+      }
+    )
 
     if (response.status >= HttpStatusCode.BadRequest) {
       throw new CopilotError(
@@ -2244,8 +2249,8 @@ export class API {
         typeof raw.name === 'string'
           ? raw.name
           : typeof raw.label === 'string'
-            ? raw.label
-            : modelId
+          ? raw.label
+          : modelId
 
       return [{ ...raw, id: modelId, name } as ModelInfo]
     })
@@ -2789,7 +2794,11 @@ async function retryOAuthNetworkRequest<T>(
 export async function requestOAuthDeviceCode(
   endpoint: string
 ): Promise<IOAuthDeviceCode | null> {
-  return requestOAuthDeviceCodeWithClient(endpoint, getOAuthClientID(), oauthScopes)
+  return requestOAuthDeviceCodeWithClient(
+    endpoint,
+    getOAuthClientID(),
+    oauthScopes
+  )
 }
 
 async function requestOAuthDeviceCodeWithClient(

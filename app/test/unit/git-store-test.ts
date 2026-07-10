@@ -59,7 +59,6 @@ describe('GitStore', () => {
         Promise.resolve(undefined)
 
       await gitStore.reconcileHistory('merge-base')
-
       ;(gitStore as any).performFailableOperation = performFailableOperation
 
       const commitsAfterFailure = await gitStore.loadCommitBatch('HEAD', 0)
