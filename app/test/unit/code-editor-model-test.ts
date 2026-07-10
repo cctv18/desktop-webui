@@ -10,6 +10,7 @@ import {
   createFoldedLineDiffRows,
   createFoldedSideBySideDiffRows,
   createCodeEditorTextEditAction,
+  createCodeEditorDiffExpansion,
   detectLineEnding,
   detectLanguageFromPathAndContent,
   filterRepositoryFilePaths,
@@ -137,6 +138,7 @@ describe('Code editor model helpers', () => {
 
     assert.equal(firstRegion.canExpandUp, true)
     assert.equal(firstRegion.canExpandDown, false)
+    assert.equal(firstRegion.expansionType, 'up')
 
     const expanded = createFoldedLineDiffRows(
       diffRows,
@@ -175,6 +177,7 @@ describe('Code editor model helpers', () => {
 
     assert.equal(region.canExpandUp, false)
     assert.equal(region.canExpandDown, true)
+    assert.equal(region.expansionType, 'down')
     const expanded = createFoldedLineDiffRows(
       diffRows,
       [{ id: region.id, up: 0, down: 20 }],
@@ -207,6 +210,7 @@ describe('Code editor model helpers', () => {
     if (middle === undefined || middle.kind !== 'collapsed') {
       return
     }
+    assert.equal(middle.expansionType, 'both')
 
     const expanded = createFoldedLineDiffRows(
       diffRows,
@@ -215,6 +219,30 @@ describe('Code editor model helpers', () => {
     )
     assert.equal(
       expanded.some(row => row.kind === 'collapsed' && row.id === middle.id),
+      false
+    )
+  })
+
+  it('uses Expand All for collapsed regions with at most 20 lines', () => {
+    const original = Array.from(
+      { length: 20 },
+      (_, index) => `line-${index + 1}`
+    )
+    const current = [...original]
+    current[9] = 'changed-10'
+    const diffRows = createLineDiffRows(original.join('\n'), current.join('\n'))
+    const folded = createFoldedLineDiffRows(diffRows, [], 2)
+    const region = folded.find(row => row.kind === 'collapsed')
+    assert.notEqual(region, undefined)
+    if (region === undefined || region.kind !== 'collapsed') {
+      return
+    }
+
+    assert.equal(region.expansionType, 'all')
+    const expansion = createCodeEditorDiffExpansion(undefined, region, 'all')
+    const expanded = createFoldedLineDiffRows(diffRows, [expansion], 2)
+    assert.equal(
+      expanded.some(row => row.kind === 'collapsed' && row.id === region.id),
       false
     )
   })

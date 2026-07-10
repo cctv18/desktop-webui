@@ -332,6 +332,7 @@ function getPreferenceExtensions(
         userSelect: 'text',
       },
       '.cm-selectionLayer': {
+        pointerEvents: 'none',
         zIndex: '4 !important',
       },
       '.cm-cursorLayer': {

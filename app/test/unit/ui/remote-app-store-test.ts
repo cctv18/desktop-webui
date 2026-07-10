@@ -10,6 +10,8 @@ import {
 import { PopupType } from '../../../src/models/popup'
 import { RemoteAppStore } from '../../../src/ui/runtime/remote-app-store'
 
+const testRepositoryPath = 'test/repository'
+
 function makeState(overrides: Partial<IAppState> = {}): IAppState {
   return {
     allPopups: [],
@@ -33,7 +35,7 @@ describe('RemoteAppStore', () => {
     const multiCommitPopup = {
       id: 1,
       type: PopupType.MultiCommitOperation,
-      repository: { path: 'H:\\oplus\\gitdesk-webui\\win\\repo' },
+      repository: { path: testRepositoryPath },
     } as any
 
     store.setState(
@@ -50,7 +52,7 @@ describe('RemoteAppStore', () => {
   })
 
   it('keeps progress abort confirmation open if the server completes before the confirmation step lands', () => {
-    const repository = { id: 1, path: 'H:\\oplus\\gitdesk-webui\\win\\repo' }
+    const repository = { id: 1, path: testRepositoryPath }
     const operationState = {
       step: { kind: MultiCommitOperationStepKind.ShowProgress },
       operationDetail: { kind: MultiCommitOperationKind.Squash },
@@ -140,7 +142,7 @@ describe('RemoteAppStore', () => {
   })
 
   it('does not keep progress abort confirmation over a fresh choose-branch operation', () => {
-    const repository = { id: 1, path: 'H:\\oplus\\gitdesk-webui\\win\\repo' }
+    const repository = { id: 1, path: testRepositoryPath }
     const currentBranch = { name: 'main', tip: { sha: 'main-tip' } }
     const commit = { sha: 'commit-a', summary: 'Commit A' }
     const originalOperationState = {

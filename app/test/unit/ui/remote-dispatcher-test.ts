@@ -9,6 +9,8 @@ import {
 import { PopupType } from '../../../src/models/popup'
 import { RemoteAppStore } from '../../../src/ui/runtime/remote-app-store'
 
+const testRepositoryPath = 'test/repository'
+
 mock.module('../../../src/ui/main-process-proxy', {
   namedExports: {
     executeMenuItem: () => {},
@@ -28,7 +30,7 @@ function makeState(overrides: Partial<IAppState> = {}): IAppState {
 
 describe('createRemoteDispatcher', () => {
   it('clears stale multi-commit progress abort confirmation before initializing a new operation', async () => {
-    const repository = { id: 1, path: 'H:\\oplus\\gitdesk-webui\\win\\repo' }
+    const repository = { id: 1, path: testRepositoryPath }
     const branch = { name: 'main', tip: { sha: 'main-tip' } }
     const commit = { sha: 'commit-a', summary: 'Commit A' }
     const operationDetail = {

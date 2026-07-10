@@ -52,12 +52,38 @@ export interface ICodeEditorCollapsedDiffRow {
   readonly lineCount: number
   readonly canExpandUp: boolean
   readonly canExpandDown: boolean
+  readonly expansionType: CodeEditorDiffExpansionType
 }
+
+export type CodeEditorDiffExpansionType = 'up' | 'down' | 'both' | 'all'
+export type CodeEditorDiffExpansionAction = 'up' | 'down' | 'all'
 
 export interface ICodeEditorDiffExpansion {
   readonly id: string
   readonly up: number
   readonly down: number
+}
+
+export function createCodeEditorDiffExpansion(
+  previous: ICodeEditorDiffExpansion | undefined,
+  row: ICodeEditorCollapsedDiffRow,
+  action: CodeEditorDiffExpansionAction,
+  step = 20
+): ICodeEditorDiffExpansion {
+  let up = previous?.up ?? 0
+  let down = previous?.down ?? 0
+
+  if (action === 'up') {
+    up += step
+  } else if (action === 'down') {
+    down += step
+  } else if (row.canExpandDown) {
+    down += row.lineCount
+  } else {
+    up += row.lineCount
+  }
+
+  return { id: row.id, up, down }
 }
 
 export type CodeEditorUnifiedDiffRow =
@@ -572,6 +598,14 @@ export function createFoldedLineDiffRows(
           lineCount: remainingEnd - remainingStart,
           canExpandUp,
           canExpandDown,
+          expansionType:
+            remainingEnd - remainingStart <= 20
+              ? 'all'
+              : canExpandUp && canExpandDown
+              ? 'both'
+              : canExpandUp
+              ? 'up'
+              : 'down',
         })
         result.push(...rows.slice(remainingEnd, collapsedEnd))
       }

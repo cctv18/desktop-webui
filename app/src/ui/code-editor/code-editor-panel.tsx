@@ -14,6 +14,8 @@ import {
   CodeEditorTreeNode,
   CodeEditorUnifiedDiffRow,
   createSideBySideDiffRows,
+  createCodeEditorDiffExpansion,
+  CodeEditorDiffExpansionAction,
   canApplyCodeEditorHistoryAction,
   defaultCodeEditorIgnoredPaths,
   detectLineEnding,
@@ -43,6 +45,8 @@ import {
   writeRepositoryTextFile,
 } from './code-editor-files'
 import { CodeMirrorEditor } from './codemirror-editor'
+import { Button } from '../lib/button'
+import { TooltipDirection } from '../lib/tooltip'
 import {
   CodeEditorHistoryAction,
   ICodeEditorDiffResult,
@@ -768,7 +772,7 @@ export class CodeEditorPanel extends React.Component<
     return (
       <div
         key={`${row.id}:${index}`}
-        className={`code-editor-diff-collapsed ${mode}`}
+        className={`code-editor-diff-collapsed ${mode} ${row.expansionType}`}
       >
         {this.renderDiffExpansionGutter(row, 'primary')}
         {mode === 'split'
@@ -784,29 +788,44 @@ export class CodeEditorPanel extends React.Component<
   ) {
     return (
       <div className={`code-editor-diff-expansion-gutter ${position}`}>
-        {row.canExpandUp ? (
-          <button
-            type="button"
-            data-region-id={row.id}
-            data-direction="up"
-            aria-label={`Show up to 20 unchanged lines above; ${row.lineCount} hidden`}
-            onClick={this.expandDiffRegion}
-          >
-            <Octicon symbol={octicons.foldUp} />
-          </button>
-        ) : null}
-        {row.canExpandDown ? (
-          <button
-            type="button"
-            data-region-id={row.id}
-            data-direction="down"
-            aria-label={`Show up to 20 unchanged lines below; ${row.lineCount} hidden`}
-            onClick={this.expandDiffRegion}
-          >
-            <Octicon symbol={octicons.foldDown} />
-          </button>
-        ) : null}
+        {row.expansionType === 'both' ? (
+          <>
+            {this.renderDiffExpansionButton(row, 'down')}
+            {this.renderDiffExpansionButton(row, 'up')}
+          </>
+        ) : (
+          this.renderDiffExpansionButton(row, row.expansionType)
+        )}
       </div>
+    )
+  }
+
+  private renderDiffExpansionButton(
+    row: Extract<CodeEditorUnifiedDiffRow, { kind: 'collapsed' }>,
+    action: CodeEditorDiffExpansionAction
+  ) {
+    const title =
+      action === 'all'
+        ? 'Expand All'
+        : action === 'down'
+        ? 'Expand Down'
+        : 'Expand Up'
+    const icon =
+      action === 'all'
+        ? octicons.fold
+        : action === 'down'
+        ? octicons.foldDown
+        : octicons.foldUp
+
+    return (
+      <Button
+        onClick={this.expandDiffRegion(row, action)}
+        tooltip={title}
+        toolTipDirection={TooltipDirection.SOUTH}
+        ariaLabel={title}
+      >
+        <Octicon symbol={icon} />
+      </Button>
     )
   }
 
@@ -1169,36 +1188,28 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private expandDiffRegion = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const regionID = event.currentTarget.dataset.regionId
-    const direction = event.currentTarget.dataset.direction
-    if (
-      regionID === undefined ||
-      (direction !== 'up' && direction !== 'down')
-    ) {
-      return
+  private expandDiffRegion =
+    (
+      row: Extract<CodeEditorUnifiedDiffRow, { kind: 'collapsed' }>,
+      action: CodeEditorDiffExpansionAction
+    ) =>
+    () => {
+      this.setState(
+        state => {
+          const previous = state.diffExpansions.find(
+            value => value.id === row.id
+          )
+          const next = createCodeEditorDiffExpansion(previous, row, action)
+          return {
+            diffExpansions: [
+              ...state.diffExpansions.filter(value => value.id !== row.id),
+              next,
+            ],
+          }
+        },
+        () => void this.loadPreviewDiff('expand-region')
+      )
     }
-
-    this.setState(
-      state => {
-        const previous = state.diffExpansions.find(
-          value => value.id === regionID
-        )
-        const next: ICodeEditorDiffExpansion = {
-          id: regionID,
-          up: (previous?.up ?? 0) + (direction === 'up' ? 20 : 0),
-          down: (previous?.down ?? 0) + (direction === 'down' ? 20 : 0),
-        }
-        return {
-          diffExpansions: [
-            ...state.diffExpansions.filter(value => value.id !== regionID),
-            next,
-          ],
-        }
-      },
-      () => void this.loadPreviewDiff('expand-region')
-    )
-  }
 
   private save = async () => {
     const selectedPath = this.state.selectedPath
