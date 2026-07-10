@@ -898,7 +898,7 @@ export class CloneRepository extends React.Component<
     this.props.dispatcher.clone(url, path, { defaultBranch })
     this.props.onDismissed()
 
-    setDefaultDir(Path.dirname(path))
+    void setDefaultDir(Path.dirname(path))
   }
 
   private onWindowFocus = () => {

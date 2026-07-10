@@ -87,7 +87,7 @@ export class RepositoryPath extends React.Component<
 > {
   /** Persists the given path as the default directory for future use. */
   public static setDefaultPath(path: string): void {
-    setDefaultDir(path)
+    void setDefaultDir(path)
   }
 
   public constructor(props: IRepositoryPathProps) {

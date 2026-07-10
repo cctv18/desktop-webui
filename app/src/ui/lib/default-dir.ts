@@ -1,13 +1,16 @@
 import * as Path from 'path'
 import { getDocumentsPath } from './app-proxy'
+import { invokeWebUIRPC } from '../../lib/webui-rpc'
+import { getDefaultDirStorageTarget } from './default-dir-storage'
 
 const localStorageKey = 'last-clone-location'
+const backendStorageKey = 'gitdesk-webui:preferences:last-clone-location'
 
 /** The path to the default directory. */
 export async function getDefaultDir(): Promise<string> {
   const defaultRootPath = await getDefaultRootPath()
   const defaultDir = getDefaultCloneDirectory(defaultRootPath)
-  const storedPath = localStorage.getItem(localStorageKey)
+  const storedPath = await readStoredDefaultDir()
 
   if (storedPath !== null && Path.isAbsolute(storedPath)) {
     if (isLegacyWebUIDefaultDir(storedPath, defaultRootPath)) {
@@ -20,12 +23,37 @@ export async function getDefaultDir(): Promise<string> {
   return defaultDir
 }
 
-export function setDefaultDir(path: string) {
+export async function setDefaultDir(path: string) {
   if (__PROCESS_KIND__ === 'web' && !Path.isAbsolute(path)) {
     return
   }
 
-  localStorage.setItem(localStorageKey, path)
+  const storageTarget = getDefaultDirStorageTarget(__PROCESS_KIND__)
+  if (storageTarget === 'backend-rpc') {
+    localStorage.removeItem(localStorageKey)
+    await invokeWebUIRPC<void>('preferences.writeDefaultCloneDirectory', [path])
+    return
+  }
+
+  localStorage.setItem(
+    storageTarget === 'backend-file' ? backendStorageKey : localStorageKey,
+    path
+  )
+}
+
+async function readStoredDefaultDir() {
+  const storageTarget = getDefaultDirStorageTarget(__PROCESS_KIND__)
+  if (storageTarget === 'backend-rpc') {
+    localStorage.removeItem(localStorageKey)
+    return invokeWebUIRPC<string | null>(
+      'preferences.readDefaultCloneDirectory',
+      []
+    )
+  }
+
+  return localStorage.getItem(
+    storageTarget === 'backend-file' ? backendStorageKey : localStorageKey
+  )
 }
 
 async function getDefaultRootPath(): Promise<string> {

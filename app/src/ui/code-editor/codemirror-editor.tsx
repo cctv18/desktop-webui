@@ -332,7 +332,7 @@ function getPreferenceExtensions(
         userSelect: 'text',
       },
       '.cm-selectionLayer': {
-        zIndex: '4',
+        zIndex: '4 !important',
       },
       '.cm-cursorLayer': {
         zIndex: '5',

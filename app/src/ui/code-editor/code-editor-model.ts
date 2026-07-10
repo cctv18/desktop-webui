@@ -50,6 +50,14 @@ export interface ICodeEditorCollapsedDiffRow {
   readonly oldStartLine: number
   readonly newStartLine: number
   readonly lineCount: number
+  readonly canExpandUp: boolean
+  readonly canExpandDown: boolean
+}
+
+export interface ICodeEditorDiffExpansion {
+  readonly id: string
+  readonly up: number
+  readonly down: number
 }
 
 export type CodeEditorUnifiedDiffRow =
@@ -499,10 +507,10 @@ export function createSideBySideDiffRows(
 
 export function createFoldedLineDiffRows(
   rows: ReadonlyArray<ICodeEditorLineDiffRow>,
-  expandedRegionIDs: ReadonlyArray<string>,
+  expansions: ReadonlyArray<ICodeEditorDiffExpansion>,
   contextLines = 3
 ): ReadonlyArray<CodeEditorUnifiedDiffRow> {
-  const expanded = new Set(expandedRegionIDs)
+  const expansionByID = new Map(expansions.map(value => [value.id, value]))
   const result = new Array<CodeEditorUnifiedDiffRow>()
 
   for (let index = 0; index < rows.length; ) {
@@ -532,16 +540,40 @@ export function createFoldedLineDiffRows(
       const id = `${first.oldLineNumber}:${first.newLineNumber}:${
         collapsedEnd - collapsedStart
       }`
-      if (expanded.has(id)) {
-        result.push(...rows.slice(collapsedStart, collapsedEnd))
+      const expansion = expansionByID.get(id)
+      const canExpandDown = !leading
+      const canExpandUp = !trailing
+      const down = canExpandDown
+        ? Math.max(
+            0,
+            Math.min(expansion?.down ?? 0, collapsedEnd - collapsedStart)
+          )
+        : 0
+      const up = canExpandUp
+        ? Math.max(
+            0,
+            Math.min(expansion?.up ?? 0, collapsedEnd - collapsedStart - down)
+          )
+        : 0
+      const remainingStart = collapsedStart + down
+      const remainingEnd = collapsedEnd - up
+
+      result.push(...rows.slice(collapsedStart, remainingStart))
+
+      if (remainingStart >= remainingEnd) {
+        result.push(...rows.slice(remainingStart, collapsedEnd))
       } else {
+        const remainingFirst = rows[remainingStart]
         result.push({
           kind: 'collapsed',
           id,
-          oldStartLine: first.oldLineNumber ?? 1,
-          newStartLine: first.newLineNumber ?? 1,
-          lineCount: collapsedEnd - collapsedStart,
+          oldStartLine: remainingFirst.oldLineNumber ?? 1,
+          newStartLine: remainingFirst.newLineNumber ?? 1,
+          lineCount: remainingEnd - remainingStart,
+          canExpandUp,
+          canExpandDown,
         })
+        result.push(...rows.slice(remainingEnd, collapsedEnd))
       }
     }
 

@@ -53,6 +53,7 @@ import {
   createLineDiffRows,
   filterRepositoryFilePaths,
   ICodeEditorTextEditAction,
+  ICodeEditorDiffExpansion,
   CodeEditorSplitDiffRow,
   CodeEditorUnifiedDiffRow,
   isRepositoryPathIgnored,
@@ -382,6 +383,12 @@ export class WebRuntime {
         return {
           resolveCloneInfo: (url: string) => this.resolveCloneInfo(url),
         }
+      case 'preferences':
+        return {
+          readDefaultCloneDirectory: () => this.readDefaultCloneDirectory(),
+          writeDefaultCloneDirectory: (path: string) =>
+            this.writeDefaultCloneDirectory(path),
+        }
       case 'repositoryCreation':
         return {
           createRepository: (options: ICreateLocalRepositoryOptions) =>
@@ -492,14 +499,14 @@ export class WebRuntime {
             branchKey: string,
             relativePath: string,
             mode: CodeEditorDiffMode,
-            expandedRegionIDs: ReadonlyArray<string>
+            expansions: ReadonlyArray<ICodeEditorDiffExpansion>
           ) =>
             this.createCodeEditorDiff(
               repository,
               branchKey,
               relativePath,
               mode,
-              expandedRegionIDs
+              expansions
             ),
           listRepositoryFiles: (
             path: string,
@@ -514,6 +521,27 @@ export class WebRuntime {
   private readCodeEditorStorageItem(key: string) {
     this.assertCodeEditorStorageKey(key)
     return localStorage.getItem(key)
+  }
+
+  private async readDefaultCloneDirectory() {
+    const path = localStorage.getItem(
+      'gitdesk-webui:preferences:last-clone-location'
+    )
+    if (path === null || !Path.isAbsolute(path)) {
+      return null
+    }
+
+    try {
+      await this.pathGuard.assertAllowed(path)
+      return path
+    } catch {
+      return null
+    }
+  }
+
+  private async writeDefaultCloneDirectory(path: string) {
+    await this.pathGuard.assertAllowed(path)
+    localStorage.setItem('gitdesk-webui:preferences:last-clone-location', path)
   }
 
   private writeCodeEditorStorageItem(key: string, value: string) {
@@ -906,7 +934,7 @@ export class WebRuntime {
     branchKey: string,
     relativePath: string,
     mode: CodeEditorDiffMode,
-    expandedRegionIDs: ReadonlyArray<string>
+    expansions: ReadonlyArray<ICodeEditorDiffExpansion>
   ): Promise<ICodeEditorDiffResult> {
     const startedAt = Date.now()
     await this.pathGuard.assertAllowed(repository.path)
@@ -929,7 +957,7 @@ export class WebRuntime {
 
     const unifiedRows = createFoldedLineDiffRows(
       createLineDiffRows(original, current),
-      expandedRegionIDs
+      expansions
     )
     const rows =
       mode === 'split'

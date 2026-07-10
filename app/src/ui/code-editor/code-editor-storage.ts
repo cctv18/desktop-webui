@@ -2,6 +2,7 @@ import { invokeWebUIRPC } from '../../lib/webui-rpc'
 import {
   CodeEditorSplitDiffRow,
   CodeEditorUnifiedDiffRow,
+  ICodeEditorDiffExpansion,
 } from './code-editor-model'
 
 export type CodeEditorPanelSelection = 'commit-management' | 'code-editor'
@@ -198,13 +199,13 @@ export async function createCodeEditorDiff(
   branchKey: string,
   relativePath: string,
   mode: CodeEditorDiffMode,
-  expandedRegionIDs: ReadonlyArray<string>
+  expansions: ReadonlyArray<ICodeEditorDiffExpansion>
 ) {
   return invokeWebUIRPC<ICodeEditorDiffResult>('codeEditor.createDiff', [
     repository,
     branchKey,
     relativePath,
     mode,
-    expandedRegionIDs,
+    expansions,
   ])
 }

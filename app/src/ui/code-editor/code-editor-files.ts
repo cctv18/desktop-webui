@@ -5,6 +5,7 @@ import { invokeWebUIRPC } from '../../lib/webui-rpc'
 import {
   applyLineEnding,
   CodeEditorLineEnding,
+  ICodeEditorDiffExpansion,
   normalizeRepositoryRelativePath,
 } from './code-editor-model'
 import {
@@ -173,14 +174,14 @@ export async function createRepositoryCodeEditorDiff(
   branchKey: string,
   relativePath: string,
   mode: CodeEditorDiffMode,
-  expandedRegionIDs: ReadonlyArray<string>
+  expansions: ReadonlyArray<ICodeEditorDiffExpansion>
 ): Promise<ICodeEditorDiffResult> {
   return createCodeEditorDiff(
     repository,
     branchKey,
     relativePath,
     mode,
-    expandedRegionIDs
+    expansions
   )
 }
 

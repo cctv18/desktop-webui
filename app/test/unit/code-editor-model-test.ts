@@ -120,13 +120,13 @@ describe('Code editor model helpers', () => {
     )
   })
 
-  it('expands only the requested unchanged diff region', () => {
+  it('expands a leading unchanged region upward in 20-line steps', () => {
     const original = Array.from(
-      { length: 20 },
+      { length: 100 },
       (_, index) => `line-${index + 1}`
     )
     const current = [...original]
-    current[9] = 'changed-10'
+    current[50] = 'changed-51'
     const diffRows = createLineDiffRows(original.join('\n'), current.join('\n'))
     const folded = createFoldedLineDiffRows(diffRows, [], 2)
     const firstRegion = folded.find(row => row.kind === 'collapsed')
@@ -135,20 +135,87 @@ describe('Code editor model helpers', () => {
       return
     }
 
-    const expanded = createFoldedLineDiffRows(diffRows, [firstRegion.id], 2)
+    assert.equal(firstRegion.canExpandUp, true)
+    assert.equal(firstRegion.canExpandDown, false)
+
+    const expanded = createFoldedLineDiffRows(
+      diffRows,
+      [{ id: firstRegion.id, up: 20, down: 0 }],
+      2
+    )
+    const remaining = expanded.find(
+      row => row.kind === 'collapsed' && row.id === firstRegion.id
+    )
+    assert.notEqual(remaining, undefined)
+    assert.equal(remaining?.kind === 'collapsed' ? remaining.lineCount : 0, 28)
     assert.equal(
-      expanded.some(
-        row => row.kind === 'collapsed' && row.id === firstRegion.id
-      ),
+      expanded.some(row => 'oldText' in row && row.oldText === 'line-29'),
+      true
+    )
+    assert.equal(
+      expanded.some(row => 'oldText' in row && row.oldText === 'line-28'),
       false
     )
+  })
+
+  it('expands a trailing unchanged region downward in 20-line steps', () => {
+    const original = Array.from(
+      { length: 100 },
+      (_, index) => `line-${index + 1}`
+    )
+    const current = [...original]
+    current[49] = 'changed-50'
+    const diffRows = createLineDiffRows(original.join('\n'), current.join('\n'))
+    const folded = createFoldedLineDiffRows(diffRows, [], 2)
+    const region = folded.filter(row => row.kind === 'collapsed').at(-1)
+    assert.notEqual(region, undefined)
+    if (region === undefined || region.kind !== 'collapsed') {
+      return
+    }
+
+    assert.equal(region.canExpandUp, false)
+    assert.equal(region.canExpandDown, true)
+    const expanded = createFoldedLineDiffRows(
+      diffRows,
+      [{ id: region.id, up: 0, down: 20 }],
+      2
+    )
     assert.equal(
-      expanded.some(row => 'oldText' in row && row.oldText === 'line-1'),
+      expanded.some(row => 'oldText' in row && row.oldText === 'line-72'),
       true
     )
     assert.equal(
-      expanded.some(row => row.kind === 'collapsed'),
-      true
+      expanded.some(row => 'oldText' in row && row.oldText === 'line-73'),
+      false
+    )
+  })
+
+  it('fully reveals a region when directional expansions meet', () => {
+    const original = Array.from(
+      { length: 70 },
+      (_, index) => `line-${index + 1}`
+    )
+    const current = [...original]
+    current[9] = 'changed-10'
+    current[54] = 'changed-55'
+    const diffRows = createLineDiffRows(original.join('\n'), current.join('\n'))
+    const folded = createFoldedLineDiffRows(diffRows, [], 2)
+    const middle = folded.find(
+      row => row.kind === 'collapsed' && row.canExpandUp && row.canExpandDown
+    )
+    assert.notEqual(middle, undefined)
+    if (middle === undefined || middle.kind !== 'collapsed') {
+      return
+    }
+
+    const expanded = createFoldedLineDiffRows(
+      diffRows,
+      [{ id: middle.id, up: 20, down: 20 }],
+      2
+    )
+    assert.equal(
+      expanded.some(row => row.kind === 'collapsed' && row.id === middle.id),
+      false
     )
   })
 
