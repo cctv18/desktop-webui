@@ -20,12 +20,16 @@ import {
   defaultCodeEditorIgnoredPaths,
   detectLineEnding,
   findSearchMatches,
+  formatCodeEditorCollapsedDiffHeader,
+  createCodeEditorRenameDestination,
   isCodeEditorDocumentDirty,
+  isCodeEditorPathWithin,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
   ICodeEditorDiffExpansion,
   normalizeEditorText,
   parseIgnoredPathList,
+  replaceCodeEditorPathPrefix,
   replaceAllSearchMatches,
   replaceSearchMatch,
   serializeIgnoredPathList,
@@ -34,6 +38,7 @@ import {
   activateRepositoryEditorBranchCache,
   applyRepositoryEditorHistoryAction,
   createRepositoryCodeEditorDiff,
+  deleteRepositoryEditorPath,
   listRepositoryFiles,
   readRepositoryEditorHistoryStatus,
   readRepositoryConflictTextFile,
@@ -41,6 +46,7 @@ import {
   readRepositoryTextFile,
   removeRepositoryConflictTextFile,
   removeRepositoryTempTextFile,
+  renameRepositoryEditorPath,
   writeRepositoryTempTextFile,
   writeRepositoryTextFile,
 } from './code-editor-files'
@@ -96,6 +102,12 @@ interface ICodeEditorPanelState {
   readonly fileTree: ReadonlyArray<CodeEditorTreeNode>
   readonly expandedDirectoryPaths: ReadonlySet<string>
   readonly selectedPath: string | null
+  readonly selectedTreePath: string | null
+  readonly selectedTreeKind: CodeEditorTreeNode['kind'] | null
+  readonly renamingPath: string | null
+  readonly renameValue: string
+  readonly deleteConfirmPath: string | null
+  readonly treeOperationLoading: boolean
   readonly diskContents: string
   readonly diskLineEnding: CodeEditorLineEnding
   readonly editorContents: string
@@ -148,6 +160,12 @@ export class CodeEditorPanel extends React.Component<
       fileTree: [],
       expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
       selectedPath: session.selectedPath,
+      selectedTreePath: session.selectedPath,
+      selectedTreeKind: session.selectedPath === null ? null : 'file',
+      renamingPath: null,
+      renameValue: '',
+      deleteConfirmPath: null,
+      treeOperationLoading: false,
       diskContents: '',
       diskLineEnding: 'lf',
       editorContents: '',
@@ -608,7 +626,9 @@ export class CodeEditorPanel extends React.Component<
           <span>Cached edit</span>
         </div>
         <div className="code-editor-split-diff-rows">
-          {rows.map((row, index) => this.renderSplitDiffRow(row, index))}
+          {rows.map((row, index) =>
+            this.renderSplitDiffRow(row, index, this.state.selectedPath ?? '')
+          )}
         </div>
       </div>
     )
@@ -696,15 +716,20 @@ export class CodeEditorPanel extends React.Component<
           {this.renderDiffTruncationNotice(diff)}
         </div>
         {(diff.rows as ReadonlyArray<CodeEditorUnifiedDiffRow>).map(
-          (row, index) => this.renderUnifiedDiffRow(row, index)
+          (row, index) =>
+            this.renderUnifiedDiffRow(row, index, diff.relativePath)
         )}
       </div>
     )
   }
 
-  private renderUnifiedDiffRow(row: CodeEditorUnifiedDiffRow, index: number) {
+  private renderUnifiedDiffRow(
+    row: CodeEditorUnifiedDiffRow,
+    index: number,
+    relativePath: string
+  ) {
     if (row.kind === 'collapsed') {
-      return this.renderCollapsedDiffRow(row, index, 'unified')
+      return this.renderCollapsedDiffRow(row, index, 'unified', relativePath)
     }
 
     const line = row
@@ -730,7 +755,8 @@ export class CodeEditorPanel extends React.Component<
         {this.renderDiffTruncationNotice(diff)}
         <div className="code-editor-split-diff-rows">
           {(diff.rows as ReadonlyArray<CodeEditorSplitDiffRow>).map(
-            (row, index) => this.renderSplitDiffRow(row, index)
+            (row, index) =>
+              this.renderSplitDiffRow(row, index, diff.relativePath)
           )}
         </div>
       </div>
@@ -749,9 +775,13 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private renderSplitDiffRow(row: CodeEditorSplitDiffRow, index: number) {
+  private renderSplitDiffRow(
+    row: CodeEditorSplitDiffRow,
+    index: number,
+    relativePath: string
+  ) {
     if (row.kind === 'collapsed') {
-      return this.renderCollapsedDiffRow(row, index, 'split')
+      return this.renderCollapsedDiffRow(row, index, 'split', relativePath)
     }
 
     return (
@@ -767,7 +797,8 @@ export class CodeEditorPanel extends React.Component<
   private renderCollapsedDiffRow(
     row: Extract<CodeEditorUnifiedDiffRow, { kind: 'collapsed' }>,
     index: number,
-    mode: CodeEditorDiffMode
+    mode: CodeEditorDiffMode,
+    relativePath: string
   ) {
     return (
       <div
@@ -775,9 +806,9 @@ export class CodeEditorPanel extends React.Component<
         className={`code-editor-diff-collapsed ${mode} ${row.expansionType}`}
       >
         {this.renderDiffExpansionGutter(row, 'primary')}
-        {mode === 'split'
-          ? this.renderDiffExpansionGutter(row, 'secondary')
-          : null}
+        <pre className="code-editor-diff-collapsed-header">
+          {formatCodeEditorCollapsedDiffHeader(row, relativePath)}
+        </pre>
       </div>
     )
   }
@@ -849,28 +880,41 @@ export class CodeEditorPanel extends React.Component<
     depth: number
   ) {
     const expanded = this.state.expandedDirectoryPaths.has(node.path)
+    const selected = this.state.selectedTreePath === node.path
 
     return (
-      <div key={node.path}>
-        <button
-          type="button"
-          className="code-editor-tree-row directory"
+      <div key={node.path} className="code-editor-tree-node">
+        <div
+          className={`code-editor-tree-row directory${
+            selected ? ' selected' : ''
+          }`}
           style={{ paddingLeft: 8 + depth * 14 }}
-          onClick={() => this.toggleDirectory(node.path)}
         >
-          <Octicon
-            className="code-editor-tree-toggle"
-            symbol={expanded ? octicons.chevronLeft : octicons.chevronRight}
-          />
-          <Octicon
-            symbol={
-              expanded
-                ? octicons.fileDirectoryOpenFill
-                : octicons.fileDirectoryFill
-            }
-          />
-          <span>{node.name}</span>
-        </button>
+          {this.state.renamingPath === node.path ? (
+            this.renderTreeRenameInput(node)
+          ) : (
+            <button
+              type="button"
+              className="code-editor-tree-main-button"
+              onClick={() => this.selectDirectory(node.path)}
+            >
+              <Octicon
+                className="code-editor-tree-toggle"
+                symbol={expanded ? octicons.chevronLeft : octicons.chevronRight}
+              />
+              <Octicon
+                symbol={
+                  expanded
+                    ? octicons.fileDirectoryOpenFill
+                    : octicons.fileDirectoryFill
+                }
+              />
+              <span>{node.name}</span>
+            </button>
+          )}
+          {this.renderTreeNodeActions(node)}
+        </div>
+        {this.renderTreeDeleteConfirmation(node.path)}
         {expanded ? this.renderTreeNodes(node.children, depth + 1) : null}
       </div>
     )
@@ -880,19 +924,119 @@ export class CodeEditorPanel extends React.Component<
     node: CodeEditorTreeNode & { kind: 'file' },
     depth: number
   ) {
-    const selected = this.state.selectedPath === node.path
+    const selected = this.state.selectedTreePath === node.path
 
     return (
-      <button
-        key={node.path}
-        type="button"
-        className={`code-editor-tree-row file${selected ? ' selected' : ''}`}
-        style={{ paddingLeft: 8 + depth * 14 }}
-        onClick={() => this.openFile(node.path)}
-      >
-        <Octicon symbol={octicons.fileCode} />
-        <span>{node.name}</span>
-      </button>
+      <div key={node.path} className="code-editor-tree-node">
+        <div
+          className={`code-editor-tree-row file${selected ? ' selected' : ''}`}
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
+          {this.state.renamingPath === node.path ? (
+            this.renderTreeRenameInput(node)
+          ) : (
+            <button
+              type="button"
+              className="code-editor-tree-main-button"
+              onClick={() => this.selectFile(node.path)}
+            >
+              <Octicon symbol={octicons.fileCode} />
+              <span>{node.name}</span>
+            </button>
+          )}
+          {this.renderTreeNodeActions(node)}
+        </div>
+        {this.renderTreeDeleteConfirmation(node.path)}
+      </div>
+    )
+  }
+
+  private renderTreeRenameInput(node: CodeEditorTreeNode) {
+    return (
+      <input
+        className="code-editor-tree-rename-input"
+        type="text"
+        value={this.state.renameValue}
+        disabled={this.state.treeOperationLoading}
+        aria-label={`Rename ${node.name}`}
+        onChange={this.onRenameValueChanged}
+        onKeyDown={this.onRenameKeyDown}
+        autoFocus={true}
+      />
+    )
+  }
+
+  private renderTreeNodeActions(node: CodeEditorTreeNode) {
+    if (this.state.selectedTreePath !== node.path) {
+      return null
+    }
+
+    if (this.state.renamingPath === node.path) {
+      return (
+        <button
+          type="button"
+          className="code-editor-tree-action-button"
+          onClick={this.confirmRename}
+          disabled={this.state.treeOperationLoading}
+          aria-label="Confirm rename"
+        >
+          <Octicon symbol={octicons.check} />
+        </button>
+      )
+    }
+
+    return (
+      <div className="code-editor-tree-node-actions">
+        <button
+          type="button"
+          className="code-editor-tree-action-button"
+          onClick={this.startRename}
+          aria-label={`Rename ${node.name}`}
+        >
+          <Octicon symbol={octicons.pencil} />
+        </button>
+        <button
+          type="button"
+          className="code-editor-tree-action-button"
+          onClick={this.showDeleteConfirmation}
+          aria-label={`Delete ${node.name}`}
+        >
+          <Octicon symbol={octicons.trash} />
+        </button>
+      </div>
+    )
+  }
+
+  private renderTreeDeleteConfirmation(path: string) {
+    if (this.state.deleteConfirmPath !== path) {
+      return null
+    }
+
+    return (
+      <div className="code-editor-tree-delete-confirmation">
+        <div>
+          This will delete the selected path and clear all unsaved edits and
+          editor history below it.
+        </div>
+        <div className="code-editor-tree-delete-actions">
+          <button
+            type="button"
+            onClick={this.confirmDelete}
+            disabled={this.state.treeOperationLoading}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            className="cancel"
+            onClick={this.cancelDelete}
+            disabled={this.state.treeOperationLoading}
+            autoFocus={true}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     )
   }
 
@@ -950,6 +1094,8 @@ export class CodeEditorPanel extends React.Component<
         ignoredPathListText: serializeIgnoredPathList(preferences.ignoredPaths),
         expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
         selectedPath: session.selectedPath,
+        selectedTreePath: session.selectedPath,
+        selectedTreeKind: session.selectedPath === null ? null : 'file',
         activeTab: session.activeTab,
         treeVisible: session.treeVisible,
       },
@@ -986,6 +1132,12 @@ export class CodeEditorPanel extends React.Component<
       {
         expandedDirectoryPaths: new Set(session.expandedDirectoryPaths),
         selectedPath: session.selectedPath,
+        selectedTreePath: session.selectedPath,
+        selectedTreeKind: session.selectedPath === null ? null : 'file',
+        renamingPath: null,
+        renameValue: '',
+        deleteConfirmPath: null,
+        treeOperationLoading: false,
         diskContents: '',
         diskLineEnding: 'lf',
         editorContents: '',
@@ -1020,6 +1172,8 @@ export class CodeEditorPanel extends React.Component<
 
     this.setState({
       selectedPath: relativePath,
+      selectedTreePath: relativePath,
+      selectedTreeKind: 'file',
       loadingFile: true,
       error: null,
       activeTab: 'edit',
@@ -1116,6 +1270,205 @@ export class CodeEditorPanel extends React.Component<
     this.setState({ expandedDirectoryPaths: expanded }, () =>
       this.persistSession()
     )
+  }
+
+  private selectDirectory = (path: string) => {
+    this.setState({
+      selectedTreePath: path,
+      selectedTreeKind: 'directory',
+      renamingPath: null,
+      deleteConfirmPath: null,
+    })
+    this.toggleDirectory(path)
+  }
+
+  private selectFile = (path: string) => {
+    this.setState({
+      selectedTreePath: path,
+      selectedTreeKind: 'file',
+      renamingPath: null,
+      deleteConfirmPath: null,
+    })
+    void this.openFile(path)
+  }
+
+  private startRename = () => {
+    const path = this.state.selectedTreePath
+    if (path === null) {
+      return
+    }
+    const parts = path.split('/')
+    this.setState({
+      renamingPath: path,
+      renameValue: parts[parts.length - 1] ?? '',
+      deleteConfirmPath: null,
+      error: null,
+    })
+  }
+
+  private onRenameValueChanged = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    this.setState({ renameValue: event.currentTarget.value })
+  }
+
+  private onRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void this.confirmRename()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      this.setState({ renamingPath: null, renameValue: '' })
+    }
+  }
+
+  private confirmRename = async () => {
+    const sourcePath = this.state.renamingPath
+    if (sourcePath === null || this.state.treeOperationLoading) {
+      return
+    }
+
+    let destinationPath: string
+    try {
+      destinationPath = createCodeEditorRenameDestination(
+        sourcePath,
+        this.state.renameValue
+      )
+    } catch (error) {
+      this.setState({ error: getErrorMessage(error) })
+      return
+    }
+
+    if (destinationPath === sourcePath) {
+      this.setState({ renamingPath: null, renameValue: '' })
+      return
+    }
+
+    this.setState({ treeOperationLoading: true, error: null })
+    try {
+      if (
+        this.state.selectedPath !== null &&
+        isCodeEditorPathWithin(this.state.selectedPath, sourcePath)
+      ) {
+        await this.persistTempFileIfNeeded()
+        await this.flushPendingTempFileWrite('rename-path')
+      }
+
+      const renamedPath = await renameRepositoryEditorPath(
+        this.props.repository,
+        getBranchKey(this.props.repositoryState),
+        sourcePath,
+        this.state.renameValue
+      )
+      const selectedPath =
+        this.state.selectedPath !== null &&
+        isCodeEditorPathWithin(this.state.selectedPath, sourcePath)
+          ? replaceCodeEditorPathPrefix(
+              this.state.selectedPath,
+              sourcePath,
+              renamedPath
+            )
+          : this.state.selectedPath
+      const expandedDirectoryPaths = new Set(
+        Array.from(this.state.expandedDirectoryPaths).map(path =>
+          isCodeEditorPathWithin(path, sourcePath)
+            ? replaceCodeEditorPathPrefix(path, sourcePath, renamedPath)
+            : path
+        )
+      )
+
+      this.setState(
+        {
+          selectedPath,
+          selectedTreePath: renamedPath,
+          expandedDirectoryPaths,
+          renamingPath: null,
+          renameValue: '',
+          treeOperationLoading: false,
+          previewDiffResult: null,
+          previewDiffError: null,
+        },
+        () => {
+          this.persistSession()
+          void this.refreshRepositoryTree()
+        }
+      )
+      await this.props.dispatcher.refreshRepository(this.props.repository)
+    } catch (error) {
+      this.setState({
+        treeOperationLoading: false,
+        error: getErrorMessage(error),
+      })
+    }
+  }
+
+  private showDeleteConfirmation = () => {
+    this.setState({
+      deleteConfirmPath: this.state.selectedTreePath,
+      renamingPath: null,
+      error: null,
+    })
+  }
+
+  private cancelDelete = () => {
+    this.setState({ deleteConfirmPath: null })
+  }
+
+  private confirmDelete = async () => {
+    const path = this.state.deleteConfirmPath
+    if (path === null || this.state.treeOperationLoading) {
+      return
+    }
+
+    this.setState({ treeOperationLoading: true, error: null })
+    try {
+      if (
+        this.state.selectedPath !== null &&
+        isCodeEditorPathWithin(this.state.selectedPath, path)
+      ) {
+        await this.persistTempFileIfNeeded()
+        await this.flushPendingTempFileWrite('delete-path')
+      }
+
+      await deleteRepositoryEditorPath(
+        this.props.repository,
+        getBranchKey(this.props.repositoryState),
+        path
+      )
+      const closesEditor =
+        this.state.selectedPath !== null &&
+        isCodeEditorPathWithin(this.state.selectedPath, path)
+      const expandedDirectoryPaths = new Set(
+        Array.from(this.state.expandedDirectoryPaths).filter(
+          expandedPath => !isCodeEditorPathWithin(expandedPath, path)
+        )
+      )
+      const nextState = {
+        selectedTreePath: null,
+        selectedTreeKind: null,
+        deleteConfirmPath: null,
+        treeOperationLoading: false,
+        expandedDirectoryPaths,
+      }
+      const afterDelete = () => {
+        this.persistSession()
+        void this.refreshRepositoryTree()
+      }
+      if (closesEditor) {
+        this.setState(
+          { ...nextState, ...createClosedEditorState() },
+          afterDelete
+        )
+      } else {
+        this.setState(nextState, afterDelete)
+      }
+      await this.props.dispatcher.refreshRepository(this.props.repository)
+    } catch (error) {
+      this.setState({
+        treeOperationLoading: false,
+        error: getErrorMessage(error),
+      })
+    }
   }
 
   private toggleTreeVisible = () => {
@@ -1641,9 +1994,16 @@ export class CodeEditorPanel extends React.Component<
     )
   }
 
-  private focusSearch = () => {
-    this.searchInput?.focus()
-    this.searchInput?.select()
+  private focusSearch = (selection: string | null = null) => {
+    const focus = () => {
+      this.searchInput?.focus()
+      this.searchInput?.select()
+    }
+    if (selection === null) {
+      focus()
+      return
+    }
+    this.setState({ searchQuery: selection, activeSearchMatchIndex: 0 }, focus)
   }
 
   private onLineEndingChanged = (
@@ -1856,6 +2216,27 @@ function getDefaultSession(): ICodeEditorSession {
     expandedDirectoryPaths: [],
     treeVisible: true,
     activeTab: 'edit',
+  }
+}
+
+function createClosedEditorState() {
+  return {
+    selectedPath: null,
+    diskContents: '',
+    diskLineEnding: 'lf' as CodeEditorLineEnding,
+    editorContents: '',
+    lineEnding: 'lf' as CodeEditorLineEnding,
+    activeTab: 'edit' as const,
+    previewDiffLoading: false,
+    previewDiffResult: null,
+    previewDiffError: null,
+    diffExpansions: [],
+    conflictDraft: null,
+    conflictComparisonVisible: false,
+    loadingFile: false,
+    historyActionLoading: false,
+    undoCount: 0,
+    redoCount: 0,
   }
 }
 

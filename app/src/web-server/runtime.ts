@@ -11,6 +11,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename as renamePath,
   rm,
   stat,
   writeFile,
@@ -48,6 +49,7 @@ import { IUiActivityMonitor } from '../ui/lib/ui-activity-monitor'
 import {
   applyCodeEditorHistoryAction,
   createCodeEditorTextEditAction,
+  createCodeEditorRenameDestination,
   createFoldedLineDiffRows,
   createFoldedSideBySideDiffRows,
   createLineDiffRows,
@@ -57,8 +59,10 @@ import {
   CodeEditorSplitDiffRow,
   CodeEditorUnifiedDiffRow,
   isRepositoryPathIgnored,
+  isCodeEditorPathWithin,
   normalizeEditorText,
   normalizeRepositoryRelativePath,
+  replaceCodeEditorPathPrefix,
 } from '../ui/code-editor/code-editor-model'
 import { IAppState } from '../lib/app-state'
 import { reviveFromWeb } from '../lib/webui-serialization'
@@ -470,6 +474,24 @@ export class WebRuntime {
               branchKey,
               relativePath
             ),
+          renamePath: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string,
+            newName: string
+          ) =>
+            this.renameCodeEditorPath(
+              repositoryPath,
+              branchKey,
+              relativePath,
+              newName
+            ),
+          deletePath: (
+            repositoryPath: string,
+            branchKey: string,
+            relativePath: string
+          ) =>
+            this.deleteCodeEditorPath(repositoryPath, branchKey, relativePath),
           readConflictFile: (
             repositoryPath: string,
             branchKey: string,
@@ -879,6 +901,188 @@ export class WebRuntime {
     await this.removeCodeEditorTempFileFromRoot(
       this.getCodeEditorRepositoryTempRoot(repositoryPath),
       assertCodeEditorRelativePath(relativePath)
+    )
+  }
+
+  private async renameCodeEditorPath(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string,
+    newName: string
+  ) {
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+    const sourcePath = assertCodeEditorRelativePath(relativePath)
+    const destinationPath = assertCodeEditorRelativePath(
+      createCodeEditorRenameDestination(sourcePath, newName)
+    )
+    const sourceAbsolutePath = resolveInsideDirectory(
+      repositoryPath,
+      sourcePath
+    )
+    const destinationAbsolutePath = resolveInsideDirectory(
+      repositoryPath,
+      destinationPath
+    )
+
+    await this.pathGuard.assertAllowed(sourceAbsolutePath)
+    await this.pathGuard.assertAllowed(destinationAbsolutePath)
+    if (!(await pathExistsOnDisk(sourceAbsolutePath))) {
+      throw new Error('The selected file or folder no longer exists.')
+    }
+    if (await pathExistsOnDisk(destinationAbsolutePath)) {
+      throw new Error('A file or folder with that name already exists.')
+    }
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const affectedPaths = await this.collectCodeEditorAffectedPaths(
+      repositoryPath,
+      root,
+      sourcePath
+    )
+
+    await renamePath(sourceAbsolutePath, destinationAbsolutePath)
+    for (const oldPath of affectedPaths) {
+      const nextPath = replaceCodeEditorPathPrefix(
+        oldPath,
+        sourcePath,
+        destinationPath
+      )
+      await this.moveCodeEditorCachePath(root, oldPath, nextPath)
+    }
+
+    return destinationPath
+  }
+
+  private async deleteCodeEditorPath(
+    repositoryPath: string,
+    branchKey: string,
+    relativePath: string
+  ) {
+    await this.activateCodeEditorBranchCache(repositoryPath, branchKey)
+    const sourcePath = assertCodeEditorRelativePath(relativePath)
+    const sourceAbsolutePath = resolveInsideDirectory(
+      repositoryPath,
+      sourcePath
+    )
+    await this.pathGuard.assertAllowed(sourceAbsolutePath)
+    if (!(await pathExistsOnDisk(sourceAbsolutePath))) {
+      throw new Error('The selected file or folder no longer exists.')
+    }
+
+    const root = this.getCodeEditorRepositoryTempRoot(repositoryPath)
+    const affectedPaths = await this.collectCodeEditorAffectedPaths(
+      repositoryPath,
+      root,
+      sourcePath
+    )
+
+    await rm(sourceAbsolutePath, { recursive: true, force: true })
+    for (const path of affectedPaths) {
+      await this.removeCodeEditorCachePath(root, path)
+    }
+    await rm(resolveCodeEditorTempFilePath(root, sourcePath), {
+      recursive: true,
+      force: true,
+    })
+  }
+
+  private async collectCodeEditorAffectedPaths(
+    repositoryPath: string,
+    root: string,
+    sourcePath: string
+  ) {
+    const paths = new Set<string>()
+    const sourceAbsolutePath = resolveInsideDirectory(
+      repositoryPath,
+      sourcePath
+    )
+    const sourceStats = await lstat(sourceAbsolutePath)
+
+    if (sourceStats.isFile()) {
+      paths.add(sourcePath)
+    } else if (sourceStats.isDirectory()) {
+      for (const path of await listFilesRecursively(
+        sourceAbsolutePath,
+        repositoryPath
+      )) {
+        paths.add(path)
+      }
+    }
+
+    const editLogRoot = Path.join(root, '.cm_editlog')
+    if (await pathExistsOnDisk(editLogRoot)) {
+      for (const entry of await readdir(editLogRoot)) {
+        const raw = await readOptionalTextFile(Path.join(editLogRoot, entry))
+        if (raw === null) {
+          continue
+        }
+        try {
+          const logValue = JSON.parse(raw) as ICodeEditorFileEditLog
+          if (
+            typeof logValue.relativePath === 'string' &&
+            isCodeEditorPathWithin(logValue.relativePath, sourcePath)
+          ) {
+            paths.add(logValue.relativePath)
+          }
+        } catch {
+          // Corrupt logs are ignored and will not block file operations.
+        }
+      }
+    }
+
+    return Array.from(paths)
+  }
+
+  private async moveCodeEditorCachePath(
+    root: string,
+    sourcePath: string,
+    destinationPath: string
+  ) {
+    const sourceTempPath = resolveCodeEditorTempFilePath(root, sourcePath)
+    const destinationTempPath = resolveCodeEditorTempFilePath(
+      root,
+      destinationPath
+    )
+    if (await pathExistsOnDisk(sourceTempPath)) {
+      await mkdir(Path.dirname(destinationTempPath), { recursive: true })
+      await renamePath(sourceTempPath, destinationTempPath)
+    }
+
+    const log = await this.readCodeEditorEditLog(root, sourcePath)
+    if (log !== null) {
+      await this.writeCodeEditorEditLog(root, destinationPath, {
+        ...log,
+        relativePath: destinationPath,
+        updatedAt: Date.now(),
+      })
+      await rm(resolveCodeEditorEditLogPath(root, sourcePath), { force: true })
+    }
+
+    const sourceConflictPath = Path.join(
+      root,
+      '.cm_conflicts',
+      hashCodeEditorPath(sourcePath)
+    )
+    const destinationConflictPath = Path.join(
+      root,
+      '.cm_conflicts',
+      hashCodeEditorPath(destinationPath)
+    )
+    if (await pathExistsOnDisk(sourceConflictPath)) {
+      await mkdir(Path.dirname(destinationConflictPath), { recursive: true })
+      await renamePath(sourceConflictPath, destinationConflictPath)
+    }
+  }
+
+  private async removeCodeEditorCachePath(root: string, relativePath: string) {
+    await rm(resolveCodeEditorTempFilePath(root, relativePath), {
+      recursive: true,
+      force: true,
+    })
+    await rm(resolveCodeEditorEditLogPath(root, relativePath), { force: true })
+    await rm(
+      Path.join(root, '.cm_conflicts', hashCodeEditorPath(relativePath)),
+      { recursive: true, force: true }
     )
   }
 
@@ -1862,6 +2066,30 @@ async function copyPath(source: string, destination: string) {
     await mkdir(Path.dirname(destination), { recursive: true })
     await copyFile(source, destination)
   }
+}
+
+async function listFilesRecursively(
+  directory: string,
+  repositoryPath: string
+): Promise<ReadonlyArray<string>> {
+  const files = new Array<string>()
+
+  for (const entry of await readdir(directory)) {
+    const fullPath = Path.join(directory, entry)
+    const stats = await lstat(fullPath)
+    if (stats.isSymbolicLink()) {
+      continue
+    }
+    if (stats.isDirectory()) {
+      files.push(...(await listFilesRecursively(fullPath, repositoryPath)))
+    } else if (stats.isFile()) {
+      files.push(
+        normalizeRepositoryRelativePath(Path.relative(repositoryPath, fullPath))
+      )
+    }
+  }
+
+  return files
 }
 
 async function readOptionalTextFile(path: string) {

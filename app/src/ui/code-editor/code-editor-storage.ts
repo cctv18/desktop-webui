@@ -168,6 +168,32 @@ export async function removeCodeEditorTempFile(
   ])
 }
 
+export async function renameCodeEditorPath(
+  repositoryPath: string,
+  branchKey: string,
+  relativePath: string,
+  newName: string
+) {
+  return invokeWebUIRPC<string>('codeEditor.renamePath', [
+    repositoryPath,
+    branchKey,
+    relativePath,
+    newName,
+  ])
+}
+
+export async function deleteCodeEditorPath(
+  repositoryPath: string,
+  branchKey: string,
+  relativePath: string
+) {
+  return invokeWebUIRPC<void>('codeEditor.deletePath', [
+    repositoryPath,
+    branchKey,
+    relativePath,
+  ])
+}
+
 export async function readCodeEditorConflictFile(
   repositoryPath: string,
   branchKey: string,

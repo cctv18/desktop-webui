@@ -15,6 +15,7 @@ import {
   CodeEditorHistoryAction,
   CodeEditorDiffMode,
   createCodeEditorDiff,
+  deleteCodeEditorPath,
   ICodeEditorDiffResult,
   ICodeEditorTempFileStatus,
   IWriteCodeEditorTempFileOptions,
@@ -23,6 +24,7 @@ import {
   readCodeEditorTempFileStatus,
   removeCodeEditorConflictFile,
   removeCodeEditorTempFile,
+  renameCodeEditorPath,
   writeCodeEditorTempFile,
 } from './code-editor-storage'
 
@@ -139,6 +141,23 @@ export async function removeRepositoryTempTextFile(
   relativePath: string
 ) {
   return removeCodeEditorTempFile(repository.path, branchKey, relativePath)
+}
+
+export async function renameRepositoryEditorPath(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string,
+  newName: string
+) {
+  return renameCodeEditorPath(repository.path, branchKey, relativePath, newName)
+}
+
+export async function deleteRepositoryEditorPath(
+  repository: Repository,
+  branchKey: string,
+  relativePath: string
+) {
+  return deleteCodeEditorPath(repository.path, branchKey, relativePath)
 }
 
 export async function readRepositoryConflictTextFile(

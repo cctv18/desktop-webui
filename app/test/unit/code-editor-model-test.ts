@@ -7,6 +7,7 @@ import {
   buildFileTreeFromPaths,
   canApplyCodeEditorHistoryAction,
   createLineDiffRows,
+  createCodeEditorRenameDestination,
   createFoldedLineDiffRows,
   createFoldedSideBySideDiffRows,
   createCodeEditorTextEditAction,
@@ -15,6 +16,10 @@ import {
   detectLanguageFromPathAndContent,
   filterRepositoryFilePaths,
   findSearchMatches,
+  formatCodeEditorCollapsedDiffHeader,
+  getCodeEditorSearchSelection,
+  isCodeEditorPathWithin,
+  replaceCodeEditorPathPrefix,
   isCodeEditorDocumentDirty,
   normalizeRepositoryRelativePath,
   parseIgnoredPathList,
@@ -264,6 +269,63 @@ describe('Code editor model helpers', () => {
     assert.deepEqual(
       split.filter(row => row.kind === 'collapsed'),
       unified.filter(row => row.kind === 'collapsed')
+    )
+  })
+
+  it('formats collapsed regions as Desktop-style hunk headers', () => {
+    assert.equal(
+      formatCodeEditorCollapsedDiffHeader(
+        {
+          kind: 'collapsed',
+          id: 'region',
+          oldStartLine: 12,
+          newStartLine: 14,
+          lineCount: 20,
+          canExpandUp: true,
+          canExpandDown: true,
+          expansionType: 'both',
+        },
+        'src/example.ts'
+      ),
+      '@@ -12,20 +14,20 @@ src/example.ts:'
+    )
+  })
+
+  it('uses short CodeMirror selections as the search query', () => {
+    assert.equal(getCodeEditorSearchSelection('selected text'), 'selected text')
+    assert.equal(
+      getCodeEditorSearchSelection('line one\nline two'),
+      'line one\\nline two'
+    )
+    assert.equal(getCodeEditorSearchSelection('x'.repeat(101)), null)
+    assert.equal(getCodeEditorSearchSelection(''), null)
+  })
+
+  it('maps renamed files and directory descendants to their new paths', () => {
+    assert.equal(isCodeEditorPathWithin('src/file.ts', 'src'), true)
+    assert.equal(isCodeEditorPathWithin('source/file.ts', 'src'), false)
+    assert.equal(
+      replaceCodeEditorPathPrefix('src/lib/file.ts', 'src', 'source'),
+      'source/lib/file.ts'
+    )
+    assert.equal(
+      replaceCodeEditorPathPrefix('src/file.ts', 'src/file.ts', 'src/new.ts'),
+      'src/new.ts'
+    )
+  })
+
+  it('rejects invalid rename targets', () => {
+    assert.throws(
+      () => createCodeEditorRenameDestination('src/file.ts', ''),
+      /name/
+    )
+    assert.throws(
+      () => createCodeEditorRenameDestination('src/file.ts', '../x'),
+      /name/
+    )
+    assert.equal(
+      createCodeEditorRenameDestination('src/file.ts', 'new.ts'),
+      'src/new.ts'
     )
   })
 

@@ -140,6 +140,55 @@ export function normalizeRepositoryRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
 }
 
+export function isCodeEditorPathWithin(path: string, parentPath: string) {
+  const normalizedPath = normalizeRepositoryRelativePath(path)
+  const normalizedParent = normalizeRepositoryRelativePath(parentPath)
+  return (
+    normalizedPath === normalizedParent ||
+    normalizedPath.startsWith(`${normalizedParent}/`)
+  )
+}
+
+export function replaceCodeEditorPathPrefix(
+  path: string,
+  sourcePath: string,
+  destinationPath: string
+) {
+  const normalizedPath = normalizeRepositoryRelativePath(path)
+  const normalizedSource = normalizeRepositoryRelativePath(sourcePath)
+  const normalizedDestination = normalizeRepositoryRelativePath(destinationPath)
+
+  if (!isCodeEditorPathWithin(normalizedPath, normalizedSource)) {
+    return normalizedPath
+  }
+
+  return `${normalizedDestination}${normalizedPath.slice(
+    normalizedSource.length
+  )}`
+}
+
+export function createCodeEditorRenameDestination(
+  sourcePath: string,
+  newName: string
+) {
+  const name = newName.trim()
+  if (
+    name.length === 0 ||
+    name === '.' ||
+    name === '..' ||
+    name.includes('/') ||
+    name.includes('\\')
+  ) {
+    throw new Error('Enter a valid file or folder name.')
+  }
+
+  const normalizedSource = normalizeRepositoryRelativePath(sourcePath)
+  const separator = normalizedSource.lastIndexOf('/')
+  return separator < 0
+    ? name
+    : `${normalizedSource.slice(0, separator + 1)}${name}`
+}
+
 export function buildFileTreeFromPaths(
   paths: ReadonlyArray<string>
 ): ReadonlyArray<CodeEditorTreeNode> {
@@ -640,6 +689,23 @@ export function createFoldedSideBySideDiffRows(
   }
   flush()
   return result
+}
+
+export function formatCodeEditorCollapsedDiffHeader(
+  row: ICodeEditorCollapsedDiffRow,
+  relativePath: string
+) {
+  return `@@ -${row.oldStartLine},${row.lineCount} +${row.newStartLine},${
+    row.lineCount
+  } @@ ${normalizeRepositoryRelativePath(relativePath)}:`
+}
+
+export function getCodeEditorSearchSelection(selection: string) {
+  if (selection.length === 0 || selection.length > 100) {
+    return null
+  }
+
+  return selection.replace(/\r\n?|\n/g, '\\n')
 }
 
 function createSideBySideRowsFromLineRows(

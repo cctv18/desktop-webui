@@ -44,6 +44,7 @@ import {
   type CodeEditorLanguage,
   detectLanguageFromPathAndContent,
   findSearchMatches,
+  getCodeEditorSearchSelection,
   ICodeEditorSearchMatch,
   ICodeEditorSearchOptions,
 } from './code-editor-model'
@@ -61,7 +62,7 @@ interface ICodeMirrorEditorProps {
   readonly theme: ApplicationTheme
   readonly onChange: (value: string) => void
   readonly onSave: () => void
-  readonly onSearch: () => void
+  readonly onSearch: (selection: string | null) => void
   readonly onUndo: () => void
   readonly onRedo: () => void
 }
@@ -222,7 +223,12 @@ export class CodeMirrorEditor extends React.PureComponent<ICodeMirrorEditorProps
         {
           key: 'Mod-f',
           run: () => {
-            this.props.onSearch()
+            const selection = this.view?.state.selection.main
+            const selectedText =
+              this.view !== null && selection !== undefined && !selection.empty
+                ? this.view.state.sliceDoc(selection.from, selection.to)
+                : ''
+            this.props.onSearch(getCodeEditorSearchSelection(selectedText))
             return true
           },
         },
